@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>llmflows</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/views/dashboard.js"></script>
+  <script src="/static/js/views/project.js"></script>
+  <script src="/static/js/views/task.js"></script>
+  <script src="/static/js/views/flows.js"></script>
+  <script src="/static/js/views/flow-editor.js"></script>
+  <script src="/static/js/views/daemon.js"></script>
+  <script src="/static/js/views/history.js"></script>
+  <script src="/static/js/views/integrations.js"></script>
+  <script src="/static/js/views/agents.js"></script>
+  <script src="/static/js/views/settings.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .sortable-ghost { opacity: 0.4; }
+    .sortable-drag { opacity: 0.9; }
+    select {
+      -webkit-appearance: none;
+      appearance: none;
+      padding-right: 2.5rem !important;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 h-screen flex overflow-hidden" x-cloak
+      x-init="Alpine.store('app').init()">
+
+  <!-- Left Sidebar -->
+  <aside class="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col h-full">
+    <div class="px-4 py-4 border-b border-gray-800">
+      <button @click="$store.router.navigate('dashboard')"
+              class="text-lg font-semibold tracking-tight hover:text-blue-400 transition">llmflows</button>
+    </div>
+
+    <!-- Projects -->
+    <div class="px-3 pt-4 pb-2">
+      <span class="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1">Projects</span>
+    </div>
+    <nav class="px-2 space-y-0.5 flex-shrink-0">
+      <template x-for="p in $store.app.projects" :key="p.id">
+        <button @click="$store.router.navigate('project', { projectId: p.id })"
+                class="w-full text-left px-3 py-1.5 rounded-lg text-sm transition truncate"
+                :class="$store.router.view === 'project' && $store.router.params.projectId === p.id
+                  ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'">
+          <span x-text="p.name"></span>
+        </button>
+      </template>
+      <div x-show="$store.app.projects.length === 0" class="px-3 py-2 text-xs text-gray-600 italic">No projects</div>
+    </nav>
+
+    <!-- Flows -->
+    <div class="px-3 pt-6 pb-2">
+      <span class="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1">Flows</span>
+    </div>
+    <nav class="px-2 space-y-0.5">
+      <button @click="$store.router.navigate('flows')"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-sm transition"
+              :class="$store.router.view === 'flows' || $store.router.view === 'flow-editor'
+                ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'">
+        Flows
+        <span class="text-xs text-gray-500 ml-1" x-text="'(' + $store.app.flows.length + ')'"></span>
+      </button>
+    </nav>
+
+    <!-- Runs -->
+    <div class="px-3 pt-6 pb-2">
+      <span class="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1">Runs</span>
+    </div>
+    <nav class="px-2 space-y-0.5">
+      <button @click="$store.router.navigate('history')"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-sm transition"
+              :class="$store.router.view === 'history'
+                ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'">
+        History
+      </button>
+    </nav>
+
+    <!-- Integrations -->
+    <div class="px-3 pt-6 pb-2">
+      <span class="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1">Integrations</span>
+    </div>
+    <nav class="px-2 space-y-0.5">
+      <button @click="$store.router.navigate('agents')"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-sm transition"
+              :class="$store.router.view === 'agents'
+                ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'">
+        Agents
+      </button>
+      <button @click="$store.router.navigate('integrations')"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-sm transition"
+              :class="$store.router.view === 'integrations'
+                ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'">
+        GitHub
+      </button>
+    </nav>
+
+    <div class="flex-1"></div>
+
+    <!-- Daemon status -->
+    <div class="border-t border-gray-800 px-4 py-3" x-data="daemonWidget()" x-init="init()">
+      <div class="flex items-center justify-between mb-1">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full" :class="running ? 'bg-green-400' : 'bg-red-400'"></span>
+          <span class="text-xs font-medium" :class="running ? 'text-green-400' : 'text-red-400'"
+                x-text="running ? 'Daemon running' : 'Daemon stopped'"></span>
+        </div>
+        <span x-show="running" class="text-[10px] text-gray-600 font-mono" x-text="pid ? 'pid ' + pid : ''"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="toggleLogs()"
+                class="text-[11px] text-gray-500 hover:text-gray-300 transition"
+                x-text="showLogs ? 'Hide logs' : 'Logs'"></button>
+        <span class="text-gray-700">·</span>
+        <button @click="$store.router.navigate('settings')"
+                class="text-[11px] transition"
+                :class="$store.router.view === 'settings' ? 'text-white' : 'text-gray-500 hover:text-gray-300'">Settings</button>
+        <span class="text-gray-700">·</span>
+        <template x-if="running">
+          <button @click="showStopConfirm = true" :disabled="_busy"
+                  class="text-[11px] text-gray-500 hover:text-red-400 transition"
+                  :class="_busy ? 'opacity-40 cursor-not-allowed' : ''"
+                  x-text="_busy ? 'Stopping...' : 'Stop'"></button>
+        </template>
+        <template x-if="!running">
+          <button @click="startDaemon()" :disabled="_busy"
+                  class="text-[11px] text-gray-500 hover:text-green-400 transition"
+                  :class="_busy ? 'opacity-40 cursor-not-allowed' : ''"
+                  x-text="_busy ? 'Starting...' : 'Start'"></button>
+        </template>
+      </div>
+
+      <!-- Daemon Logs Overlay -->
+      <div x-show="showLogs" x-transition.opacity
+           class="fixed inset-0 bg-black/70 flex items-center justify-center z-50" @click.self="showLogs = false">
+        <div class="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-3xl max-h-[80vh] flex flex-col" @click.stop>
+          <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+            <h2 class="text-sm font-semibold">Daemon Logs</h2>
+            <div class="flex items-center gap-3">
+              <button @click="loadLogs()" class="text-xs text-blue-400 hover:text-blue-300">Refresh</button>
+              <button @click="toggleLogs()" class="text-xs text-gray-500 hover:text-gray-300">Close</button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto p-4 font-mono text-xs text-gray-400 whitespace-pre-wrap bg-gray-950 rounded-b-2xl">
+            <template x-for="(line, i) in logLines" :key="i">
+              <div x-text="line" class="leading-5"></div>
+            </template>
+            <div x-show="logLines.length === 0" class="text-gray-600 italic">No logs available</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stop Confirmation Modal -->
+      <div x-show="showStopConfirm" x-transition.opacity
+           class="fixed inset-0 bg-black/70 flex items-center justify-center z-50" @click.self="showStopConfirm = false">
+        <div class="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-sm p-5" @click.stop>
+          <h2 class="text-sm font-semibold mb-2">Stop Daemon?</h2>
+          <p class="text-xs text-gray-400 mb-4">Pending runs will not be picked up while the daemon is stopped.</p>
+          <div class="flex justify-end gap-2">
+            <button @click="showStopConfirm = false"
+                    class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition">Cancel</button>
+            <button @click="stopDaemon()"
+                    class="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-500 transition">Stop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Dashboard View -->
+    <template x-if="$store.router.view === 'dashboard'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="dashboardView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <h2 class="text-xl font-semibold mb-6">Dashboard</h2>
+
+        <div x-show="loading" class="text-gray-500">Loading...</div>
+
+        <template x-if="data && data.length > 0">
+          <div>
+            <!-- Project cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+              <template x-for="entry in data" :key="entry.project.id">
+                <div @click="$store.router.navigate('project', { projectId: entry.project.id })"
+                     class="bg-gray-900 border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition">
+                  <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-medium text-white" x-text="entry.project.name"></h3>
+                    <span class="text-xs text-gray-500" x-text="totalTasks(entry) + ' tasks'"></span>
+                  </div>
+                  <div class="flex items-center gap-4 text-xs text-gray-500">
+                    <span x-show="entry.queue_depth > 0" class="text-blue-400"
+                          x-text="entry.queue_depth + ' queued'"></span>
+                    <span x-show="entry.active_runs > 0" class="text-yellow-400"
+                          x-text="entry.active_runs + ' running'"></span>
+                  </div>
+                  <!-- Active agent -->
+                  <template x-for="run in entry.executing" :key="run.run.id">
+                    <div class="mt-2 bg-gray-800 rounded-lg px-3 py-2 text-xs">
+                      <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full animate-pulse"
+                              :class="run.agent_active ? 'bg-green-400' : 'bg-yellow-400'"></span>
+                        <span class="text-gray-300" x-text="run.run.flow_name"></span>
+                        <span class="text-gray-500">step:</span>
+                        <span class="text-cyan-400" x-text="run.run.current_step || '-'"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <!-- Recent completions -->
+            <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Recent Completions</h3>
+            <div class="space-y-2">
+              <template x-for="entry in data" :key="'rc-' + entry.project.id">
+                <template x-for="run in entry.recent_completions" :key="run.id">
+                  <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 flex items-center gap-4">
+                    <span class="text-xs font-mono text-gray-400" x-text="run.id"></span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-green-900/50 text-green-300"
+                          x-text="run.outcome || 'completed'"></span>
+                    <span class="text-xs text-cyan-400" x-text="run.flow_name"></span>
+                    <span class="text-xs text-gray-500 flex-1 truncate" x-text="run.summary || '-'"></span>
+                  </div>
+                </template>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <div x-show="!loading && (!data || data.length === 0)" class="text-gray-500 text-center py-12">
+          No projects registered. Run <code class="text-cyan-400">llmflows register</code> in a git repo.
+        </div>
+      </div>
+    </template>
+
+    <!-- Project View -->
+    <template x-if="$store.router.view === 'project'">
+      <div class="flex-1 overflow-y-auto" x-data="projectView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <!-- Header -->
+        <header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">
+          <div class="flex items-center gap-3">
+            <div x-show="!editingName" class="flex items-center gap-3">
+              <h2 class="text-base font-medium" x-text="project?.name || 'Loading...'"></h2>
+              <span class="text-xs text-gray-500" x-text="project?.path || ''"></span>
+              <button @click="editName = project?.name || ''; editingName = true"
+                      class="text-xs text-gray-500 hover:text-blue-400 transition">Rename</button>
+              <button @click="deleteProject()"
+                      class="text-xs text-gray-500 hover:text-red-400 transition">Delete</button>
+            </div>
+            <div x-show="editingName" class="flex items-center gap-2">
+              <input x-model="editName" @keydown.enter="renameProject()" @keydown.escape="editingName = false"
+                     class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
+              <button @click="renameProject()" class="text-xs text-blue-400 hover:text-blue-300">Save</button>
+              <button @click="editingName = false" class="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
+            </div>
+          </div>
+          <button @click="showCreate = true" class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition">
+            + New Task
+          </button>
+        </header>
+
+        <div class="p-6">
+          <!-- Aliases -->
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3 text-sm flex-wrap">
+                <span class="text-gray-400">Aliases:</span>
+                <template x-for="a in sortedAliases()" :key="a.name">
+                  <span class="inline-flex items-center gap-1.5 bg-gray-800 rounded-lg px-2.5 py-1">
+                    <span class="font-mono text-xs" :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></span>
+                    <span class="text-gray-600 text-[10px]" x-text="a.agent + ' / ' + a.model + ' / ' + (a.flow_chain || []).join(' \u2192 ')"></span>
+                  </span>
+                </template>
+              </div>
+              <button @click="toggleAliasPanel()"
+                      class="text-xs text-blue-400 hover:text-blue-300 transition"
+                      x-text="showAliasForm ? 'Cancel' : 'Manage'"></button>
+            </div>
+            <div x-show="showAliasForm" class="mt-4 border-t border-gray-800 pt-4">
+              <p class="text-xs text-gray-500 mb-4">Configuration presets for agent, model, and flow chain. The <code class="text-gray-400">default</code> alias is used when no alias is specified. Use <code class="text-gray-400">@llmflows --alias &lt;name&gt;</code> in GitHub comments. Explicit <code class="text-gray-400">--model</code>/<code class="text-gray-400">--agent</code>/<code class="text-gray-400">--flow</code> flags override alias values.</p>
+              <!-- Aliases list -->
+              <div class="space-y-2 mb-4">
+                <template x-for="a in sortedAliases()" :key="a.name">
+                  <div class="flex items-center justify-between bg-gray-800/50 rounded-lg px-3 py-2">
+                    <div class="flex items-center gap-3">
+                      <span class="font-mono text-sm font-medium" :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></span>
+                      <span class="text-gray-500 text-xs">Agent:</span>
+                      <span class="text-gray-300 text-xs font-mono" x-text="a.agent || '-'"></span>
+                      <span class="text-gray-500 text-xs">Model:</span>
+                      <span class="text-gray-300 text-xs font-mono" x-text="a.model || '-'"></span>
+                      <span class="text-gray-500 text-xs">Flow:</span>
+                      <span class="text-gray-300 text-xs font-mono" x-text="(a.flow_chain || []).join(' \u2192 ') || '-'"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button @click="editAlias(a.name)" class="text-xs text-blue-400 hover:text-blue-300 transition">Edit</button>
+                      <button x-show="a.name !== 'default'" @click="deleteAlias(a.name)" class="text-xs text-red-400 hover:text-red-300 transition">Delete</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <!-- New alias button -->
+              <button x-show="!showNewAliasForm && !editingAlias" @click="showNewAliasForm = true; resetAliasForm()"
+                      class="text-xs text-blue-400 hover:text-blue-300 transition">+ New Alias</button>
+              <!-- Alias form -->
+              <div x-show="showNewAliasForm || editingAlias" class="bg-gray-800/30 rounded-lg p-3 space-y-3">
+                <div class="text-xs text-gray-400 font-medium" x-text="editingAlias ? ('Edit \u201c' + editingAlias + '\u201d') : 'New Alias'"></div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Alias Name</label>
+                  <input x-model="aliasForm.name" :disabled="!!editingAlias" type="text" placeholder="e.g. fast"
+                         class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Agent</label>
+                  <select x-model="aliasForm.agent" @change="loadAliasFormModels(aliasForm.agent)"
+                          class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="a in agents" :key="a">
+                      <option :value="a" x-text="a"></option>
+                    </template>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Model</label>
+                  <select x-model="aliasForm.model"
+                          class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="m in aliasFormModels" :key="m">
+                      <option :value="m" x-text="m"></option>
+                    </template>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Flow Chain</label>
+                  <div class="space-y-1 mb-2">
+                    <template x-for="(name, i) in aliasForm.flow_chain" :key="i">
+                      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5 max-w-xs">
+                        <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
+                        <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
+                        <button @click="aliasForm.flow_chain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">&#x2715;</button>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="flex gap-2 max-w-xs">
+                    <select x-model="aliasAddFlow"
+                            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="" disabled selected>Select flow...</option>
+                      <template x-for="f in flows" :key="f.id">
+                        <option :value="f.name" x-text="f.name"></option>
+                      </template>
+                    </select>
+                    <button @click="if (aliasAddFlow) { aliasForm.flow_chain.push(aliasAddFlow); aliasAddFlow = ''; }"
+                            :disabled="!aliasAddFlow"
+                            :class="!aliasAddFlow ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
+                            class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <button @click="saveAlias()"
+                          :disabled="!aliasForm.name.trim()"
+                          :class="!aliasForm.name.trim() ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+                          class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition"
+                          x-text="editingAlias ? 'Update' : 'Add Alias'"></button>
+                  <button x-show="editingAlias" @click="resetAliasForm()"
+                          class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition">New Instead</button>
+                  <button @click="showNewAliasForm = false; editingAlias = null"
+                          class="px-4 py-2 text-sm text-gray-500 hover:text-gray-300 transition">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Task table -->
+          <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                  <th class="px-4 py-3 text-left">Title</th>
+                  <th class="px-4 py-3 text-left">Description</th>
+                  <th class="px-4 py-3 text-left">Type</th>
+                  <th class="px-4 py-3 text-center">Runs</th>
+                  <th class="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="t in sortedTasks()" :key="t.id">
+                  <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition"
+                      @click="openTask(t.id)">
+                    <td class="px-4 py-3">
+                      <div class="font-medium text-gray-200 truncate max-w-[180px]" x-text="t.name || t.id"></div>
+                      <div class="text-[10px] font-mono text-gray-600 mt-0.5 flex items-center gap-1.5">
+                        <span x-text="t.id"></span>
+                        <span x-show="t.agent_active" class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block"></span>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 text-xs truncate max-w-[200px]" x-text="t.description || '-'"></td>
+                    <td class="px-4 py-3 text-xs" :class="typeColor(t.type)" x-text="t.type"></td>
+                    <td class="px-4 py-3 text-center">
+                      <span class="text-xs text-gray-500" x-text="t.run_count || 0"></span>
+                    </td>
+                    <td class="px-4 py-3 text-right" @click.stop>
+                      <button @click="openStartDialog(t)"
+                              class="text-xs text-blue-400 hover:text-blue-300 mr-2">Run</button>
+                      <button @click="deleteTask(t.id)"
+                              class="text-xs text-gray-600 hover:text-red-400 transition">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="tasks.length === 0" class="px-4 py-8 text-center text-gray-600">No tasks yet</div>
+          </div>
+        </div>
+
+        <!-- Create Task Modal -->
+        <div x-show="showCreate" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false">
+          <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-gray-700" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">New Task</h2>
+            <form @submit.prevent="createTask()">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Title</label>
+                  <input x-model="newTask.title" required
+                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                         placeholder="Short task title">
+                </div>
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Description (user prompt)</label>
+                  <textarea x-model="newTask.description" rows="3"
+                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Detailed description of what needs to be done"></textarea>
+                </div>
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Type</label>
+                  <select x-model="newTask.type"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="feature">Feature</option>
+                    <option value="fix">Fix</option>
+                    <option value="refactor">Refactor</option>
+                    <option value="chore">Chore</option>
+                  </select>
+                </div>
+              </div>
+              <div class="flex justify-end gap-3 mt-6">
+                <button type="button" @click="showCreate = false"
+                        class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
+                <button type="submit"
+                        class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">Create</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Run Modal -->
+        <div x-show="startingTask" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="startingTask = null">
+          <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-lg border border-gray-700" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">New Run</h2>
+            <div x-show="Object.keys(project?.aliases || {}).length > 1" class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
+              <span class="text-xs text-gray-500">Alias:</span>
+              <template x-for="a in sortedAliases()" :key="a.name">
+                <button @click="applyAlias(a.name)"
+                        class="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 font-mono rounded-lg transition"
+                        :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></button>
+              </template>
+            </div>
+            <div class="space-y-4">
+
+              <!-- Flow chain builder -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-400">Flow chain</label>
+                  <span class="text-xs text-gray-600">executed in order</span>
+                </div>
+                <!-- Selected chain -->
+                <div class="space-y-1 mb-2">
+                  <template x-for="(name, i) in startChain" :key="i">
+                    <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5">
+                      <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
+                      <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
+                      <button @click="startChain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">✕</button>
+                    </div>
+                  </template>
+                  <div x-show="startChain.length === 0" class="text-xs text-gray-600 px-1">No flows selected</div>
+                </div>
+                <!-- Add flow -->
+                <div class="flex gap-2">
+                  <select x-model="addFlowSelect"
+                          class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="" disabled selected>Select flow...</option>
+                    <template x-for="f in flows" :key="f.id">
+                      <option :value="f.name" x-text="f.name"></option>
+                    </template>
+                  </select>
+                  <button @click="if (addFlowSelect) { startChain.push(addFlowSelect); addFlowSelect = ''; }"
+                          :disabled="!addFlowSelect"
+                          :class="!addFlowSelect ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
+                          class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
+                </div>
+              </div>
+
+              <!-- Agent + Model selectors -->
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-sm text-gray-400 mb-1 block">Agent</label>
+                  <select x-model="startAgent" @change="onAgentChange(startAgent)"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="a in agents" :key="a">
+                      <option :value="a" x-text="a"></option>
+                    </template>
+                  </select>
+                  <p x-show="agents.length === 0" class="text-xs text-red-400 mt-1">No agents detected in PATH</p>
+                </div>
+                <div>
+                  <label class="text-sm text-gray-400 mb-1 block">Model</label>
+                  <select x-model="startModel"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="m in models" :key="m">
+                      <option :value="m" x-text="m"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+
+              <div x-show="!isFirstRun">
+                <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                <textarea x-model="startPrompt" rows="4"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-none"
+                          placeholder="What should the agent do?"></textarea>
+              </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+              <button @click="startingTask = null"
+                      class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
+              <button @click="confirmStart()" :disabled="startChain.length === 0 || !startModel || !startAgent"
+                      :class="startChain.length === 0 || !startModel || !startAgent ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+                      class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">Run</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Task Detail View -->
+    <template x-if="$store.router.view === 'task'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="taskView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <button @click="back()" class="text-sm text-gray-400 hover:text-gray-200 mb-4 flex items-center gap-1">
+          &larr; Back
+        </button>
+
+        <template x-if="task">
+          <div>
+            <!-- Task header -->
+            <div class="flex items-start gap-4 mb-6">
+              <div class="flex-1">
+                <div class="flex items-center gap-3 mb-1">
+                  <h2 class="text-xl font-semibold" x-text="task.name || task.id"></h2>
+                  <template x-if="activeRun">
+                    <span class="text-xs px-2 py-0.5 rounded" :class="runStatusBadge(activeRun.status)" x-text="activeRun.status"></span>
+                  </template>
+                  <span x-show="task.agent_active" class="text-xs text-green-400 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Agent active
+                  </span>
+                </div>
+                <p class="text-gray-500 text-xs font-mono mb-1" x-text="task.id"></p>
+                <div x-data="{ descExpanded: false }">
+                  <div class="relative">
+                    <div class="prose prose-invert max-w-none text-gray-400 text-sm leading-relaxed
+                                [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-3 [&_h1]:mb-1.5
+                                [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-2 [&_h2]:mb-1
+                                [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2 [&_h3]:mb-1
+                                [&_p]:my-1 [&_p]:text-gray-400
+                                [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                [&_li]:text-gray-400
+                                [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                [&_strong]:text-gray-200 [&_strong]:font-semibold
+                                [&_a]:text-blue-400 [&_a]:underline"
+                         :class="!descExpanded && 'line-clamp-3'"
+                         x-html="marked.parse(task.description || 'No description')"></div>
+                    <div x-show="!descExpanded && (task.description || '').length > 150"
+                         class="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none"></div>
+                  </div>
+                  <button x-show="(task.description || '').length > 150"
+                          @click="descExpanded = !descExpanded"
+                          class="text-xs text-blue-400 hover:text-blue-300 mt-1 hover:underline"
+                          x-text="descExpanded ? 'Show less' : 'Show more'"></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Task info grid -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Type</div>
+                <div class="text-sm" x-text="task.type"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Branch</div>
+                <div class="text-sm font-mono text-blue-400 truncate" x-text="task.worktree_branch || '-'"></div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Created</div>
+                <div class="text-sm text-gray-300" x-text="task.created_at ? new Date(task.created_at).toLocaleString() : '-'"></div>
+              </div>
+            </div>
+
+            <!-- Runs -->
+            <div class="mb-6">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wide">
+                  Runs
+                  <span class="text-gray-600" x-text="'(' + runs.length + ')'"></span>
+                </h3>
+                <button @click="openRunModal()"
+                        class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">
+                  + New Run
+                </button>
+              </div>
+              <div x-show="runs.length === 0" class="text-sm text-gray-600">No runs yet</div>
+
+              <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                <table class="w-full text-sm" x-show="runs.length > 0">
+                  <thead>
+                    <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                      <th class="px-4 py-3 text-left w-8"></th>
+                      <th class="px-4 py-3 text-left">Status</th>
+                      <th class="px-4 py-3 text-left">Flow</th>
+                      <th class="px-4 py-3 text-left">Step</th>
+                      <th class="px-4 py-3 text-left">Prompt</th>
+                      <th class="px-4 py-3 text-left">Date</th>
+                      <th class="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                    <template x-for="run in runs" :key="run.id">
+                      <tbody>
+                      <tr class="border-b border-gray-800/50 hover:bg-gray-800/20 cursor-pointer transition"
+                          :class="isRunActive(run) ? 'bg-yellow-900/5' : ''"
+                          @click="toggleRun(run.id)">
+                        <td class="px-4 py-3 w-4">
+                          <span x-show="run.status === 'running'"
+                                class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse inline-block"></span>
+                          <span x-show="run.status === 'queued'"
+                                class="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                          <span x-show="run.status === 'completed' && (!run.outcome || run.outcome === 'completed')"
+                                class="w-2 h-2 rounded-full inline-block bg-green-500"></span>
+                          <span x-show="run.status === 'completed' && run.outcome === 'cancelled'"
+                                class="w-2 h-2 rounded-full inline-block bg-red-400"></span>
+                          <span x-show="run.status === 'completed' && run.outcome === 'timeout'"
+                                class="w-2 h-2 rounded-full inline-block bg-orange-400"></span>
+                          <span x-show="run.status === 'completed' && run.outcome === 'failed'"
+                                class="w-2 h-2 rounded-full inline-block bg-red-500"></span>
+                        </td>
+                        <td class="px-4 py-3">
+                          <span class="text-xs px-2 py-0.5 rounded" :class="runStatusBadge(runDisplayStatus(run))"
+                                x-text="runDisplayStatus(run)"></span>
+                        </td>
+                        <td class="px-4 py-3 text-xs text-cyan-400">
+                          <template x-if="run.flow_chain && JSON.parse(run.flow_chain || '[]').length > 1">
+                            <div class="flex flex-wrap gap-1 items-center">
+                              <template x-for="(fn, fi) in JSON.parse(run.flow_chain)" :key="fi">
+                                <span class="flex items-center gap-1">
+                                  <span :class="fn === run.flow_name ? 'text-cyan-300 font-semibold' : 'text-gray-500'" x-text="fn"></span>
+                                  <span x-show="fi < JSON.parse(run.flow_chain).length - 1" class="text-gray-700">→</span>
+                                </span>
+                              </template>
+                            </div>
+                          </template>
+                          <template x-if="!run.flow_chain || JSON.parse(run.flow_chain || '[]').length <= 1">
+                            <span x-text="run.flow_name"></span>
+                          </template>
+                        </td>
+                        <td class="px-4 py-3 text-xs text-gray-400"
+                            x-text="run.status === 'completed' ? '-' : (run.current_step || '-')"></td>
+                        <td class="px-4 py-3 text-xs text-gray-500 max-w-[200px]">
+                          <div class="truncate" x-text="run.user_prompt || '-'"></div>
+                        </td>
+                        <td class="px-4 py-3 text-xs text-gray-600 whitespace-nowrap"
+                            x-text="run.completed_at ? new Date(run.completed_at).toLocaleString() : (run.started_at ? new Date(run.started_at).toLocaleString() : new Date(run.created_at).toLocaleString())"></td>
+                        <td class="px-4 py-3 text-right flex items-center justify-end gap-3" @click.stop>
+                          <button @click="viewRunLogs(run.id); expandedRun = run.id"
+                                  x-show="run.log_path"
+                                  class="text-xs text-blue-400 hover:text-blue-300 transition">Logs</button>
+                          <button x-show="run.status === 'running' || run.status === 'queued'"
+                                  @click="forceStopRun(run.id)"
+                                  class="text-xs text-red-400 hover:text-red-300 transition font-medium">Force Stop</button>
+                          <button x-show="run.status === 'completed'"
+                                  @click="deleteRun(run.id)"
+                                  class="text-xs text-gray-600 hover:text-red-400 transition">Delete</button>
+                        </td>
+                      </tr>
+                      <!-- Expanded detail: inline below its own row -->
+                      <template x-if="expandedRun === run.id">
+                      <tr class="border-b border-gray-800/30">
+                        <td colspan="7" class="px-4 py-4 bg-gray-950/50">
+                          <div x-show="run.user_prompt" class="mb-3" x-data="{ promptExpanded: false }">
+                            <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Prompt</div>
+                            <div class="relative">
+                              <div class="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed bg-gray-900 rounded-lg p-3
+                                          [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
+                                          [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5
+                                          [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
+                                          [&_p]:my-1.5 [&_p]:text-gray-300
+                                          [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                          [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                          [&_li]:text-gray-300
+                                          [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                          [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                          [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                          [&_strong]:text-gray-100 [&_strong]:font-semibold
+                                          [&_a]:text-blue-400 [&_a]:underline"
+                                   :class="promptExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-20 overflow-hidden'"
+                                   x-html="marked.parse(run.user_prompt || '')"></div>
+                              <div x-show="!promptExpanded && (run.user_prompt || '').length > 200"
+                                   class="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-gray-900 to-transparent rounded-b-lg pointer-events-none"></div>
+                            </div>
+                            <button x-show="(run.user_prompt || '').length > 200"
+                                    @click="promptExpanded = !promptExpanded"
+                                    class="text-xs text-blue-400 hover:text-blue-300 mt-1 hover:underline"
+                                    x-text="promptExpanded ? 'Show less' : 'Show more'"></button>
+                          </div>
+                          <div x-show="run.summary" class="mb-3">
+                            <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
+                            <div class="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed
+                                        [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:border-b [&_h1]:border-gray-800 [&_h1]:pb-1
+                                        [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:border-b [&_h2]:border-gray-800/50 [&_h2]:pb-0.5
+                                        [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
+                                        [&_p]:my-1.5 [&_p]:text-gray-300
+                                        [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                        [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                        [&_li]:text-gray-300
+                                        [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                        [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                        [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                        [&_strong]:text-gray-100 [&_strong]:font-semibold
+                                        [&_a]:text-blue-400 [&_a]:underline"
+                                 x-html="marked.parse(run.summary || '')"></div>
+                          </div>
+                          <div x-show="streamingRunId === run.id">
+                            <div class="flex items-center justify-between mb-2">
+                              <span class="text-[10px] uppercase tracking-wide text-gray-600 flex items-center gap-2">
+                                Agent Log
+                                <span x-show="logStreaming" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                              </span>
+                              <button @click.stop="stopLogStream(); streamingRunId = null"
+                                      class="text-xs text-gray-500 hover:text-gray-300 transition">Close</button>
+                            </div>
+                            <!-- Initial prompt (start.md) -->
+                            <div x-show="run.prompt" class="mb-2">
+                              <details class="group">
+                                <summary class="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none hover:text-gray-400 list-none flex items-center gap-1">
+                                  <span class="text-gray-700 group-open:rotate-90 transition-transform inline-block">▶</span>
+                                  Initial prompt (start.md)
+                                </summary>
+                                <pre class="mt-1 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto"
+                                     x-text="run.prompt"></pre>
+                              </details>
+                            </div>
+                            <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                              <div class="flex items-center justify-end px-3 py-1.5 border-b border-gray-800">
+                                <button @click="copyLogs()" class="text-[10px] text-gray-500 hover:text-gray-300 transition" x-text="logsCopied ? 'Copied!' : 'Copy logs'"></button>
+                              </div>
+                              <div class="overflow-y-auto font-mono text-xs p-3 space-y-1 max-h-80">
+                              <template x-for="(entry, i) in logEntries" :key="i">
+                                <div>
+                                  <!-- Regular text entry -->
+                                  <div x-show="entry.type !== 'output'" :class="entry.cls">
+                                    <span x-text="entry.text"></span>
+                                  </div>
+                                  <!-- Expandable shell output block -->
+                                  <div x-show="entry.type === 'output'" class="mt-0.5">
+                                    <template x-if="!entry.expanded">
+                                      <div>
+                                        <template x-for="(line, li) in entry.lines.slice(0, 8)" :key="li">
+                                          <div class="text-gray-500 pl-4" x-text="line"></div>
+                                        </template>
+                                        <button x-show="entry.lines.length > 8"
+                                                @click="entry.expanded = true"
+                                                class="text-gray-600 hover:text-gray-400 pl-4 mt-0.5 underline underline-offset-2">
+                                          + <span x-text="entry.lines.length - 8"></span> more lines
+                                        </button>
+                                      </div>
+                                    </template>
+                                    <template x-if="entry.expanded">
+                                      <div>
+                                        <template x-for="(line, li) in entry.lines" :key="li">
+                                          <div class="text-gray-500 pl-4" x-text="line"></div>
+                                        </template>
+                                        <button @click="entry.expanded = false"
+                                                class="text-gray-600 hover:text-gray-400 pl-4 mt-0.5 underline underline-offset-2">
+                                          ↑ Collapse
+                                        </button>
+                                      </div>
+                                    </template>
+                                  </div>
+                                </div>
+                              </template>
+                              <div x-show="logEntries.length === 0 && logStreaming" class="text-gray-600 italic">Connecting...</div>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      </template>
+                      </tbody>
+                    </template>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <div x-show="!task" class="text-gray-500 text-center py-12">Task not found</div>
+
+        <!-- New Run Modal -->
+        <div x-show="runModal" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="runModal = false">
+          <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-lg border border-gray-700" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">New Run</h2>
+            <div x-show="Object.keys(runModalProject?.aliases || {}).length > 1" class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
+              <span class="text-xs text-gray-500">Alias:</span>
+              <template x-for="a in sortedRunModalAliases()" :key="a.name">
+                <button @click="applyRunModalAlias(a.name)"
+                        class="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 font-mono rounded-lg transition"
+                        :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></button>
+              </template>
+            </div>
+            <div class="space-y-4">
+              <!-- Flow chain builder -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-400">Flow chain</label>
+                  <span class="text-xs text-gray-600">executed in order</span>
+                </div>
+                <div class="space-y-1 mb-2">
+                  <template x-for="(name, i) in runModalChain" :key="i">
+                    <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5">
+                      <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
+                      <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
+                      <button @click="runModalChain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">✕</button>
+                    </div>
+                  </template>
+                  <div x-show="runModalChain.length === 0" class="text-xs text-gray-600 px-1">No flows selected</div>
+                </div>
+                <div class="flex gap-2">
+                  <select x-model="runModalFlowSelect"
+                          class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="" disabled selected>Select flow...</option>
+                    <template x-for="f in $store.app.flows" :key="f.id">
+                      <option :value="f.name" x-text="f.name"></option>
+                    </template>
+                  </select>
+                  <button @click="if (runModalFlowSelect) { runModalChain.push(runModalFlowSelect); runModalFlowSelect = ''; }"
+                          :disabled="!runModalFlowSelect"
+                          :class="!runModalFlowSelect ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
+                          class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
+                </div>
+              </div>
+              <!-- Agent + Model selectors -->
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-sm text-gray-400 mb-1 block">Agent</label>
+                  <select x-model="runModalAgent" @change="onRunModalAgentChange(runModalAgent)"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="a in runModalAgents" :key="a">
+                      <option :value="a" x-text="a"></option>
+                    </template>
+                  </select>
+                  <p x-show="runModalAgents.length === 0" class="text-xs text-red-400 mt-1">No agents detected in PATH</p>
+                </div>
+                <div>
+                  <label class="text-sm text-gray-400 mb-1 block">Model</label>
+                  <select x-model="runModalModel"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <template x-for="m in runModalModels" :key="m">
+                      <option :value="m" x-text="m"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+
+              <div x-show="!runModalIsFirstRun">
+                <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                <textarea x-model="runModalPrompt" rows="4"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-none"
+                          placeholder="What should the agent do?"></textarea>
+              </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+              <button @click="runModal = false"
+                      class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
+              <button @click="submitRunModal()" :disabled="runModalChain.length === 0 || !runModalModel || !runModalAgent"
+                      :class="runModalChain.length === 0 || !runModalModel || !runModalAgent ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+                      class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">Run</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Flows List View -->
+    <template x-if="$store.router.view === 'flows'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="flowsView()" x-init="init()">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-xl font-semibold">Flows</h2>
+          <div class="flex items-center gap-2">
+            <button @click="exportFlows()"
+                    class="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition">Export</button>
+            <label class="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition cursor-pointer">
+              Import
+              <input type="file" accept=".json" @change="importFlows($event)" class="hidden">
+            </label>
+            <button @click="showCreate = true"
+                    class="text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">+ New Flow</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <template x-for="f in flows" :key="f.id">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="font-medium text-white flex items-center gap-2">
+                  <span x-text="f.name"></span>
+                  <span x-show="f.name === 'default'" class="text-[10px] uppercase px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded">default</span>
+                </h3>
+                <span class="text-xs text-gray-500" x-text="f.step_count + ' steps'"></span>
+              </div>
+              <p class="text-xs text-gray-400 mb-3 line-clamp-2" x-text="f.description || 'No description'"></p>
+              <div class="flex items-center gap-2">
+                <button @click="editFlow(f.id)"
+                        class="text-xs text-blue-400 hover:text-blue-300">Edit</button>
+                <button x-show="f.name !== 'default'" @click="deleteFlow(f.id)"
+                        class="text-xs text-red-400 hover:text-red-300">Delete</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Create Flow Modal -->
+        <div x-show="showCreate" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false">
+          <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-gray-700" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">New Flow</h2>
+            <form @submit.prevent="createFlow()">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Name</label>
+                  <input x-model="newFlow.name" required
+                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                         placeholder="my-flow">
+                </div>
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Description</label>
+                  <input x-model="newFlow.description"
+                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                         placeholder="Optional description">
+                </div>
+                <div>
+                  <label class="block text-sm text-gray-400 mb-1">Copy from (optional)</label>
+                  <select x-model="newFlow.copy_from"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Start empty</option>
+                    <template x-for="f in flows" :key="f.id">
+                      <option :value="f.name" x-text="f.name"></option>
+                    </template>
+                  </select>
+                </div>
+              </div>
+              <div class="flex justify-end gap-3 mt-6">
+                <button type="button" @click="showCreate = false"
+                        class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
+                <button type="submit"
+                        class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">Create</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Flow Editor View -->
+    <template x-if="$store.router.view === 'flow-editor'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="flowEditorView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <template x-if="flow">
+          <div>
+            <button @click="back()" class="text-sm text-gray-400 hover:text-gray-200 mb-4 flex items-center gap-1">&larr; Flows</button>
+
+            <!-- Flow metadata -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6">
+              <template x-if="!editingMeta">
+                <div>
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <h2 class="text-xl font-semibold" x-text="flow.name"></h2>
+                      <p class="text-sm text-gray-400 mt-1" x-text="flow.description || 'No description'"></p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button @click="editingMeta = true" class="text-xs text-blue-400 hover:text-blue-300">Edit</button>
+                      <button @click="duplicateFlow()" class="text-xs text-gray-400 hover:text-gray-200">Duplicate</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template x-if="editingMeta">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-gray-500 mb-1">Name</label>
+                    <input x-model="metaForm.name" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-gray-500 mb-1">Description</label>
+                    <input x-model="metaForm.description" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  </div>
+                  <div class="flex gap-2">
+                    <button @click="saveMeta()" class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Save</button>
+                    <button @click="editingMeta = false" class="text-xs text-gray-400 hover:text-gray-200">Cancel</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- Steps -->
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wide">
+                Steps
+                <span class="text-gray-600" x-text="'(' + flow.steps.length + ')'"></span>
+              </h3>
+              <button @click="showAddStep = true" class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">+ Add Step</button>
+            </div>
+
+            <div x-ref="stepList" class="space-y-2 mb-6">
+              <template x-for="(step, si) in flow.steps" :key="step.id">
+                <div :data-step-id="step.id" class="bg-gray-900 border border-gray-800 rounded-lg">
+                  <template x-if="editingStep !== step.id">
+                    <div class="px-4 py-3 flex items-center gap-3">
+                      <span class="drag-handle cursor-grab text-gray-600 hover:text-gray-400">::</span>
+                      <span class="text-xs text-gray-500 w-6" x-text="si + 1"></span>
+                      <span class="font-medium text-cyan-400" x-text="step.name"></span>
+                      <span class="flex-1 text-xs text-gray-500 truncate" x-text="(step.content || '').slice(0, 80).replace(/\n/g, ' ')"></span>
+                      <template x-if="step.gates && step.gates.length">
+                        <span class="text-xs bg-amber-900/50 text-amber-400 border border-amber-800 px-1.5 py-0.5 rounded" x-text="step.gates.length + ' gate' + (step.gates.length > 1 ? 's' : '')"></span>
+                      </template>
+                      <button @click="startEditStep(step)" class="text-xs text-blue-400 hover:text-blue-300">Edit</button>
+                      <button @click="removeStep(step.id)" class="text-xs text-red-400 hover:text-red-300">Remove</button>
+                    </div>
+                  </template>
+                  <template x-if="editingStep === step.id">
+                    <div class="p-4 space-y-3">
+                      <div>
+                        <label class="block text-xs text-gray-500 mb-1">Name</label>
+                        <input x-model="stepForm.name" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      </div>
+                      <div>
+                        <label class="block text-xs text-gray-500 mb-1">Content (Markdown)</label>
+                        <textarea x-model="stepForm.content" rows="12"
+                                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                      </div>
+                      <div>
+                        <div class="flex items-center gap-2 mb-2">
+                          <label class="block text-xs text-gray-500">Gates</label>
+                          <span class="text-xs text-gray-600">Shell commands that must exit 0 before advancing</span>
+                        </div>
+                        <template x-for="(gate, gi) in stepForm.gates" :key="gi">
+                          <div class="flex gap-2 mb-2">
+                            <input x-model="gate.command" placeholder="command, e.g. test -f output.txt"
+                                   class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500">
+                            <input x-model="gate.message" placeholder="failure message (optional)"
+                                   class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                            <button type="button" @click="removeGate(stepForm, gi)" class="text-xs text-red-400 hover:text-red-300 px-1">&times;</button>
+                          </div>
+                        </template>
+                        <button type="button" @click="addGate(stepForm)" class="text-xs text-amber-400 hover:text-amber-300">+ Add gate</button>
+                        <p class="text-xs text-gray-600 mt-2">Variables: <code class="text-amber-500/70">{{run.id}}</code> <code class="text-amber-500/70">{{task.id}}</code> <code class="text-amber-500/70">{{flow.name}}</code></p>
+                      </div>
+                      <div class="flex gap-2">
+                        <button @click="saveStep(step.id)" class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">Save</button>
+                        <button @click="cancelEditStep()" class="text-xs text-gray-400 hover:text-gray-200">Cancel</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <!-- System steps note -->
+            <div class="text-xs text-gray-600 mb-6 bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+              System steps <span class="text-cyan-600">start</span> (beginning) and <span class="text-cyan-600">complete</span> (end) are auto-injected and not shown here.
+            </div>
+
+            <!-- Add Step Modal -->
+            <div x-show="showAddStep" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showAddStep = false">
+              <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-gray-700" @click.stop>
+                <h2 class="text-lg font-semibold mb-4">Add Step</h2>
+                <form @submit.prevent="addStep()">
+                  <div class="space-y-4">
+                    <div>
+                      <label class="block text-sm text-gray-400 mb-1">Name</label>
+                      <input x-model="newStep.name" required
+                             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                             placeholder="e.g. review">
+                    </div>
+                    <div>
+                      <label class="block text-sm text-gray-400 mb-1">Position (optional)</label>
+                      <input x-model="newStep.position" type="number"
+                             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                             placeholder="Auto (end)">
+                    </div>
+                    <div>
+                      <label class="block text-sm text-gray-400 mb-1">Content (Markdown)</label>
+                      <textarea x-model="newStep.content" rows="8"
+                                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="# Step Name\n\n## PURPOSE\n..."></textarea>
+                    </div>
+                    <div>
+                      <div class="flex items-center gap-2 mb-2">
+                        <label class="block text-sm text-gray-400">Gates</label>
+                        <span class="text-xs text-gray-600">optional</span>
+                      </div>
+                      <template x-for="(gate, gi) in newStep.gates" :key="gi">
+                        <div class="flex gap-2 mb-2">
+                          <input x-model="gate.command" placeholder="command"
+                                 class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500">
+                          <input x-model="gate.message" placeholder="failure message"
+                                 class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                          <button type="button" @click="removeGate(newStep, gi)" class="text-xs text-red-400 hover:text-red-300 px-1">&times;</button>
+                        </div>
+                      </template>
+                      <button type="button" @click="addGate(newStep)" class="text-xs text-amber-400 hover:text-amber-300">+ Add gate</button>
+                      <p class="text-xs text-gray-600 mt-2">Variables: <code class="text-amber-500/70">{{run.id}}</code> <code class="text-amber-500/70">{{task.id}}</code> <code class="text-amber-500/70">{{flow.name}}</code></p>
+                    </div>
+                  </div>
+                  <div class="flex justify-end gap-3 mt-6">
+                    <button type="button" @click="showAddStep = false"
+                            class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
+                    <button type="submit"
+                            class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">Add</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+          </div>
+        </template>
+
+        <div x-show="!flow" class="text-gray-500 text-center py-12">Loading flow...</div>
+      </div>
+    </template>
+
+    <!-- History View -->
+    <template x-if="$store.router.view === 'history'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="historyView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-xl font-semibold">History</h2>
+          <div class="flex items-center gap-3">
+            <select x-model="filterStatus" @change="offset = 0"
+                    class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All statuses</option>
+              <option value="running">Running</option>
+              <option value="queued">Queued</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="timeout">Timeout</option>
+            </select>
+            <span class="text-xs text-gray-500" x-text="pageInfo"></span>
+            <button @click="prevPage()" :disabled="!hasPrev"
+                    :class="!hasPrev ? 'opacity-30 cursor-not-allowed' : 'hover:text-gray-200'"
+                    class="text-xs text-gray-500 transition">&larr; Prev</button>
+            <button @click="nextPage()" :disabled="!hasMore"
+                    :class="!hasMore ? 'opacity-30 cursor-not-allowed' : 'hover:text-gray-200'"
+                    class="text-xs text-gray-500 transition">Next &rarr;</button>
+          </div>
+        </div>
+
+        <div x-show="loading" class="text-gray-500 text-center py-12">Loading...</div>
+        <div x-show="!loading && runs.length === 0" class="text-center py-12 text-gray-600">No runs found</div>
+
+        <div x-show="!loading && runs.length > 0" class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                <th class="px-4 py-3 text-left w-8"></th>
+                <th class="px-4 py-3 text-left">Status</th>
+                <th class="px-4 py-3 text-left">Task</th>
+                <th class="px-4 py-3 text-left">Project</th>
+                <th class="px-4 py-3 text-left">Flow</th>
+                <th class="px-4 py-3 text-left">Agent / Model</th>
+                <th class="px-4 py-3 text-left">Duration</th>
+                <th class="px-4 py-3 text-left">Date</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <template x-for="run in filteredRuns()" :key="run.id">
+              <tbody>
+                <tr class="border-b border-gray-800/50 hover:bg-gray-800/20 cursor-pointer transition"
+                    :class="run.status === 'running' ? 'bg-yellow-900/5' : ''"
+                    @click="toggleRun(run.id)">
+                  <td class="px-4 py-3 w-4">
+                    <span class="w-2 h-2 rounded-full inline-block" :class="statusDot(run)"></span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <span class="text-xs px-2 py-0.5 rounded" :class="statusBadge(displayStatus(run))"
+                          x-text="displayStatus(run)"></span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <button @click.stop="goToTask(run.task_id)"
+                            class="text-sm text-gray-200 hover:text-blue-400 transition truncate max-w-[160px] block text-left"
+                            x-text="run.task_name || run.task_id"></button>
+                    <div class="text-[10px] font-mono text-gray-600 mt-0.5" x-text="run.id"></div>
+                  </td>
+                  <td class="px-4 py-3">
+                    <button @click.stop="goToProject(run)"
+                            class="text-xs text-gray-400 hover:text-blue-400 transition truncate max-w-[120px] block text-left"
+                            x-text="run.project_name || run.project_id"></button>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-cyan-400">
+                    <template x-if="run.flow_chain && JSON.parse(run.flow_chain || '[]').length > 1">
+                      <div class="flex flex-wrap gap-1 items-center">
+                        <template x-for="(fn, fi) in JSON.parse(run.flow_chain)" :key="fi">
+                          <span class="flex items-center gap-1">
+                            <span :class="fn === run.flow_name ? 'text-cyan-300 font-semibold' : 'text-gray-500'" x-text="fn"></span>
+                            <span x-show="fi < JSON.parse(run.flow_chain).length - 1" class="text-gray-700">&rarr;</span>
+                          </span>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="!run.flow_chain || JSON.parse(run.flow_chain || '[]').length <= 1">
+                      <span x-text="run.flow_name"></span>
+                    </template>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-gray-500">
+                    <span x-text="(run.agent || 'cursor')"></span>
+                    <span class="text-gray-700">/</span>
+                    <span x-text="run.model || '-'"></span>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap" x-text="duration(run)"></td>
+                  <td class="px-4 py-3 text-xs text-gray-600 whitespace-nowrap"
+                      x-text="run.created_at ? new Date(run.created_at).toLocaleString() : '-'"></td>
+                  <td class="px-4 py-3 text-right" @click.stop>
+                    <button @click="viewRunLogs(run.id)"
+                            x-show="run.log_path"
+                            class="text-xs text-blue-400 hover:text-blue-300 transition">Logs</button>
+                    <button @click="goToTask(run.task_id)"
+                            class="text-xs text-gray-500 hover:text-gray-300 transition ml-2">Task</button>
+                  </td>
+                </tr>
+                <!-- Expanded row: summary + logs -->
+                <template x-if="expandedRun === run.id">
+                  <tr class="border-b border-gray-800/30">
+                    <td colspan="9" class="px-4 py-4 bg-gray-950/50">
+                      <div x-show="run.user_prompt" class="mb-3" x-data="{ promptExpanded: false }">
+                        <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Prompt</div>
+                        <div class="relative">
+                          <div class="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed bg-gray-900 rounded-lg p-3
+                                      [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
+                                      [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5
+                                      [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
+                                      [&_p]:my-1.5 [&_p]:text-gray-300
+                                      [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                      [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                      [&_li]:text-gray-300
+                                      [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                      [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                      [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                      [&_strong]:text-gray-100 [&_strong]:font-semibold
+                                      [&_a]:text-blue-400 [&_a]:underline"
+                               :class="promptExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-20 overflow-hidden'"
+                               x-html="marked.parse(run.user_prompt || '')"></div>
+                          <div x-show="!promptExpanded && (run.user_prompt || '').length > 200"
+                               class="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-gray-900 to-transparent rounded-b-lg pointer-events-none"></div>
+                        </div>
+                        <button x-show="(run.user_prompt || '').length > 200"
+                                @click="promptExpanded = !promptExpanded"
+                                class="text-xs text-blue-400 hover:text-blue-300 mt-1 hover:underline"
+                                x-text="promptExpanded ? 'Show less' : 'Show more'"></button>
+                      </div>
+                      <div x-show="run.summary" class="mb-3">
+                        <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
+                        <div class="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed
+                                    [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
+                                    [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5
+                                    [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
+                                    [&_p]:my-1.5 [&_p]:text-gray-300
+                                    [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                    [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                    [&_li]:text-gray-300
+                                    [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                    [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                    [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                    [&_strong]:text-gray-100 [&_strong]:font-semibold
+                                    [&_a]:text-blue-400 [&_a]:underline"
+                             x-html="marked.parse(run.summary || '')"></div>
+                      </div>
+                      <!-- Logs viewer -->
+                      <div x-show="streamingRunId === run.id">
+                        <div class="flex items-center justify-between mb-2">
+                          <span class="text-[10px] uppercase tracking-wide text-gray-600 flex items-center gap-2">
+                            Agent Log
+                            <span x-show="logStreaming" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                          </span>
+                          <div class="flex items-center gap-3">
+                            <button @click.stop="copyLogs()" class="text-[10px] text-gray-500 hover:text-gray-300 transition" x-text="logsCopied ? 'Copied!' : 'Copy logs'"></button>
+                            <button @click.stop="stopLogStream(); streamingRunId = null"
+                                    class="text-xs text-gray-500 hover:text-gray-300 transition">Close</button>
+                          </div>
+                        </div>
+                        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                          <div class="overflow-y-auto font-mono text-xs p-3 space-y-1 max-h-80">
+                            <template x-for="(entry, i) in logEntries" :key="i">
+                              <div>
+                                <div x-show="entry.type !== 'output'" :class="entry.cls">
+                                  <span x-text="entry.text"></span>
+                                </div>
+                                <div x-show="entry.type === 'output'" class="mt-0.5">
+                                  <template x-if="!entry.expanded">
+                                    <div>
+                                      <template x-for="(line, li) in entry.lines.slice(0, 8)" :key="li">
+                                        <div class="text-gray-500 pl-4" x-text="line"></div>
+                                      </template>
+                                      <button x-show="entry.lines.length > 8"
+                                              @click="entry.expanded = true"
+                                              class="text-gray-600 hover:text-gray-400 pl-4 mt-0.5 underline underline-offset-2">
+                                        + <span x-text="entry.lines.length - 8"></span> more lines
+                                      </button>
+                                    </div>
+                                  </template>
+                                  <template x-if="entry.expanded">
+                                    <div>
+                                      <template x-for="(line, li) in entry.lines" :key="li">
+                                        <div class="text-gray-500 pl-4" x-text="line"></div>
+                                      </template>
+                                      <button @click="entry.expanded = false"
+                                              class="text-gray-600 hover:text-gray-400 pl-4 mt-0.5 underline underline-offset-2">
+                                        &uarr; Collapse
+                                      </button>
+                                    </div>
+                                  </template>
+                                </div>
+                              </div>
+                            </template>
+                            <div x-show="logEntries.length === 0 && logStreaming" class="text-gray-600 italic">Connecting...</div>
+                          </div>
+                        </div>
+                      </div>
+                      <!-- Quick action to open logs if not streaming yet -->
+                      <div x-show="streamingRunId !== run.id && run.log_path" class="mt-2">
+                        <button @click.stop="viewRunLogs(run.id)"
+                                class="text-xs text-blue-400 hover:text-blue-300 transition">View Logs</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </template>
+          </table>
+        </div>
+
+        <!-- Pagination footer -->
+        <div x-show="total > limit" class="flex items-center justify-between mt-4">
+          <span class="text-xs text-gray-500" x-text="pageInfo"></span>
+          <div class="flex gap-2">
+            <button @click="prevPage()" :disabled="!hasPrev"
+                    :class="!hasPrev ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-700'"
+                    class="text-xs px-3 py-1.5 bg-gray-800 rounded-lg transition">&larr; Previous</button>
+            <button @click="nextPage()" :disabled="!hasMore"
+                    :class="!hasMore ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-700'"
+                    class="text-xs px-3 py-1.5 bg-gray-800 rounded-lg transition">Next &rarr;</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Agents View -->
+    <template x-if="$store.router.view === 'agents'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="agentsView()" x-init="init()">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold mb-2">Agents</h2>
+          <p class="text-sm text-gray-400">Coding agents that llmflows can orchestrate. Each agent is a CLI tool that receives a prompt and executes tasks autonomously in your codebase. <br>Only agents detected in your PATH are available for selection when starting a run.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <template x-for="a in agentList" :key="a.key">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-medium text-white" x-text="a.label"></h3>
+                <span class="text-[10px] uppercase px-1.5 py-0.5 rounded"
+                      :class="a.available ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'"
+                      x-text="a.available ? 'ready' : 'not found'"></span>
+              </div>
+
+              <div class="mb-3">
+                <label class="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Command</label>
+                <div class="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 font-mono text-sm text-cyan-400" x-text="a.command"></div>
+              </div>
+
+              <div class="space-y-1.5 text-xs mb-3">
+                <div class="flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full" :class="a.binary_path ? 'bg-green-400' : 'bg-red-400'"></span>
+                  <span class="text-gray-400" x-text="a.binary + ' binary'"></span>
+                  <span class="text-gray-600 font-mono ml-auto truncate max-w-[180px]"
+                        :title="a.binary_path || 'not found'"
+                        x-text="a.binary_path || 'not found'"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Integrations View -->
+    <template x-if="$store.router.view === 'integrations'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="integrationsView()" x-init="init()" @destroy.window="destroy && destroy()">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold mb-2">GitHub Integration</h2>
+          <p class="text-sm text-gray-400">Connect your GitHub repositories to trigger agent runs from issue comments. <br>When someone comments <code class="text-gray-300 bg-gray-800 px-1 rounded">@llmflows</code> on an issue, llmflows creates a task, queues a run, and posts results back to the issue. Optionally override defaults with <code class="text-gray-300 bg-gray-800 px-1 rounded">@llmflows --model [name] --flow [flow1,flow2] --agent [name]</code>.</p>
+        </div>
+
+        <!-- Token section -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+          <h3 class="text-sm font-medium text-gray-300 mb-3">GitHub Token</h3>
+          <div class="flex items-center gap-3 mb-3">
+            <span class="w-2 h-2 rounded-full" :class="hasToken ? 'bg-green-400' : 'bg-red-400'"></span>
+            <span class="text-sm" :class="hasToken ? 'text-green-400' : 'text-red-400'"
+                  x-text="hasToken ? 'Token configured' : 'No token'"></span>
+            <span x-show="hasToken" class="text-xs text-gray-600 font-mono" x-text="maskedToken"></span>
+          </div>
+          <div class="flex gap-2">
+            <input x-model="token" type="password" placeholder="ghp_... or paste token"
+                   class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button @click="saveToken()" :disabled="!token"
+                    :class="!token ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+                    class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">Save</button>
+          </div>
+          <p x-show="tokenSaved" class="text-xs text-green-400 mt-2">Token saved successfully</p>
+          <p class="text-xs text-gray-600 mt-2">Token requires <code class="text-gray-500">repo</code> scope. Generate one at <code class="text-gray-500">github.com/settings/tokens</code>.</p>
+        </div>
+
+        <!-- Projects table -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                <th class="px-4 py-3 text-left">Project</th>
+                <th class="px-4 py-3 text-left">Repository</th>
+                <th class="px-4 py-3 text-center">Polling</th>
+                <th class="px-4 py-3 text-left">Last Polled</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="p in projects" :key="p.id">
+                <tr class="border-b border-gray-800/50 hover:bg-gray-800/20 transition">
+                  <td class="px-4 py-3 font-medium text-gray-200" x-text="p.name"></td>
+                  <td class="px-4 py-3 text-xs font-mono text-cyan-400" x-text="getRepo(p.id) || '-'"></td>
+                  <td class="px-4 py-3 text-center">
+                    <button @click="toggleEnabled(p.id)"
+                            class="w-10 h-5 rounded-full transition relative"
+                            :class="isEnabled(p.id) ? 'bg-green-600' : 'bg-gray-700'">
+                      <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                            :class="isEnabled(p.id) ? 'left-5' : 'left-0.5'"></span>
+                    </button>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-gray-500" x-text="getLastPolled(p.id)"></td>
+                  <td class="px-4 py-3 text-right">
+                    <button @click="detectRepo(p.id)"
+                            class="text-xs text-blue-400 hover:text-blue-300 transition">Detect Repo</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="projects.length === 0" class="px-4 py-8 text-center text-gray-600">No projects registered</div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Settings View -->
+    <template x-if="$store.router.view === 'settings'">
+      <div class="flex-1 overflow-y-auto p-6" x-data="settingsView()" x-init="init()">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold mb-2">Settings</h2>
+          <p class="text-sm text-gray-400">Configure daemon behavior. Changes are saved to <code class="text-gray-300 bg-gray-800 px-1 rounded">~/.llmflows/config.toml</code>. Stop and start the daemon to apply changes.</p>
+        </div>
+
+        <div x-show="loading" class="text-gray-500">Loading...</div>
+
+        <div x-show="!loading" class="space-y-6 max-w-xl">
+          <!-- Daemon Config -->
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <h3 class="text-sm font-medium text-gray-300 mb-4">Daemon</h3>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Poll interval (seconds)</label>
+                <input x-model.number="pollInterval" type="number" min="5" step="5"
+                       class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-600 mt-1">How often the daemon checks for pending runs.</p>
+              </div>
+
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Agent run timeout (minutes)</label>
+                <input x-model.number="runTimeout" type="number" min="0" step="5"
+                       class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-600 mt-1">Maximum time a run can take before being killed. Set to 0 to disable.</p>
+              </div>
+
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Gate timeout (seconds)</label>
+                <input x-model.number="gateTimeout" type="number" min="5" step="5"
+                       class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-600 mt-1">Maximum time each gate command can run before timing out.</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3 mt-5">
+              <button @click="save()" :disabled="saving"
+                      :class="saving ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+                      class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">
+                <span x-text="saving ? 'Saving...' : 'Save'"></span>
+              </button>
+              <p x-show="saved" x-transition class="text-xs text-green-400">Saved</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </template>
+
+    <!-- Empty state (no view selected) -->
+    <template x-if="!['dashboard','project','task','flows','flow-editor','history','agents','integrations','settings'].includes($store.router.view)">
+      <div class="flex-1 flex items-center justify-center">
+        <p class="text-gray-500 text-lg">Select a view from the sidebar</p>
+      </div>
+    </template>
+
+  </div>
+
+</body>
+</html>

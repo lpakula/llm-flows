@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "flows": [
+    {
+      "name": "default",
+      "description": "Simple execution flow: execute, test, commit.",
+      "steps": [
+        {
+          "name": "execute",
+          "position": 0,
+          "content": "# EXECUTE\n\n## PURPOSE\n\nImplement the task described in your user prompt.\n\n## WORKFLOW\n\n1. Read the user prompt carefully\n2. Understand what needs to be done\n3. Implement the changes\n4. Keep changes minimal and focused on the task\n\n## RULES\n\n- No git operations (commit, push, etc.)\n- No scope expansion beyond what was asked"
+        },
+        {
+          "name": "test",
+          "position": 1,
+          "content": "# TEST\n\n## PURPOSE\n\nVerify your changes by running the project's test suite and fixing any failures.\n\n## WORKFLOW\n\n1. Run the project's test suite\n2. If tests fail, read the error output carefully\n3. Fix any failures caused by your changes\n4. Re-run tests until all pass\n5. If the project has no test suite, verify your changes by reading through them critically\n\n## PERMITTED\n\n- Run test commands\n- Fix failing tests caused by your changes\n- Modify test files if needed to reflect new behavior\n\n## FORBIDDEN\n\n- No new features or enhancements\n- No git operations"
+        },
+        {
+          "name": "commit",
+          "position": 2,
+          "content": "# COMMIT\n\n## PURPOSE\n\nStage and commit your changes.\n\n## WORKFLOW\n\n1. Stage all changed files: `git add -A`\n2. Write a clear, concise commit message describing what was done and why\n3. Commit: `git commit -m \"<message>\"`\n\n## RULES\n\n- Commit message must be descriptive (not just \"fix\" or \"update\")\n- Do not push",
+          "gates": [
+            {"command": "test -z \"$(git status --porcelain)\"", "message": "Working tree has uncommitted changes. Stage and commit all files before advancing."}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "submit-pr",
+      "description": "Create a PR or comment on an existing one.",
+      "steps": [
+        {
+          "name": "submit-pr",
+          "position": 0,
+          "content": "# SUBMIT PR\n\n## PURPOSE\n\nPush your branch and either create a new PR or comment on an existing one.\n\n## WORKFLOW\n\n1. **Push the branch** to the remote:\n   ```\n   git push origin HEAD\n   ```\n\n2. **Check whether a PR already exists** for the current branch:\n   ```\n   gh pr view --json number,url 2>/dev/null\n   ```\n\n3. **If no PR exists** — create one:\n   - Review changes: `git log main..HEAD --oneline` and `git diff main..HEAD --stat`\n   - Write the PR body using the **PR Template** below\n   - Create the PR:\n     ```\n     cat <<'EOF' > /tmp/pr-body.md\n     <your filled-in PR body>\n     EOF\n     gh pr create --title \"<descriptive title>\" --body-file /tmp/pr-body.md\n     ```\n\n4. **If a PR already exists** — post a comment about the latest changes:\n   - Review what changed since the last commit: `git log main..HEAD --oneline`\n   - Write a concise comment describing what was done in this run\n   - Post the comment:\n     ```\n     cat <<'EOF' > /tmp/pr-comment.md\n     <your comment>\n     EOF\n     gh pr comment --body-file /tmp/pr-comment.md\n     ```\n\n## PR Template (for new PRs)\n\n```markdown\n## Summary\n\nWhat was implemented and why.\n\n## Changes\n\n- `path/to/file.py` — what changed and why\n\n## Test Results\n\nTest commands run and results.\n```\n\n## RULES\n\n- Always push before creating or commenting on a PR\n- Always check for an existing PR first\n- Fill every section with real content -- do not copy templates literally\n- Be specific about what changed in this run",
+          "gates": [
+            {"command": "test \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/$(git branch --show-current) 2>/dev/null)\"", "message": "Local commits have not been pushed to the remote. Run git push origin HEAD before advancing."}
+          ]
+        }
+      ]
+    }
+  ]
+}

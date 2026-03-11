@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmflows"
+version = "0.0.1"
+description = "Agentic workflow orchestrator with kanban UI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Lukasz Pakula"}
+]
+keywords = ["ai", "agent", "workflow", "cli", "kanban", "orchestrator"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: User Interfaces",
+]
+
+dependencies = [
+    "click>=8.1.0",
+    "sqlalchemy>=2.0.0",
+    "rich>=13.0.0",
+    "jinja2>=3.1.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "python-multipart>=0.0.6",
+    "httpx>=0.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/lpakula/llm-flows"
+Repository = "https://github.com/lpakula/llm-flows"
+Documentation = "https://github.com/lpakula/llm-flows#readme"
+Issues = "https://github.com/lpakula/llm-flows/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.24.0",
+]
+
+[project.scripts]
+llmflows = "llmflows.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llmflows"]
+
+[tool.hatch.build]
+include = [
+    "llmflows/**/*.py",
+    "llmflows/**/*.md",
+    "llmflows/**/*.html",
+    "llmflows/**/*.toml",
+    "llmflows/**/*.json",
+    "llmflows/**/*.js",
+]

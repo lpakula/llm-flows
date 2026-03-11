@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "flows": [
+    {
+      "name": "ripper-5",
+      "description": "Full research-driven flow: init, research, brainstorm, plan, execute, test, commit.",
+      "steps": [
+        {
+          "name": "init",
+          "position": 0,
+          "content": "# INIT\n\n## PURPOSE\n\nSet up the task document that will track your progress through this flow.\n\n## WORKFLOW\n\n1. Read the **User Prompt** from your initial instructions to understand what the user wants\n2. Create `.llmflows/task.md` using the structure below\n3. Fill in the **Summary** section by copying the user prompt verbatim\n4. Leave the remaining sections empty -- you will populate them in subsequent steps\n\n## Task File Structure\n\nCreate `.llmflows/task.md` with these sections:\n\n    # <Task Name>\n\n    **Task ID:** <from your instructions>\n\n    ## Summary\n\n    <paste the user prompt here>\n\n    ## Requirements\n\n    User requirements and acceptance criteria.\n\n    ## Research Findings\n\n    (populated during the research step)\n\n    ## Brainstorm\n\n    (populated during the brainstorm step)\n\n    ## File Tree\n\n    Files to modify or create:\n    - `path/to/file.py` - description\n\n    ## TODO List\n\n    - [ ] First action item\n    - [ ] Second action item\n\n## PERMITTED\n\n- Create `.llmflows/task.md`\n- Read your initial instructions\n\n## FORBIDDEN\n\n- No code changes to project files\n- No git operations"
+        },
+        {
+          "name": "research",
+          "position": 1,
+          "content": "# RESEARCH\n\n## PURPOSE\n\nGather information from the codebase to understand the current state and inform implementation decisions.\n\n## WORKFLOW\n\n1. Read the task description in `.llmflows/task.md`\n2. Search the codebase for files, classes, and functions relevant to the task\n3. Read and understand the code that will need to change\n4. Identify dependencies, imports, and call sites that might be affected\n5. Note any constraints, edge cases, or risks\n6. Fill in the `## Research Findings` section in `.llmflows/task.md` with:\n   - **Relevant files**: list each file and what it does in relation to this task\n   - **Current behavior**: describe how the system works today\n   - **Dependencies**: anything this code depends on or that depends on it\n   - **Constraints**: limitations, backwards compatibility needs, performance concerns\n\n## PERMITTED\n\n- Read any project files\n- Search the codebase (grep, find, read)\n- Write findings to `.llmflows/task.md`\n\n## FORBIDDEN\n\n- No code changes to project files\n- No file creation, modification, or deletion outside `.llmflows/task.md`\n- No git operations"
+        },
+        {
+          "name": "brainstorm",
+          "position": 2,
+          "content": "# BRAINSTORM\n\n## PURPOSE\n\nExplore alternative approaches to solve the task and select the best one.\n\n## WORKFLOW\n\n1. Read `.llmflows/task.md` to understand the task and research findings\n2. Generate at least 2-3 distinct approaches to solve the task\n3. For each approach, evaluate:\n   - **Complexity**: how much code needs to change?\n   - **Risk**: what could break? How reversible is it?\n   - **Maintainability**: is the result clean and understandable?\n4. Select the best approach and explain why\n5. Fill in the `## Brainstorm` section in `.llmflows/task.md`\n\n## FORBIDDEN\n\n- No code changes to project files\n- No file creation outside `.llmflows/task.md`"
+        },
+        {
+          "name": "plan",
+          "position": 3,
+          "content": "# PLAN\n\n## PURPOSE\n\nCreate a detailed, executable implementation plan with a structured TODO list.\n\n## WORKFLOW\n\n1. Read `.llmflows/task.md` to review research findings and selected approach\n2. Break the work into clear, ordered steps\n3. Fill in the `## TODO List` section in `.llmflows/task.md` using checkbox format:\n   ```\n   - [ ] Step description (files: path/to/file.py)\n   ```\n\n## PLANNING RULES\n\n- Each TODO item must be atomic and actionable\n- Keep the list minimal but complete\n- Do not include code samples in the task file\n\n## FORBIDDEN\n\n- No code changes to project files\n- No git operations"
+        },
+        {
+          "name": "execute",
+          "position": 4,
+          "content": "# EXECUTE\n\n## PURPOSE\n\nImplement exactly what is in the TODO list in `.llmflows/task.md`.\n\n## WORKFLOW\n\n1. Read the `## TODO List` section in `.llmflows/task.md`\n2. Work through each TODO item in order:\n   a) Implement the change\n   b) Mark it complete: change `[ ]` to `[x]`\n   c) Move to the next item\n3. Continue until all TODO items are `[x]`\n\n## FORBIDDEN\n\n- No work beyond the TODO list\n- No git operations"
+        },
+        {
+          "name": "test",
+          "position": 5,
+          "content": "# TEST\n\n## PURPOSE\n\nVerify your changes by running the project's test suite and fixing any failures.\n\n## WORKFLOW\n\n1. Run the project's test suite\n2. Fix any failures caused by your changes\n3. Re-run tests until all pass\n\n## FORBIDDEN\n\n- No new features or enhancements\n- No git operations"
+        },
+        {
+          "name": "commit",
+          "position": 6,
+          "content": "# COMMIT\n\n## PURPOSE\n\nStage and commit your changes.\n\n## WORKFLOW\n\n1. Stage all changed files: `git add -A`\n2. Write a clear, concise commit message describing what was done and why\n3. Commit: `git commit -m \"<message>\"`\n\n## RULES\n\n- Commit message must be descriptive (not just \"fix\" or \"update\")\n- Do not push"
+        }
+      ]
+    }
+  ]
+}

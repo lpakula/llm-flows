@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.egg-info/
+dist/
+
+# Virtual environments
+.venv/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# IDE
+.idea/
+.vscode/
+
+# rp5m local data
+rp5m/*.db
+rp5m/*.db-journal
+rp5m/tasks/
+
+# OS
+.DS_Store
+
+.worktrees/

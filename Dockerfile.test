@@ -1,0 +1,26 @@
+# Dockerfile for running LLMFlows tests in isolated environment
+FROM python:3.11-slim
+
+# Install git (required for git utility tests)
+RUN apt-get update && \
+    apt-get install -y git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure git for tests
+RUN git config --global user.name "Test User" && \
+    git config --global user.email "test@example.com"
+
+# Set working directory
+WORKDIR /app
+
+# Copy project structure for installation
+COPY pyproject.toml README.md ./
+COPY llmflows/ llmflows/
+
+# Install package with dev dependencies
+RUN pip install --no-cache-dir -e ".[dev]"
+
+# Project files will be mounted at runtime
+CMD ["pytest"]
+
