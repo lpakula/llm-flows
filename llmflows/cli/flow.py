@@ -149,6 +149,19 @@ def flow_export(output):
         session.close()
 
 
+@flow.command("import")
+@click.argument("file", type=click.Path(exists=True))
+def flow_import(file):
+    """Import flows from a JSON file."""
+    session = _get_session()
+    try:
+        flow_svc = FlowService(session)
+        count = flow_svc.import_flows(Path(file))
+        click.echo(f"Imported {count} flow(s) from {file}")
+    finally:
+        session.close()
+
+
 @flow.group("step")
 def flow_step():
     """Manage steps within a flow."""

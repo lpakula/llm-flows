@@ -3,25 +3,22 @@
   "flows": [
     {
       "name": "default",
-      "description": "Simple execution flow: execute, test, commit.",
+      "description": "Three-step workflow: understand, implement, validate.",
       "steps": [
         {
-          "name": "execute",
+          "name": "understand",
           "position": 0,
-          "content": "# EXECUTE\n\n## PURPOSE\n\nImplement the task described in your user prompt.\n\n## WORKFLOW\n\n1. Read the user prompt carefully\n2. Understand what needs to be done\n3. Implement the changes\n4. Keep changes minimal and focused on the task\n\n## RULES\n\n- No git operations (commit, push, etc.)\n- No scope expansion beyond what was asked"
+          "content": "# UNDERSTAND\n\n## PURPOSE\n\nInspect the task and understand the relevant code before making any changes.\n\n## WORKFLOW\n\n1. Read the task description carefully\n2. Identify the files and modules that are relevant\n3. Read through the relevant code to understand the current behavior\n4. Note any conventions, patterns, or constraints in the codebase\n5. Form a clear plan for what needs to change\n\n## RULES\n\n- Do not make any code changes in this step\n- Do not run any commands that modify files\n- Focus only on reading and understanding"
         },
         {
-          "name": "test",
+          "name": "implement",
           "position": 1,
-          "content": "# TEST\n\n## PURPOSE\n\nVerify your changes by running the project's test suite and fixing any failures.\n\n## WORKFLOW\n\n1. Run the project's test suite\n2. If tests fail, read the error output carefully\n3. Fix any failures caused by your changes\n4. Re-run tests until all pass\n5. If the project has no test suite, verify your changes by reading through them critically\n\n## PERMITTED\n\n- Run test commands\n- Fix failing tests caused by your changes\n- Modify test files if needed to reflect new behavior\n\n## FORBIDDEN\n\n- No new features or enhancements\n- No git operations"
+          "content": "# IMPLEMENT\n\n## PURPOSE\n\nMake the changes described in the task.\n\n## WORKFLOW\n\n1. Implement the changes based on your understanding from the previous step\n2. Follow the conventions and patterns found in the codebase\n3. Keep changes minimal and focused on the task\n\n## RULES\n\n- No scope expansion beyond what was asked"
         },
         {
-          "name": "commit",
+          "name": "validate",
           "position": 2,
-          "content": "# COMMIT\n\n## PURPOSE\n\nStage and commit your changes.\n\n## WORKFLOW\n\n1. Stage all changed files: `git add -A`\n2. Write a clear, concise commit message describing what was done and why\n3. Commit: `git commit -m \"<message>\"`\n\n## RULES\n\n- Commit message must be descriptive (not just \"fix\" or \"update\")\n- Do not push",
-          "gates": [
-            {"command": "test -z \"$(git status --porcelain)\"", "message": "Working tree has uncommitted changes. Stage and commit all files before advancing."}
-          ]
+          "content": "# VALIDATE\n\n## PURPOSE\n\nVerify that your changes work correctly by running tests, builds, or linters.\n\n## WORKFLOW\n\n1. Run the project's test suite, build command, or linter\n2. If anything fails, read the error output carefully\n3. Fix any failures caused by your changes\n4. Re-run until all checks pass\n\n## RULES\n\n- No new features or enhancements\n- Only fix issues related to your changes\n- If the project has no test suite, verify your changes by reviewing them critically"
         }
       ]
     },

@@ -23,12 +23,19 @@
         {
           "name": "plan",
           "position": 3,
-          "content": "# PLAN\n\n## PURPOSE\n\nCreate a detailed, executable implementation plan with a structured TODO list.\n\n## WORKFLOW\n\n1. Read `.llmflows/task.md` to review research findings and selected approach\n2. Break the work into clear, ordered steps\n3. Fill in the `## TODO List` section in `.llmflows/task.md` using checkbox format:\n   ```\n   - [ ] Step description (files: path/to/file.py)\n   ```\n\n## PLANNING RULES\n\n- Each TODO item must be atomic and actionable\n- Keep the list minimal but complete\n- Do not include code samples in the task file\n\n## FORBIDDEN\n\n- No code changes to project files\n- No git operations"
+          "content": "# PLAN\n\n## PURPOSE\n\nCreate a detailed, executable implementation plan with a structured TODO list.\n\n## WORKFLOW\n\n1. Read `.llmflows/task.md` to review research findings and selected approach\n2. Break the work into clear, ordered steps\n3. Fill in the `## TODO List` section in `.llmflows/task.md` using checkbox format:\n   ```\n   - [ ] Step description (files: path/to/file.py)\n   ```\n\n## PLANNING RULES\n\n- Each TODO item must be atomic and actionable\n- Keep the list minimal but complete\n- Do not include code samples in the task file\n\n## FORBIDDEN\n\n- No code changes to project files\n- No git operations",
+          "gates": [
+            {"command": "test -f .llmflows/task.md", "message": "Task file not found. Create .llmflows/task.md with the TODO list before advancing."},
+            {"command": "grep -q '\\- \\[ \\]' .llmflows/task.md", "message": "No TODO items found. Add at least one '- [ ]' task to .llmflows/task.md before advancing."}
+          ]
         },
         {
           "name": "execute",
           "position": 4,
-          "content": "# EXECUTE\n\n## PURPOSE\n\nImplement exactly what is in the TODO list in `.llmflows/task.md`.\n\n## WORKFLOW\n\n1. Read the `## TODO List` section in `.llmflows/task.md`\n2. Work through each TODO item in order:\n   a) Implement the change\n   b) Mark it complete: change `[ ]` to `[x]`\n   c) Move to the next item\n3. Continue until all TODO items are `[x]`\n\n## FORBIDDEN\n\n- No work beyond the TODO list\n- No git operations"
+          "content": "# EXECUTE\n\n## PURPOSE\n\nImplement exactly what is in the TODO list in `.llmflows/task.md`.\n\n## WORKFLOW\n\n1. Read the `## TODO List` section in `.llmflows/task.md`\n2. Work through each TODO item in order:\n   a) Implement the change\n   b) Mark it complete: change `[ ]` to `[x]`\n   c) Move to the next item\n3. Continue until all TODO items are `[x]`\n\n## FORBIDDEN\n\n- No work beyond the TODO list\n- No git operations",
+          "gates": [
+            {"command": "! grep -q '\\- \\[ \\]' .llmflows/task.md", "message": "There are uncompleted tasks in .llmflows/task.md. Mark all TODO items as done: change '- [ ]' to '- [x]'."}
+          ]
         },
         {
           "name": "test",
@@ -38,7 +45,10 @@
         {
           "name": "commit",
           "position": 6,
-          "content": "# COMMIT\n\n## PURPOSE\n\nStage and commit your changes.\n\n## WORKFLOW\n\n1. Stage all changed files: `git add -A`\n2. Write a clear, concise commit message describing what was done and why\n3. Commit: `git commit -m \"<message>\"`\n\n## RULES\n\n- Commit message must be descriptive (not just \"fix\" or \"update\")\n- Do not push"
+          "content": "# COMMIT\n\n## PURPOSE\n\nStage and commit your changes.\n\n## WORKFLOW\n\n1. Stage all changed files: `git add -A`\n2. Write a clear, concise commit message describing what was done and why\n3. Commit: `git commit -m \"<message>\"`\n\n## RULES\n\n- Commit message must be descriptive (not just \"fix\" or \"update\")\n- Do not push",
+          "gates": [
+            {"command": "test -z \"$(git status --porcelain)\"", "message": "Working tree has uncommitted changes. Stage and commit all files before advancing."}
+          ]
         }
       ]
     }
