@@ -36,10 +36,10 @@ llmflows task create -t "Fix login bug" -d "Safari shows blank page on submit"
 llmflows task create -t "Add pagination" -d "Add cursor-based pagination to the posts list" --type feature
 
 # Start a run immediately (inline, no daemon needed — auto-registers the project)
-llmflows task create -t "My task" -d "Description" --start --flow default
+llmflows task create -t "My task" -d "Description" --inline --flow default
 
 # Start inline without creating a git worktree (for cloud agent VMs)
-llmflows task create -t "My task" -d "Description" --start --no-worktree
+llmflows task create -t "My task" -d "Description" --inline --no-worktree
 
 # Update a task
 llmflows task update --id <task-id> --title "Better title"
@@ -80,9 +80,9 @@ llmflows task start --id <task-id> --flow ripper-5 --flow submit-pr
 llmflows task start --id <task-id> --flow default --flow submit-pr --prompt "Ship it"
 
 # Start inline (no daemon needed)
-llmflows task start --id <task-id> --start
-llmflows task start --id <task-id> --start --no-worktree
-llmflows task start --id <task-id> --start --flow react-js --prompt "Fix the layout"
+llmflows task start --id <task-id> --inline
+llmflows task start --id <task-id> --inline --no-worktree
+llmflows task start --id <task-id> --inline --flow react-js --prompt "Fix the layout"
 ```
 
 ## Flows

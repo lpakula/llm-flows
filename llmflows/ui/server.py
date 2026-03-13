@@ -32,7 +32,7 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
     type: str = "feature"
-    start: bool = False
+    inline: bool = False
     flow: str = "default"
 
 
@@ -327,7 +327,7 @@ async def create_task(project_id: str, body: TaskCreate):
             task_type=task_type,
         )
 
-        if body.start:
+        if body.inline:
             run_svc = RunService(session)
             run_svc.enqueue(project_id, task.id, body.flow)
 
@@ -464,7 +464,7 @@ async def stream_run_logs(run_id: str):
         if run.log_path == "inline":
             raise HTTPException(
                 status_code=404,
-                detail="This run was started inline (--start). Logs are managed by the calling agent.",
+                detail="This run was started inline (--inline). Logs are managed by the calling agent.",
             )
         log_path = Path(run.log_path)
     finally:

@@ -139,22 +139,22 @@ def task():
 @click.option("-d", "--description", required=True, help="Task description — used as the prompt for the first run")
 @click.option("--type", "task_type", default="feature",
               type=click.Choice(["feature", "fix", "refactor", "chore"]))
-@click.option("--start", "start_now", is_flag=True,
+@click.option("--inline", "inline_now", is_flag=True,
               help="Start the run immediately (inline, no daemon)")
 @click.option("--flow", "flow_name", default="default", help="Flow to use (default: default)")
 @click.option("--no-worktree", "no_worktree", is_flag=True,
               help="Run in the current directory instead of creating a git worktree")
-def task_create(title, description, task_type, start_now, flow_name, no_worktree):
+def task_create(title, description, task_type, inline_now, flow_name, no_worktree):
     """Create a new task.
 
     Examples:
       llmflows task create -t "Fix login flow" -d "Safari shows blank page on submit"
-      llmflows task create -t "Add pagination" --start --flow default
-      llmflows task create -t "Refactor API" --start --no-worktree
+      llmflows task create -t "Add pagination" --inline --flow default
+      llmflows task create -t "Refactor API" --inline --no-worktree
     """
     session = _get_session()
     try:
-        project = _resolve_or_register(session) if start_now else _resolve_project(session)
+        project = _resolve_or_register(session) if inline_now else _resolve_project(session)
         task_svc = TaskService(session)
         t = task_svc.create(
             project_id=project.id,
@@ -163,7 +163,7 @@ def task_create(title, description, task_type, start_now, flow_name, no_worktree
             task_type=TaskType(task_type),
         )
 
-        if start_now:
+        if inline_now:
             _start_inline(session, project, t, flow_name, no_worktree)
             return
 
@@ -363,11 +363,11 @@ def task_show(task_id):
 @click.option("--id", "task_id", required=True, help="Task ID")
 @click.option("--flow", "flows", multiple=True, help="Flow to run (repeat to chain, e.g. --flow default --flow submit-pr)")
 @click.option("--prompt", "-p", default="", help="User prompt for this run")
-@click.option("--start", "start_now", is_flag=True,
+@click.option("--inline", "inline_now", is_flag=True,
               help="Start the run immediately (inline, no daemon)")
 @click.option("--no-worktree", "no_worktree", is_flag=True,
               help="Run in the current directory instead of creating a git worktree")
-def task_start(task_id, flows, prompt, start_now, no_worktree):
+def task_start(task_id, flows, prompt, inline_now, no_worktree):
     """Enqueue a new run for a task.
 
     Pass --flow once for a single flow, or repeat it to chain multiple flows
@@ -376,10 +376,10 @@ def task_start(task_id, flows, prompt, start_now, no_worktree):
       llmflows task start --id abc123 --flow default
       llmflows task start --id abc123 --flow ripper-5 --flow submit-pr
 
-    Use --start to run inline without the daemon:
+    Use --inline to run inline without the daemon:
 
-      llmflows task start --id abc123 --start
-      llmflows task start --id abc123 --start --no-worktree
+      llmflows task start --id abc123 --inline
+      llmflows task start --id abc123 --inline --no-worktree
     """
     chain = list(flows) or ["default"]
     session = _get_session()
@@ -390,7 +390,7 @@ def task_start(task_id, flows, prompt, start_now, no_worktree):
             click.echo(f"Task {task_id} not found.")
             raise SystemExit(1)
 
-        if start_now:
+        if inline_now:
             project_svc = ProjectService(session)
             project = project_svc.get(t.project_id)
             if not project:

@@ -86,7 +86,7 @@ def stream_task_logs(task_id: str, follow: bool = True, raw: bool = False) -> No
             raise SystemExit(1)
 
         if run.log_path == "inline":
-            click.echo("This run was started inline (--start). Logs are managed by the calling agent.")
+            click.echo("This run was started inline (--inline). Logs are managed by the calling agent.")
             return
 
         log_path = Path(run.log_path)
@@ -117,7 +117,7 @@ def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None
             raise SystemExit(1)
 
         if run.log_path == "inline":
-            click.echo("This run was started inline (--start). Logs are managed by the calling agent.")
+            click.echo("This run was started inline (--inline). Logs are managed by the calling agent.")
             return
 
         log_path = Path(run.log_path)

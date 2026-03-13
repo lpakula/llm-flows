@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">llm-flows</h1>
-  <p align="center">Structured workflows for AI coding agents</p>
+  <p align="center">Reliable orchestration for autonomous background coding agents</p>
 </p>
 
 <p align="center">
@@ -10,56 +10,92 @@
 </p>
 
 <p align="center">
-  Define multi-step flows with enforced quality gates, run them via CLI or web UI,<br>
-  and keep agents disciplined without constant supervision.
+  Define multi-step flows with enforced quality gates and keep agents disciplined without constant supervision.
 </p>
 
-> llm-flows does not replace your coding agent. It gives the agent a workflow to follow: ordered steps, enforced gates, and visible run history. Install it on a personal VM, use it inside Cursor IDE, or add it to a cloud agent platform like Devin, Codex, or GitHub Copilot. Same protocol, same quality gates, everywhere.
+Autonomous background agents are a great idea — until the task gets complex. Agents drift, skip steps, and hallucinate in ways that are hard to catch and expensive to fix. `llm-flows` brings structure to the chaos: explicit steps, deterministic quality gates, and a protocol the agent must follow — not just try to follow.
 
-<p align="center">
-  <img src="assets/flows.png" alt="llm-flows example flow" width="700">
-</p>
+It is designed for **autonomous background runs** (a VM/runner that can clone repos, start services, run tests, commit and open PRs).
 
----
+🖥️ Supported on self-hosted VMs with local agent CLIs:
+- Cursor CLI: `agent -p -f "<prompt-file>"`
+- Claude Code: `claude -p "<prompt>"`
+- Codex CLI: `codex exec "<prompt>"`
+
+> [!NOTE]
+> At least one of the above agent CLIs must be installed on the VM before running `llm-flows`.
+
+> [!WARNING]
+> Local agent CLIs run in **full permission mode** — they can read, write, and execute anything on the host. Always run them on an **isolated VM**; never unsupervised on your local machine.
+
+☁️ Supported on cloud agent VMs:
+
+Any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (triggering is handled by the cloud agent platform) (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
+
+🔗 Supported trigger integrations:
+- Local UI — create and trigger runs from the local web UI
+- GitHub issues — trigger runs via `@llmflows` comments on any issue
+- Jira tickets — *(coming soon)*
+
+
 
 ## 🤔 What is llm-flows?
 
-AI coding agents are good at moving fast, but weak at following a reliable process. They skip checks, improvise structure, and often produce inconsistent results. Single-shot prompts work for simple tasks, but fall apart on long, complex workflows — the agent loses track of where it is, skips steps, and drifts from the plan.
+Autonomous background agents work great as a **single-shot prompt** (for example: "read the GitHub issue, implement, and open a PR").
 
-`llm-flows` solves this by giving agents a structured protocol they can't skip:
+But once your environment becomes real — multiple microservices, multiple repos, dev servers, health checks, integration tests, log inspection, UI verification — agents drift. They skip steps, improvise structure, and often fail in ways that are expensive to discover late.
 
-- **Flows** define the ordered steps for a task
-- **Gates** enforce quality checks before moving forward
-- **Runs** track progress and outcomes
-- **CLI or UI** lets humans and agents use the same workflow system
 
-Gates are any shell commands that must exit 0. They range from simple build checks to complex deterministic validations:
+💡 What if your background agent could:
 
-- `pytest` — run the test suite
-- `npm run lint` — enforce code style
-- `grep -q "Success" output.log` — verify a specific string appears in a file
-- `find . -name "*.png" | grep -q .` — check that a `.png` file exists
+- Clone multiple services from GitHub
+- Start multiple services (e.g. frontend, backend) and wait for them to be healthy
+- Implement a feature with changes spanning multiple services
+- Run full integration tests — API calls, server log verification, UI screenshots
+- Commit and open PRs for each service to deliver a single feature
 
-Because gates are just shell commands, you can enforce anything deterministic — file existence, content patterns, data formats, or custom validation scripts. If a gate fails, the agent sees the error output and must fix the issue before advancing.
+All in one go, reliably, without fear of the agent drifting halfway through a complex workflow.
 
----
+
+💡 What if you could choose the model and control the flow for every run — and save money doing it? e.g. trigger a run with a simple GitHub comment:
+
+```
+Fix the login timeout on mobile
+
+@llmflows --agent cursor --model gemini-3-flash --flow bug-fix
+```
+
+Or with a predefined alias:
+
+```
+@llmflows --alias simple
+```
+
+Use a cheap, fast model for routine fixes. Switch to a more powerful one only when the task demands it — without changing any config.
+
+You can even split the work across runs for a single task: use an expensive model for a run that analyses the codebase and produces a detailed implementation plan, then trigger a second run with a cheaper model to execute the plan. Same task, different agents, full context from the previous run.
+
+`llm-flows` gives agents a structured protocol they must follow:
+
+- **Flows** — ordered steps the agent executes one by one
+- **Gates** — shell commands that must pass before the agent can advance (build, tests, health checks, log assertions, screenshots — anything deterministic)
+- **Runs** — full execution history with step tracking and logs
 
 ## 🎯 Who this is for
 
-`llm-flows` is for people who use AI coding agents and want them to follow a repeatable delivery process.
+`llm-flows` is for teams running autonomous agents on complex, multi-service environments where a single-shot prompt isn't enough to deliver a feature end-to-end — and agent drift is expensive.
 
-**Good fit** if you want to:
+**Good fit** if you need to:
 
-- ✅ Enforce build, test, or lint checks between implementation steps
-- ✅ Standardize how agents work across projects
-- ✅ Run the same workflow in Cursor, local VMs, or cloud agent environments
-- ✅ See exactly what step an agent is on and why it is blocked
+- ✅ Coordinate work across multiple repos or services in a single automated run
+- ✅ Enforce deterministic checks (build, tests, health, logs, screenshots) at each step
+- ✅ Run the same reliable workflow across projects and environments
+- ✅ Control which agent and model runs each workflow — without being locked into one provider or tier
 
-**Probably not needed** if:
+**Probably not for you** if:
 
-- You only use ad hoc prompts
-- You do not want structured multi-step execution
-- You are happy relying only on CI after the agent finishes
+- Your tasks are simple single-repo and a one-shot prompt gets the job done
+- You're happy with existing cloud coding agents as-is
 
 ---
 
@@ -86,32 +122,22 @@ cd your-project
 llmflows register
 ```
 
-### 3. Start the UI
+### 3. Start the daemon and UI
 
 ```bash
+llmflows daemon start
 llmflows ui
 ```
 
-This opens the local interface at `http://localhost:4200`. From there, you can start the daemon, create tasks, choose flows, and monitor runs.
+This starts the background daemon and opens the local interface at `http://localhost:4200`. From there, you can create tasks, choose flows, and monitor runs.
 
-### 4. Create a task
+### 4. CLI (Optional)
 
-Using either the UI or CLI:
-
-```bash
-llmflows task create \
-  -t "Add login form validation" \
-  -d "Add client-side validation, show inline errors, keep styling consistent" \
-  --flow default
-```
-
-The task is queued and picked up by the background daemon, which launches the agent automatically.
-
-### 5. Watch the progress
-
-Monitor the task in the web UI at `http://localhost:4200`, or follow from the CLI:
+If you prefer the terminal, you can also manage tasks via the CLI:
 
 ```bash
+llmflows task create --title "..." --description "..."
+llmflows task start --id <task-id> --flow default
 llmflows run logs <run-id> --follow
 ```
 
@@ -132,6 +158,16 @@ llmflows run logs <run-id> --follow
 
 Gates are shell commands that must exit 0. If `npm run build` fails, the agent sees the error output and must fix the code. No skipping.
 
+### 🌿 Parallel task execution
+
+On a self-hosted VM, each task runs in its own **Git worktree** — an isolated checkout on a dedicated branch. This means multiple tasks can run in parallel without interfering with each other. Each agent works in its own branch, commits its changes there, and opens a PR when done. The main repo stays untouched until you review and merge.
+
+### 🧠 Persistent memory 
+
+When running on a self-hosted VM, every completed run is stored locally — including the full execution summary. When you post a follow-up comment on a GitHub issue, the agent receives the context of all previous runs on that task. You can iterate on a feature across multiple runs without re-explaining the history — the agent already knows what was done, how and why.
+
+This makes fully autonomous iteration possible: comment, let the agent run, review the PR, comment again — all without manual context handoff.
+
 ### 📖 Core concepts
 
 | Concept | Description |
@@ -142,161 +178,21 @@ Gates are shell commands that must exit 0. If `npm run build` fails, the agent s
 | **Step** | A single instruction block the agent must complete |
 | **Gate** | A command that must succeed before the run can continue |
 | **Daemon** | Background service for managed execution and monitoring |
-| **UI** | Local web interface to manage tasks, flows, and runs |
-| **Worktree** | Optional isolated Git checkout for safe task execution |
 
 ---
 
-## 🧩 Example flow step
+## 💡 Why use llm-flows instead of single-shot runs?
 
-A flow step defines what the agent should do and what must pass before advancing:
-
-```json
-{
-  "name": "validate",
-  "content": "# TEST\n\nStart the dev server and verify it compiles without errors.",
-  "gates": [
-    {
-      "command": "npm run build",
-      "message": "Build failed. Fix all compilation errors before advancing."
-    }
-  ]
-}
-```
-
-What happens:
-
-1. The agent completes the current step
-2. `llm-flows` runs the gate command
-3. If the command exits successfully, the run advances
-4. If it fails, the agent sees the output and must fix the problem first
-
-The workflow is enforced by the tool, not left to agent judgment.
-
----
-
-## 💡 Why use llm-flows instead of just prompting?
-
-Prompting alone leaves process up to the agent. `llm-flows` adds:
+Single-shot runs give the agent everything at once and hope for the best. `llm-flows` injects step-specific context at the right moment — so the agent stays focused, follows the defined order, and doesn't drift across a long, complex workflow. Especially useful when tasks require multiple steps to happen in a specific order — setting up environments, running builds, passing checks — before the work is considered done.
 
 | Without llm-flows | With llm-flows |
 |---|---|
-| Agent improvises execution order | **Ordered execution** through defined steps |
-| Best-effort checks (if any) | **Enforced gates** that block advancement |
+| Agent improvises execution order | **Ordered steps** through defined flows |
+| Best-effort checks (if any) | **Enforced gates** that block advancement on failure |
 | Different approach every time | **Repeatable flows** across runs and projects |
-| No visibility until PR review | **Run visibility** with step tracking and logs |
-| Tied to one platform | **Agent portability** across local and cloud setups |
+| No visibility until PR review | **Step tracking** with logs and run history |
+| Locked into one hosted tier | **Model flexibility** — pick backend and model per run |
 
-Especially useful when the same kind of task happens repeatedly and quality checks matter.
-
----
-
-## 🚀 Main ways to use it
-
-### 🖥️ Web UI
-
-Use the UI when you want the easiest human-friendly workflow.
-
-```bash
-llmflows ui  # http://localhost:4200
-```
-
-The web UI lets you:
-
-- 📝 **Create and manage tasks** — create tasks, start runs, pick flows
-- 📡 **Live log streaming** — watch the agent work in real time
-- 🔧 **Edit flows** — drag-and-drop step reordering, inline content editing, gate configuration
-- 📦 **Import/export flows** — share flow definitions as JSON
-- 📊 **View the queue** — see pending and executing runs across all projects
-
-The daemon picks up pending tasks, creates a worktree branch, launches the agent, and monitors it. When done, you review the branch and merge.
-
-### ⌨️ CLI-driven local usage
-
-Use the CLI when you want direct control without the UI.
-
-```bash
-cd your-project
-llmflows register
-llmflows task create -t "..." -d "..." --flow default
-```
-
-Best for shell-first environments and automation.
-
-### ✏️ Cursor IDE — inline agent execution
-
-Run a task directly from within an agent session. No daemon needed — the agent drives the workflow itself.
-
-```bash
-llmflows task create -t "Fix login bug" -d "Safari shows blank page on submit" --start
-```
-
-The `--start` flag bootstraps everything inline — registers the project if needed, creates the task and run, sets up a worktree, and outputs the protocol. The agent reads the instructions and works through steps by calling `llmflows mode next`.
-
-**Cursor command** — add `.cursor/commands/llmflows-start.md` to your project so you can trigger flows with `/llmflows-start`:
-
-```markdown
----
-description: Initialize llm-flows protocol
----
-
-When starting a task, run:
-
-llmflows task create -t "<title>" -d "<description>" --flow "<flow-name>" --start
-
-If the user doesn't specify a flow name, use "default".
-
-Then follow the protocol instructions in the output.
-```
-
-### ☁️ Cloud agent platforms — Devin, Codex, Copilot
-
-Install `llm-flows` on the agent VM and use it in the agent's startup instructions.
-
-```bash
-pipx install git+https://github.com/lpakula/llm-flows
-llmflows flow import my-flow.json
-```
-
-Agent entrypoint example (AGENTS.md, .cursor/rules, or platform-specific config):
-
-```text
-When starting a task, run:
-
-llmflows task create -t "<title>" -d "<description>" --flow my-flow --start --no-worktree
-
-Then follow the protocol instructions in the output.
-```
-
-Use `--no-worktree` when the platform already provides an isolated checkout.
-
----
-
-## 🛠️ Flow authoring
-
-Flows are fully customizable. You can define step order, step instructions, gate commands, and project-specific validation logic.
-
-A good flow is usually a small number of clear steps, with fast and reliable gates, instructions specific enough to guide the agent, and strict enough to block bad output without making progress impossible.
-
-### 🎓 Recommended first flow
-
-For new users, start with a simple 3-step workflow:
-
-1. **Understand** — inspect the task and relevant files
-2. **Implement** — make the change
-3. **Validate** — run tests, build, or lint
-
-This keeps the protocol easy to understand while showing the value of enforced gates.
-
----
-
-## 🔒 Notes on isolation
-
-`llm-flows` can use Git worktrees for isolated task execution.
-
-- Use **worktrees** when multiple tasks may run in parallel
-- Use `--no-worktree` when the environment already gives you isolation
-- Use the **UI** when you want local orchestration without manually managing this
 
 ---
 
@@ -318,6 +214,9 @@ This keeps the protocol easy to understand while showing the value of enforced g
 ## 📚 Documentation
 
 - **[CLI Reference](docs/cli.md)** — all commands
+- **[Flow Authoring](docs/flows.md)** — writing flows, steps, and gates
+- **[Cursor IDE](docs/cursor-ide.md)** — inline usage from within Cursor
+- **[Cloud Agents](docs/cloud-agents.md)** — Cursor Automations, GitHub Copilot, and other cloud agent integrations
 - **[Development](docs/development.md)** — contributing and local setup
 
 ---

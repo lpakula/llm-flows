@@ -100,7 +100,7 @@ class TestTasksAPI:
         pid = api_db["project_id"]
         response = client.post(
             f"/api/projects/{pid}/tasks",
-            json={"title": "Start immediately", "start": True, "flow": "default"},
+            json={"title": "Start immediately", "inline": True, "flow": "default"},
         )
         assert response.status_code == 200
         data = response.json()

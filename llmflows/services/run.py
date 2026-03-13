@@ -148,7 +148,7 @@ class RunService:
         """Set the summary on a run and mark it as completed.
 
         Sets completed_at so the run is properly finalized regardless of
-        whether a daemon is monitoring (inline --start mode needs this).
+        whether a daemon is monitoring (inline --inline mode needs this).
         Prefers run_id when provided (avoids race condition with mark_completed).
         Falls back to get_active(task_id) for backward compatibility.
         """
