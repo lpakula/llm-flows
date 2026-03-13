@@ -70,7 +70,9 @@ Use a cheap model for routine fixes, a powerful one when the task demands it.
 
 ## 🔌 Compatibility
 
-🖥️ **Self-hosted VMs** — run local agent CLIs with full environment access:
+🖥️ **Self-hosted VMs** 
+
+Run local agent CLIs with full environment access:
 - Cursor CLI: `agent -p -f "<prompt-file>"`
 - Claude Code: `claude -p "<prompt>"`
 - Codex CLI: `codex exec "<prompt>"`
@@ -81,7 +83,9 @@ Use a cheap model for routine fixes, a powerful one when the task demands it.
 > [!WARNING]
 > Local agent CLIs run in **full permission mode** — they can read, write, and execute anything on the host. Always run them on an **isolated VM**; never unsupervised on your local machine.
 
-☁️ **Cloud agent VMs** — any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
+☁️ **Cloud agent VMs** 
+
+Any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
 
 🔗 **Trigger integrations:**
 - Local UI — create and trigger runs from the local web UI
