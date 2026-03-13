@@ -16,9 +16,9 @@
 
 ## 🤔 What is llm-flows?
 
-Agents work great on simple tasks — until the environment gets real. Multiple services, health checks, integration tests, log inspection: agents drift, skip steps, and fail in ways that are expensive to catch late.
+Autonomous agents work great for single-shot prompts — pick up a task from a GitHub comment, implement it, open a PR. Simple, fast, effective.
 
-`llm-flows` brings structure to the chaos: explicit steps, deterministic quality gates, and a protocol the agent must follow — not just try to follow.
+But for complex environments — multiple services, health checks, integration tests — agents drift, skip steps, and improvise in ways that are hard to catch and expensive to fix. `llm-flows` brings structure to the chaos: explicit steps, deterministic quality gates, and a protocol the agent must follow.
 
 
 💡 What if your background agent could:
@@ -32,10 +32,10 @@ Agents work great on simple tasks — until the environment gets real. Multiple 
 All in one go, reliably, without fear of the agent drifting halfway through a complex workflow.
 
 
-💡 What if you could choose the model and control the flow for every run — and save money doing it? e.g. trigger a run with a simple comment:
+💡 What if you could choose the model and control the flow for every run — and save money doing it? e.g. trigger a run with a custom, cheaper model:
 
 ```
-Fix the login timeout on mobile
+Fix the bug on the login page
 
 @llmflows --agent cursor --model gemini-3-flash --flow bug-fix
 ```
