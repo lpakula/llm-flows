@@ -1,6 +1,9 @@
 <p align="center">
   <h1 align="center">llm-flows</h1>
   <p align="center">Reliable orchestration for autonomous background coding agents</p>
+  <p align="center">
+  Define multi-step flows with enforced quality gates and keep agents disciplined without constant supervision.
+</p>
 </p>
 
 <p align="center">
@@ -9,41 +12,13 @@
   <img src="https://img.shields.io/badge/interface-CLI%20%2B%20UI-purple" alt="CLI + UI">
 </p>
 
-<p align="center">
-  Define multi-step flows with enforced quality gates and keep agents disciplined without constant supervision.
-</p>
-
-Autonomous background agents are a great idea — until the task gets complex. Agents drift, skip steps, and hallucinate in ways that are hard to catch and expensive to fix. `llm-flows` brings structure to the chaos: explicit steps, deterministic quality gates, and a protocol the agent must follow — not just try to follow.
-
-It is designed for **autonomous background runs** (a VM/runner that can clone repos, start services, run tests, commit and open PRs).
-
-🖥️ Supported on self-hosted VMs with local agent CLIs:
-- Cursor CLI: `agent -p -f "<prompt-file>"`
-- Claude Code: `claude -p "<prompt>"`
-- Codex CLI: `codex exec "<prompt>"`
-
-> [!NOTE]
-> At least one of the above agent CLIs must be installed on the VM before running `llm-flows`.
-
-> [!WARNING]
-> Local agent CLIs run in **full permission mode** — they can read, write, and execute anything on the host. Always run them on an **isolated VM**; never unsupervised on your local machine.
-
-☁️ Supported on cloud agent VMs:
-
-Any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (triggering is handled by the cloud agent platform) (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
-
-🔗 Supported trigger integrations:
-- Local UI — create and trigger runs from the local web UI
-- GitHub issues — trigger runs via `@llmflows` comments on any issue
-- Jira tickets — *(coming soon)*
-
 
 
 ## 🤔 What is llm-flows?
 
-Autonomous background agents work great as a **single-shot prompt** (for example: "read the GitHub issue, implement, and open a PR").
+Agents work great on simple tasks — until the environment gets real. Multiple services, health checks, integration tests, log inspection: agents drift, skip steps, and fail in ways that are expensive to catch late.
 
-But once your environment becomes real — multiple microservices, multiple repos, dev servers, health checks, integration tests, log inspection, UI verification — agents drift. They skip steps, improvise structure, and often fail in ways that are expensive to discover late.
+`llm-flows` brings structure to the chaos: explicit steps, deterministic quality gates, and a protocol the agent must follow — not just try to follow.
 
 
 💡 What if your background agent could:
@@ -57,7 +32,7 @@ But once your environment becomes real — multiple microservices, multiple repo
 All in one go, reliably, without fear of the agent drifting halfway through a complex workflow.
 
 
-💡 What if you could choose the model and control the flow for every run — and save money doing it? e.g. trigger a run with a simple GitHub comment:
+💡 What if you could choose the model and control the flow for every run — and save money doing it? e.g. trigger a run with a simple comment:
 
 ```
 Fix the login timeout on mobile
@@ -68,18 +43,12 @@ Fix the login timeout on mobile
 Or with a predefined alias:
 
 ```
-@llmflows --alias simple
+@llmflows --alias fast
 ```
 
-Use a cheap, fast model for routine fixes. Switch to a more powerful one only when the task demands it — without changing any config.
+Use a cheap model for routine fixes, a powerful one when the task demands it.
 
-You can even split the work across runs for a single task: use an expensive model for a run that analyses the codebase and produces a detailed implementation plan, then trigger a second run with a cheaper model to execute the plan. Same task, different agents, full context from the previous run.
-
-`llm-flows` gives agents a structured protocol they must follow:
-
-- **Flows** — ordered steps the agent executes one by one
-- **Gates** — shell commands that must pass before the agent can advance (build, tests, health checks, log assertions, screenshots — anything deterministic)
-- **Runs** — full execution history with step tracking and logs
+[Check more examples](docs/examples.md)
 
 ## 🎯 Who this is for
 
@@ -96,6 +65,28 @@ You can even split the work across runs for a single task: use an expensive mode
 
 - Your tasks are simple single-repo and a one-shot prompt gets the job done
 - You're happy with existing cloud coding agents as-is
+
+---
+
+## 🔌 Compatibility
+
+🖥️ **Self-hosted VMs** — run local agent CLIs with full environment access:
+- Cursor CLI: `agent -p -f "<prompt-file>"`
+- Claude Code: `claude -p "<prompt>"`
+- Codex CLI: `codex exec "<prompt>"`
+
+> [!NOTE]
+> At least one of the above agent CLIs must be installed on the VM before running `llm-flows`.
+
+> [!WARNING]
+> Local agent CLIs run in **full permission mode** — they can read, write, and execute anything on the host. Always run them on an **isolated VM**; never unsupervised on your local machine.
+
+☁️ **Cloud agent VMs** — any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
+
+🔗 **Trigger integrations:**
+- Local UI — create and trigger runs from the local web UI
+- GitHub issues — trigger runs via `@llmflows` comments on any issue
+- Jira tickets — *(coming soon)*
 
 ---
 
@@ -153,18 +144,20 @@ llmflows run logs <run-id> --follow
 
 📋 **Create** — a task with a title and description\
 🚀 **Start** — bootstraps the run, outputs the protocol\
-🔁 **Step loop** — agent calls `llmflows mode next` to get each step; gates are checked before advancing\
-✅ **Complete** — agent summarizes the work with `llmflows run complete`
+🔁 **Step loop** — agent calls `llmflows mode next` to get each step;\
+✅ **Complete** — agent summarizes the work and saves for next run context
 
-Gates are shell commands that must exit 0. If `npm run build` fails, the agent sees the error output and must fix the code. No skipping.
+### 🚦 Gates
 
-### 🌿 Parallel task execution
+Each step in a flow can define multiple gates — shell commands that must all exit 0 before the agent is allowed to advance to the next step. Gates can check anything deterministic: builds, test suites, health endpoints, server logs, screenshots. If a gate fails, the agent sees the full error output and must fix the problem and re-run. There is no way to skip a gate.
+
+### 🌿 Parallel execution
 
 On a self-hosted VM, each task runs in its own **Git worktree** — an isolated checkout on a dedicated branch. This means multiple tasks can run in parallel without interfering with each other. Each agent works in its own branch, commits its changes there, and opens a PR when done. The main repo stays untouched until you review and merge.
 
 ### 🧠 Persistent memory 
 
-When running on a self-hosted VM, every completed run is stored locally — including the full execution summary. When you post a follow-up comment on a GitHub issue, the agent receives the context of all previous runs on that task. You can iterate on a feature across multiple runs without re-explaining the history — the agent already knows what was done, how and why.
+When running on a self-hosted VM, every completed run is stored locally — including the full execution summary. When you trigger multiple runs on the same task (e.g. by commenting on a GitHub issue), each agent receives the context of all previous runs. You can iterate on a feature across multiple runs without re-explaining the history — the agent already knows what was done, how and why.
 
 This makes fully autonomous iteration possible: comment, let the agent run, review the PR, comment again — all without manual context handoff.
 
