@@ -170,13 +170,20 @@ class Daemon:
         wt_svc = WorktreeService(project.path)
         branch = task.worktree_branch or f"task-{task.id}"
 
-        if not task.worktree_branch:
+        wt_path = wt_svc.get_worktree_path(branch)
+        if not wt_path:
             success, msg = wt_svc.create(branch)
             if not success:
                 logger.error("Failed to create worktree for task %s: %s", task.id, msg)
                 run_svc.mark_completed(run.id, outcome="error")
                 return
             task_svc.update(task.id, worktree_branch=branch)
+            wt_path = wt_svc.get_worktree_path(branch)
+
+        if not wt_path:
+            logger.error("Worktree path not found after creation for task %s branch %s", task.id, branch)
+            run_svc.mark_completed(run.id, outcome="error")
+            return
 
         run_svc.mark_started(run.id)
 
@@ -193,25 +200,26 @@ class Daemon:
         ] or None
 
         project_dir = Path(project.path) / ".llmflows"
-        wt_path = wt_svc.get_worktree_path(branch)
-        if wt_path:
-            agent = AgentService(project_dir, wt_path)
-            launched, prompt_content, log_path = agent.prepare_and_launch(
-                run_id=run.id,
-                flow_name=run.flow_name,
-                task_name=task.name,
-                task_id=task.id,
-                task_description=run.user_prompt or task.description,
-                task_type=task.type.value,
-                execution_history=execution_history,
-                model=run.model or "",
-                agent=run.agent or "cursor",
-            )
-            if launched:
-                if prompt_content:
-                    run_svc.set_prompt(run.id, prompt_content)
-                if log_path:
-                    run_svc.set_log_path(run.id, log_path)
+        agent = AgentService(project_dir, wt_path)
+        launched, prompt_content, log_path = agent.prepare_and_launch(
+            run_id=run.id,
+            flow_name=run.flow_name,
+            task_name=task.name,
+            task_id=task.id,
+            task_description=run.user_prompt or task.description,
+            task_type=task.type.value,
+            execution_history=execution_history,
+            model=run.model or "",
+            agent=run.agent or "cursor",
+        )
+        if launched:
+            if prompt_content:
+                run_svc.set_prompt(run.id, prompt_content)
+            if log_path:
+                run_svc.set_log_path(run.id, log_path)
+        else:
+            logger.error("Agent failed to launch for task %s run %s", task.id, run.id)
+            run_svc.mark_completed(run.id, outcome="error")
 
 
 def write_pid_file(pid: int) -> Path:
