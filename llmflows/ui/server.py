@@ -213,20 +213,22 @@ async def start_daemon():
     else:
         cmd = [sys.executable, "-m", "llmflows", "daemon", "start"]
 
-    result = await asyncio.to_thread(
-        subprocess.run, cmd,
-        capture_output=True, text=True, timeout=10,
+    # Daemon is a long-running process — launch it detached and don't wait for it
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
 
-    await asyncio.sleep(0.5)
-    new_pid = read_pid_file()
-    if new_pid:
-        return {"ok": True, "running": True, "pid": new_pid}
+    # Give it a moment to write its PID file
+    for _ in range(10):
+        await asyncio.sleep(0.5)
+        new_pid = read_pid_file()
+        if new_pid:
+            return {"ok": True, "running": True, "pid": new_pid}
 
-    return {
-        "ok": False, "running": False, "pid": None,
-        "error": (result.stderr or result.stdout or "").strip()[:500],
-    }
+    return {"ok": False, "running": False, "pid": None, "error": "Daemon did not start in time"}
 
 
 # --- Project endpoints ---
