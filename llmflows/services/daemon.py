@@ -171,8 +171,12 @@ class Daemon:
         branch = task.worktree_branch or f"task-{task.id}"
 
         if not task.worktree_branch:
+            success, msg = wt_svc.create(branch)
+            if not success:
+                logger.error("Failed to create worktree for task %s: %s", task.id, msg)
+                run_svc.mark_completed(run.id, outcome="error")
+                return
             task_svc.update(task.id, worktree_branch=branch)
-            wt_svc.create(branch)
 
         run_svc.mark_started(run.id)
 

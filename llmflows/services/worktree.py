@@ -34,25 +34,51 @@ class WorktreeService:
     def _worktree_path_for(self, branch_name: str) -> Path:
         return self.worktrees_dir / _sanitize_branch(branch_name)
 
-    def create(self, branch_name: str) -> tuple[bool, str]:
-        """Create a new worktree with a new branch off the latest origin/main.
+    def _detect_default_branch(self) -> str:
+        """Detect the default remote branch (main/master/etc)."""
+        code, stdout, _ = _run_git(
+            ["symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=self.repo_path,
+        )
+        if code == 0 and stdout.strip():
+            return stdout.strip().replace("refs/remotes/origin/", "")
+        for branch in ("main", "master"):
+            code, _, _ = _run_git(
+                ["rev-parse", "--verify", f"origin/{branch}"],
+                cwd=self.repo_path,
+            )
+            if code == 0:
+                return branch
+        return "main"
 
-        Fetches origin first so the worktree always starts from the newest
-        remote main, regardless of the local branch state.
+    def create(self, branch_name: str) -> tuple[bool, str]:
+        """Create a new worktree with a new branch off the latest origin default branch.
+
+        Fetch is attempted but failures are ignored (e.g. no credentials in container).
+        Falls back to local HEAD if the remote ref is unavailable.
 
         Returns (success, message).
         """
         wt_path = self._worktree_path_for(branch_name)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
 
-        _run_git(["fetch", "origin", "main"], cwd=self.repo_path)
+        default_branch = self._detect_default_branch()
+        _run_git(["fetch", "origin", default_branch], cwd=self.repo_path)
 
         code, stdout, stderr = _run_git(
-            ["worktree", "add", str(wt_path), "-b", branch_name, "origin/main"],
+            ["worktree", "add", str(wt_path), "-b", branch_name, f"origin/{default_branch}"],
             cwd=self.repo_path,
         )
         if code == 0:
             return True, stdout.strip() or f"Created worktree at {wt_path}"
+
+        # Fetch may have failed (no credentials) — fall back to local HEAD
+        code, stdout, stderr = _run_git(
+            ["worktree", "add", str(wt_path), "-b", branch_name, "HEAD"],
+            cwd=self.repo_path,
+        )
+        if code == 0:
+            return True, stdout.strip() or f"Created worktree at {wt_path} (from HEAD)"
         return False, stderr.strip() or stdout.strip()
 
     def remove(self, branch_name: str) -> tuple[bool, str]:

@@ -58,11 +58,12 @@ class AgentService:
 
         self._copy_cursor_rule()
 
-        from ..utils.git import _run_git, get_worktree_diff
+        from ..utils.git import _run_git, get_worktree_diff, detect_default_branch
         worktree_str = str(self.worktree_path)
-        log_output = _run_git(["log", "main..HEAD", "--oneline"], cwd=worktree_str)
+        base_branch = detect_default_branch(worktree_str)
+        log_output = _run_git([f"log", f"{base_branch}..HEAD", "--oneline"], cwd=worktree_str)
         git_log = log_output.strip() if log_output else ""
-        git_diff_stat = get_worktree_diff(base="main", cwd=worktree_str)
+        git_diff_stat = get_worktree_diff(base=base_branch, cwd=worktree_str)
 
         prompt_vars = {
             "flow_name": flow_name,

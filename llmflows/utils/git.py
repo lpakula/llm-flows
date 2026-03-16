@@ -94,6 +94,18 @@ def truncate_patch(patch: str, max_lines_per_file: int = 50) -> str:
     return "\n".join(result) if result else patch
 
 
+def detect_default_branch(cwd: str = ".") -> str:
+    """Detect the default branch (main/master/etc) for a repo."""
+    output = _run_git(["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=cwd)
+    if output and output.strip():
+        return output.strip().replace("refs/remotes/origin/", "")
+    for branch in ("main", "master"):
+        result = _run_git(["rev-parse", "--verify", f"origin/{branch}"], cwd=cwd)
+        if result is not None:
+            return branch
+    return "main"
+
+
 def get_worktree_diff(base: str = "main", cwd: str = ".") -> str:
     """Get the diff between base branch and current HEAD, truncated for LLM context."""
     output = _run_git(["diff", f"{base}...HEAD", "--unified=3", "-M", "-C"], cwd)
