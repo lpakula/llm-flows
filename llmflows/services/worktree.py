@@ -5,8 +5,7 @@ Worktrees are stored in .worktrees/<branch>/ within the repo root.
 Per-project configuration is read from ``llmflows.toml`` at the repo root:
 
     [worktree]
-    source = "remote"   # "remote" (default) | "local"
-    branch = "master"   # base branch; auto-detected when omitted
+    branch = "main"   # base branch to fetch and branch off; auto-detected when omitted
 """
 
 import re
@@ -53,13 +52,9 @@ class WorktreeService:
         self.repo_path = repo_path
         self.worktrees_dir = Path(repo_path) / ".worktrees"
 
-    def _project_config(self) -> dict:
-        """Read optional llmflows.toml from the project root."""
-        return _read_toml(Path(self.repo_path) / "llmflows.toml")
-
     def _worktree_config(self) -> dict:
-        """Return the [worktree] section from llmflows.toml, or {}."""
-        return self._project_config().get("worktree", {})
+        """Return the [worktree] section from llmflows.toml at the project root, or {}."""
+        return _read_toml(Path(self.repo_path) / "llmflows.toml").get("worktree", {})
 
     def _worktree_path_for(self, branch_name: str) -> Path:
         return self.worktrees_dir / _sanitize_branch(branch_name)
@@ -84,34 +79,20 @@ class WorktreeService:
     def create(self, branch_name: str) -> tuple[bool, str]:
         """Create a new worktree for *branch_name*.
 
-        Behaviour is controlled by ``[worktree]`` in ``llmflows.toml``:
+        Fetches from origin and branches off ``origin/<branch>``.  Falls back
+        to the local ref when fetch fails (e.g. no credentials available).
 
-        * ``source = "remote"`` (default) — fetch from origin and branch off
-          ``origin/<branch>``.  Falls back to local HEAD when fetch fails
-          (e.g. no credentials available).
-        * ``source = "local"`` — skip the fetch; branch off the local ref.
-        * ``branch`` — base branch to use.  Auto-detected when omitted.
+        The base branch is taken from ``[worktree] branch`` in ``llmflows.toml``
+        at the project root; auto-detected when omitted.
 
         Returns (success, message).
         """
         wt_cfg = self._worktree_config()
-        source: str = wt_cfg.get("source", "remote")
         base_branch: Optional[str] = wt_cfg.get("branch") or None
 
         wt_path = self._worktree_path_for(branch_name)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
 
-        if source == "local":
-            ref = base_branch or "HEAD"
-            code, stdout, stderr = _run_git(
-                ["worktree", "add", str(wt_path), "-b", branch_name, ref],
-                cwd=self.repo_path,
-            )
-            if code == 0:
-                return True, stdout.strip() or f"Created worktree at {wt_path} (from local {ref})"
-            return False, stderr.strip() or stdout.strip()
-
-        # source == "remote"
         branch = base_branch or self._detect_default_branch()
         _run_git(["fetch", "origin", branch], cwd=self.repo_path)
 
