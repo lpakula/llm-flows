@@ -4,6 +4,8 @@ System-wide config lives in ~/.llmflows/config.toml.
 Per-project config is discovered via .llmflows/ in each repo.
 """
 
+import os
+import shutil
 import tomllib
 from pathlib import Path
 from typing import Any, Optional
@@ -67,37 +69,34 @@ AGENT_REGISTRY = {
 
 KNOWN_MODELS = list({m for reg in AGENT_REGISTRY.values() for m in reg["models"]})
 
-DEFAULT_CONFIG = {
-    "daemon": {
-        "poll_interval_seconds": 30,
-        "run_timeout_minutes": 60,
-        "gate_timeout_seconds": 60,
-    },
-    "ui": {
-        "port": 4200,
-        "host": "localhost",
-    },
-    "github": {
-        "token": "",
-    },
-}
+_DEFAULTS_FILE = Path(__file__).parent / "defaults" / "config.toml"
+
+
+def _load_defaults() -> dict[str, Any]:
+    """Load the bundled defaults/config.toml as the canonical default config."""
+    try:
+        with open(_DEFAULTS_FILE, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
 
 
 def ensure_system_dir() -> Path:
     """Create ~/.llmflows/ and seed config.toml with defaults if missing."""
     SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
     if not SYSTEM_CONFIG.exists():
-        _write_config(DEFAULT_CONFIG)
+        shutil.copy2(_DEFAULTS_FILE, SYSTEM_CONFIG)
     return SYSTEM_DIR
 
 
 def load_system_config() -> dict[str, Any]:
     """Load global config from ~/.llmflows/config.toml, falling back to defaults."""
+    defaults = _load_defaults()
     if SYSTEM_CONFIG.exists():
         try:
             with open(SYSTEM_CONFIG, "rb") as f:
                 user_config = tomllib.load(f)
-            merged = DEFAULT_CONFIG.copy()
+            merged = defaults.copy()
             for section, values in user_config.items():
                 if section in merged and isinstance(merged[section], dict):
                     merged[section] = {**merged[section], **values}
@@ -106,7 +105,7 @@ def load_system_config() -> dict[str, Any]:
             return merged
         except Exception:
             pass
-    return DEFAULT_CONFIG.copy()
+    return defaults
 
 
 def _write_config(config: dict[str, Any]) -> Path:
@@ -132,7 +131,10 @@ def save_system_config(config: dict[str, Any]) -> Path:
 
 
 def get_github_token() -> Optional[str]:
-    """Return a GitHub token from config.toml, or None if not configured."""
+    """Return a GitHub token from GITHUB_TOKEN env var or config.toml, in that order."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        return token
     config = load_system_config()
     token = config.get("github", {}).get("token", "")
     return token or None

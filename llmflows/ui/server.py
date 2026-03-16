@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import os
+
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, get_github_token, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
 from ..db.models import Integration, TaskType
@@ -912,6 +914,8 @@ class GitHubTokenBody(BaseModel):
 
 @app.patch("/api/config/github")
 async def update_github_config(body: GitHubTokenBody):
+    if os.environ.get("GITHUB_TOKEN"):
+        return {"ok": False, "error": "Token is set via GITHUB_TOKEN environment variable and cannot be overridden here."}
     config = load_system_config()
     if "github" not in config:
         config["github"] = {}
@@ -922,11 +926,11 @@ async def update_github_config(body: GitHubTokenBody):
 
 @app.get("/api/config/github")
 async def get_github_config():
-    config = load_system_config()
-    token = config.get("github", {}).get("token", "")
+    from_env = bool(os.environ.get("GITHUB_TOKEN"))
+    token = get_github_token() or ""
     has_token = bool(token)
     masked = token[:4] + "..." + token[-4:] if len(token) > 8 else ("****" if token else "")
-    return {"has_token": has_token, "masked_token": masked}
+    return {"has_token": has_token, "masked_token": masked, "from_env": from_env}
 
 
 @app.get("/api/agents")
