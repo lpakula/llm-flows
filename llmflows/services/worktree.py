@@ -1,10 +1,17 @@
 """Git worktree management. Uses native `git worktree` commands.
 
 Worktrees are stored in .worktrees/<branch>/ within the repo root.
+
+Per-project configuration is read from ``llmflows.toml`` at the repo root:
+
+    [worktree]
+    source = "remote"   # "remote" (default) | "local"
+    branch = "master"   # base branch; auto-detected when omitted
 """
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -26,10 +33,33 @@ def _sanitize_branch(name: str) -> str:
     return re.sub(r"[^\w\-.]", "-", name)
 
 
+def _read_toml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    if sys.version_info >= (3, 11):
+        import tomllib
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    try:
+        import tomli
+        with open(path, "rb") as f:
+            return tomli.load(f)
+    except ImportError:
+        return {}
+
+
 class WorktreeService:
     def __init__(self, repo_path: str):
         self.repo_path = repo_path
         self.worktrees_dir = Path(repo_path) / ".worktrees"
+
+    def _project_config(self) -> dict:
+        """Read optional llmflows.toml from the project root."""
+        return _read_toml(Path(self.repo_path) / "llmflows.toml")
+
+    def _worktree_config(self) -> dict:
+        """Return the [worktree] section from llmflows.toml, or {}."""
+        return self._project_config().get("worktree", {})
 
     def _worktree_path_for(self, branch_name: str) -> Path:
         return self.worktrees_dir / _sanitize_branch(branch_name)
@@ -49,36 +79,57 @@ class WorktreeService:
             )
             if code == 0:
                 return branch
-        return "main"
+        return "master"
 
     def create(self, branch_name: str) -> tuple[bool, str]:
-        """Create a new worktree with a new branch off the latest origin default branch.
+        """Create a new worktree for *branch_name*.
 
-        Fetch is attempted but failures are ignored (e.g. no credentials in container).
-        Falls back to local HEAD if the remote ref is unavailable.
+        Behaviour is controlled by ``[worktree]`` in ``llmflows.toml``:
+
+        * ``source = "remote"`` (default) — fetch from origin and branch off
+          ``origin/<branch>``.  Falls back to local HEAD when fetch fails
+          (e.g. no credentials available).
+        * ``source = "local"`` — skip the fetch; branch off the local ref.
+        * ``branch`` — base branch to use.  Auto-detected when omitted.
 
         Returns (success, message).
         """
+        wt_cfg = self._worktree_config()
+        source: str = wt_cfg.get("source", "remote")
+        base_branch: Optional[str] = wt_cfg.get("branch") or None
+
         wt_path = self._worktree_path_for(branch_name)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
 
-        default_branch = self._detect_default_branch()
-        _run_git(["fetch", "origin", default_branch], cwd=self.repo_path)
+        if source == "local":
+            ref = base_branch or "HEAD"
+            code, stdout, stderr = _run_git(
+                ["worktree", "add", str(wt_path), "-b", branch_name, ref],
+                cwd=self.repo_path,
+            )
+            if code == 0:
+                return True, stdout.strip() or f"Created worktree at {wt_path} (from local {ref})"
+            return False, stderr.strip() or stdout.strip()
+
+        # source == "remote"
+        branch = base_branch or self._detect_default_branch()
+        _run_git(["fetch", "origin", branch], cwd=self.repo_path)
 
         code, stdout, stderr = _run_git(
-            ["worktree", "add", str(wt_path), "-b", branch_name, f"origin/{default_branch}"],
+            ["worktree", "add", str(wt_path), "-b", branch_name, f"origin/{branch}"],
             cwd=self.repo_path,
         )
         if code == 0:
             return True, stdout.strip() or f"Created worktree at {wt_path}"
 
-        # Fetch may have failed (no credentials) — fall back to local HEAD
+        # Fetch may have failed (no credentials) — fall back to local ref
+        local_ref = base_branch or "HEAD"
         code, stdout, stderr = _run_git(
-            ["worktree", "add", str(wt_path), "-b", branch_name, "HEAD"],
+            ["worktree", "add", str(wt_path), "-b", branch_name, local_ref],
             cwd=self.repo_path,
         )
         if code == 0:
-            return True, stdout.strip() or f"Created worktree at {wt_path} (from HEAD)"
+            return True, stdout.strip() or f"Created worktree at {wt_path} (from local {local_ref})"
         return False, stderr.strip() or stdout.strip()
 
     def remove(self, branch_name: str) -> tuple[bool, str]:
