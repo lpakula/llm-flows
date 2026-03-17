@@ -1,8 +1,15 @@
 """Agent launcher -- writes prompt and launches coding agents.
 
 Supports multiple agent backends (Cursor, Claude Code, Codex).
-Agent output is streamed to .llmflows/agent-{run_id}.log in the worktree.
+Agent output is streamed to .llmflows/agent-{run_id}.log in the working directory.
 Agent PID is stored in .llmflows/agent.pid for liveness checks.
+
+When worktrees are enabled (the default) the working directory is the worktree
+root and ephemeral files live in ``<worktree>/.llmflows/``.
+
+When worktrees are disabled (manager/orchestrator repos) the working directory
+is the project root and ephemeral files live in
+``<project>/.llmflows/<task_id>/`` so that concurrent task runs don't collide.
 """
 
 import logging
@@ -42,12 +49,21 @@ class AgentService:
         execution_history: Optional[list[dict]] = None,
         model: str = "",
         agent: str = "cursor",
+        use_task_subdir: bool = False,
     ) -> tuple[bool, str, str]:
-        """Write prompt in the worktree, then launch the selected agent.
+        """Write prompt in the working directory, then launch the selected agent.
+
+        When ``use_task_subdir`` is True (worktree disabled) ephemeral files go
+        into ``<working_dir>/.llmflows/<task_id>/`` instead of
+        ``<working_dir>/.llmflows/`` so multiple tasks sharing the same project
+        root do not collide.
 
         Returns (success, prompt_content, log_path).
         """
-        wt_llmflows = self.worktree_path / ".llmflows"
+        if use_task_subdir:
+            wt_llmflows = self.worktree_path / ".llmflows" / task_id
+        else:
+            wt_llmflows = self.worktree_path / ".llmflows"
         wt_llmflows.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(wt_llmflows)
         context_svc = ContextService(wt_llmflows)
@@ -177,17 +193,30 @@ class AgentService:
         return cmd
 
     @staticmethod
-    def kill_agent(project_path: str, worktree_branch: str) -> bool:
-        """Kill the agent process for a worktree. Returns True if a process was killed."""
-        if not worktree_branch:
-            return False
-        from .worktree import WorktreeService
-        wt_svc = WorktreeService(project_path)
-        wt_path = wt_svc.get_worktree_path(worktree_branch)
-        if not wt_path:
-            return False
-        pid_file = wt_path / ".llmflows" / "agent.pid"
-        if not pid_file.exists():
+    def _resolve_pid_file(
+        project_path: str, worktree_branch: str, task_id: str = ""
+    ) -> Optional[Path]:
+        """Return the agent.pid path for a task, or None if not locatable.
+
+        When *worktree_branch* is set the pid file lives inside the worktree.
+        When it is empty and *task_id* is provided the pid file lives in the
+        project-level task subdir (no-worktree mode).
+        """
+        if worktree_branch:
+            from .worktree import WorktreeService
+            wt_path = WorktreeService(project_path).get_worktree_path(worktree_branch)
+            if not wt_path:
+                return None
+            return wt_path / ".llmflows" / "agent.pid"
+        if task_id:
+            return Path(project_path) / ".llmflows" / task_id / "agent.pid"
+        return None
+
+    @staticmethod
+    def kill_agent(project_path: str, worktree_branch: str, task_id: str = "") -> bool:
+        """Kill the agent process for a task. Returns True if a process was killed."""
+        pid_file = AgentService._resolve_pid_file(project_path, worktree_branch, task_id)
+        if not pid_file or not pid_file.exists():
             return False
         try:
             pid = int(pid_file.read_text().strip())
@@ -208,17 +237,10 @@ class AgentService:
             return False
 
     @staticmethod
-    def is_agent_running(project_path: str, worktree_branch: str) -> bool:
-        """Check if an agent process is alive for a given worktree."""
-        if not worktree_branch:
-            return False
-        from .worktree import WorktreeService
-        wt_svc = WorktreeService(project_path)
-        wt_path = wt_svc.get_worktree_path(worktree_branch)
-        if not wt_path:
-            return False
-        pid_file = wt_path / ".llmflows" / "agent.pid"
-        if not pid_file.exists():
+    def is_agent_running(project_path: str, worktree_branch: str, task_id: str = "") -> bool:
+        """Check if an agent process is alive for a given task."""
+        pid_file = AgentService._resolve_pid_file(project_path, worktree_branch, task_id)
+        if not pid_file or not pid_file.exists():
             return False
         try:
             pid = int(pid_file.read_text().strip())

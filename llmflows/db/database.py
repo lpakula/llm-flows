@@ -25,7 +25,9 @@ def init_db() -> Path:
     Base.metadata.create_all(engine)
 
     inspector = inspect(engine)
-    if "projects" in inspector.get_table_names():
+    tables = inspector.get_table_names()
+
+    if "projects" in tables:
         existing = {c["name"] for c in inspector.get_columns("projects")}
         if "aliases" not in existing:
             with engine.connect() as conn:

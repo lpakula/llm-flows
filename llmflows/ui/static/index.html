@@ -248,26 +248,56 @@
     <template x-if="$store.router.view === 'project'">
       <div class="flex-1 overflow-y-auto" x-data="projectView()" x-init="init()" @destroy.window="destroy && destroy()">
         <!-- Header -->
-        <header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">
-          <div class="flex items-center gap-3">
-            <div x-show="!editingName" class="flex items-center gap-3">
-              <h2 class="text-base font-medium" x-text="project?.name || 'Loading...'"></h2>
-              <span class="text-xs text-gray-500" x-text="project?.path || ''"></span>
-              <button @click="editName = project?.name || ''; editingName = true"
-                      class="text-xs text-gray-500 hover:text-blue-400 transition">Rename</button>
-              <button @click="deleteProject()"
-                      class="text-xs text-gray-500 hover:text-red-400 transition">Delete</button>
+        <header class="border-b border-gray-800 px-6 py-3 flex-shrink-0">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div x-show="!editingName" class="flex items-center gap-3">
+                <h2 class="text-base font-medium" x-text="project?.name || 'Loading...'"></h2>
+                <span class="text-xs text-gray-500" x-text="project?.path || ''"></span>
+                <button @click="editName = project?.name || ''; editingName = true"
+                        class="text-xs text-gray-500 hover:text-blue-400 transition">Rename</button>
+                <button @click="deleteProject()"
+                        class="text-xs text-gray-500 hover:text-red-400 transition">Delete</button>
+              </div>
+              <div x-show="editingName" class="flex items-center gap-2">
+                <input x-model="editName" @keydown.enter="renameProject()" @keydown.escape="editingName = false"
+                       class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
+                <button @click="renameProject()" class="text-xs text-blue-400 hover:text-blue-300">Save</button>
+                <button @click="editingName = false" class="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
+              </div>
             </div>
-            <div x-show="editingName" class="flex items-center gap-2">
-              <input x-model="editName" @keydown.enter="renameProject()" @keydown.escape="editingName = false"
-                     class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
-              <button @click="renameProject()" class="text-xs text-blue-400 hover:text-blue-300">Save</button>
-              <button @click="editingName = false" class="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
+            <div class="flex items-center gap-2">
+              <button @click="toggleWorktreeForm()"
+                      class="text-sm px-4 py-1.5 rounded-lg border transition"
+                      :class="showWorktreeForm ? 'border-blue-500 text-blue-400 bg-blue-950/40' : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'">
+                Configure
+              </button>
+              <button @click="showCreate = true" class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition">
+                + New Task
+              </button>
             </div>
           </div>
-          <button @click="showCreate = true" class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition">
-            + New Task
-          </button>
+
+          <!-- Config panel -->
+          <div x-show="showWorktreeForm" class="mt-3 pt-3 border-t border-gray-800">
+            <div class="flex items-center gap-6">
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-500">Worktrees</span>
+                <button @click="worktreeSettings.worktree_enabled = !worktreeSettings.worktree_enabled; saveWorktreeSettings()"
+                        class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+                        :class="worktreeSettings.worktree_enabled ? 'bg-blue-600' : 'bg-gray-700'">
+                  <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
+                        :class="worktreeSettings.worktree_enabled ? 'translate-x-4' : 'translate-x-1'"></span>
+                </button>
+                <span class="text-xs" :class="worktreeSettings.worktree_enabled ? 'text-green-400' : 'text-yellow-400'"
+                      x-text="worktreeSettings.worktree_enabled ? 'enabled' : 'disabled'"></span>
+                <span x-show="worktreeSettingsSaving" class="text-xs text-gray-600">Saving…</span>
+              </div>
+            </div>
+            <p x-show="!worktreeSettings.worktree_enabled" class="mt-2 text-xs text-orange-400">
+              Warning: the agent will run directly in the project root on the current branch. All changes will be made in-place with no isolation. 
+            </p>
+          </div>
         </header>
 
         <div class="p-6">

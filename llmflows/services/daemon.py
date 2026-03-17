@@ -67,16 +67,42 @@ class Daemon:
         finally:
             session.close()
 
+    def _get_project_settings(self, project_id: str, session) -> object:
+        """Return the ProjectSettings for a project, or a defaults object."""
+        from ..db.models import ProjectSettings
+
+        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
+        if settings:
+            return settings
+
+        class _Defaults:
+            worktree_enabled = True
+
+        return _Defaults()
+
     def _process_project(self, project, task_svc: TaskService, run_svc: RunService) -> None:
         """Process a single project: check active runs, pick up pending."""
+        settings = self._get_project_settings(project.id, run_svc.session)
+        worktree_enabled = settings.worktree_enabled
+
         active_runs = run_svc.get_active_by_project(project.id)
 
         for run in active_runs:
             task = task_svc.get(run.task_id)
-            if not task or not task.worktree_branch:
+            if not task:
                 continue
 
-            if AgentService.is_agent_running(project.path, task.worktree_branch):
+            # Determine how to locate the agent process for this task
+            if worktree_enabled:
+                if not task.worktree_branch:
+                    continue
+                agent_running = AgentService.is_agent_running(project.path, task.worktree_branch)
+            else:
+                agent_running = AgentService.is_agent_running(
+                    project.path, "", task_id=task.id
+                )
+
+            if agent_running:
                 if self.run_timeout_minutes and run.started_at:
                     started = run.started_at
                     if started.tzinfo is None:
@@ -87,7 +113,11 @@ class Daemon:
                             "Task %s run %s timed out after %dm (limit %dm)",
                             task.id, run.id, int(elapsed / 60), self.run_timeout_minutes,
                         )
-                        AgentService.kill_agent(project.path, task.worktree_branch)
+                        AgentService.kill_agent(
+                            project.path,
+                            task.worktree_branch if worktree_enabled else "",
+                            task_id="" if worktree_enabled else task.id,
+                        )
                         run_svc.mark_completed(run.id, outcome="timeout")
                         continue
                 return
@@ -104,7 +134,7 @@ class Daemon:
 
         pending = run_svc.get_pending(project.id)
         if pending:
-            self._run_task(pending, task_svc, run_svc, project)
+            self._run_task(pending, task_svc, run_svc, project, settings)
 
     def _poll_integrations(self, session) -> None:
         """Poll all enabled GitHub integrations for @llmflows comments."""
@@ -159,31 +189,49 @@ class Daemon:
         finally:
             gh.close()
 
-    def _run_task(self, run, task_svc: TaskService, run_svc: RunService, project) -> None:
-        """Set up worktree and launch agent for a pending TaskRun."""
+    def _run_task(self, run, task_svc: TaskService, run_svc: RunService, project, settings=None) -> None:
+        """Set up worktree (if enabled) and launch agent for a pending TaskRun."""
         task = task_svc.get(run.task_id)
         if not task:
             return
 
-        logger.info("Running task %s (flow=%s): %s", task.id, run.flow_name, task.description[:60])
+        if settings is None:
+            settings = self._get_project_settings(project.id, run_svc.session)
 
-        wt_svc = WorktreeService(project.path)
-        branch = task.worktree_branch or f"task-{task.id}"
+        worktree_enabled = settings.worktree_enabled
+        logger.info("Running task %s (flow=%s, worktree=%s): %s",
+                    task.id, run.flow_name, worktree_enabled, task.description[:60])
 
-        wt_path = wt_svc.get_worktree_path(branch)
-        if not wt_path:
-            success, msg = wt_svc.create(branch)
-            if not success:
-                logger.error("Failed to create worktree for task %s: %s", task.id, msg)
+        project_dir = Path(project.path) / ".llmflows"
+
+        if worktree_enabled:
+            wt_svc = WorktreeService(project.path)
+            branch = task.worktree_branch or f"task-{task.id}"
+
+            wt_path = wt_svc.get_worktree_path(branch)
+            if not wt_path:
+                success, msg = wt_svc.create(branch)
+                if not success:
+                    logger.error("Failed to create worktree for task %s: %s", task.id, msg)
+                    run_svc.mark_completed(run.id, outcome="error")
+                    return
+                task_svc.update(task.id, worktree_branch=branch)
+                wt_path = wt_svc.get_worktree_path(branch)
+
+            if not wt_path:
+                logger.error(
+                    "Worktree path not found after creation for task %s branch %s",
+                    task.id, branch,
+                )
                 run_svc.mark_completed(run.id, outcome="error")
                 return
-            task_svc.update(task.id, worktree_branch=branch)
-            wt_path = wt_svc.get_worktree_path(branch)
 
-        if not wt_path:
-            logger.error("Worktree path not found after creation for task %s branch %s", task.id, branch)
-            run_svc.mark_completed(run.id, outcome="error")
-            return
+            working_path = wt_path
+            use_task_subdir = False
+        else:
+            # No worktree — agent runs in the project root
+            working_path = Path(project.path)
+            use_task_subdir = True
 
         run_svc.mark_started(run.id)
 
@@ -199,8 +247,7 @@ class Daemon:
             if r.outcome != "cancelled"
         ] or None
 
-        project_dir = Path(project.path) / ".llmflows"
-        agent = AgentService(project_dir, wt_path)
+        agent = AgentService(project_dir, working_path)
         launched, prompt_content, log_path = agent.prepare_and_launch(
             run_id=run.id,
             flow_name=run.flow_name,
@@ -211,6 +258,7 @@ class Daemon:
             execution_history=execution_history,
             model=run.model or "",
             agent=run.agent or "cursor",
+            use_task_subdir=use_task_subdir,
         )
         if launched:
             if prompt_content:

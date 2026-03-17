@@ -25,6 +25,9 @@ function projectView() {
     aliasForm: { name: '', agent: 'cursor', model: '', flow_chain: [] },
     aliasAddFlow: '',
     aliasFormModels: [],
+    showWorktreeForm: false,
+    worktreeSettings: { worktree_enabled: true },
+    worktreeSettingsSaving: false,
 
     async init() {
       const pid = Alpine.store('router').params.projectId;
@@ -49,11 +52,12 @@ function projectView() {
 
     async load(pid) {
       try {
-        [this.project, this.tasks, this.flows, this.agents] = await Promise.all([
+        [this.project, this.tasks, this.flows, this.agents, this.worktreeSettings] = await Promise.all([
           API.get(`/api/projects/${pid}`),
           API.get(`/api/projects/${pid}/tasks`),
           API.get('/api/flows'),
           API.get('/api/agents'),
+          API.get(`/api/projects/${pid}/settings`),
         ]);
         const da = this._defaultAlias();
         await this.loadModelsForAgent(this.startAgent || da.agent || 'cursor');
@@ -239,6 +243,24 @@ function projectView() {
 
     sortedTasks() {
       return [...this.tasks].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    },
+
+    toggleWorktreeForm() {
+      this.showWorktreeForm = !this.showWorktreeForm;
+    },
+
+    async saveWorktreeSettings() {
+      if (!this.project) return;
+      this.worktreeSettingsSaving = true;
+      try {
+        this.worktreeSettings = await API.patch(
+          `/api/projects/${this.project.id}/settings`,
+          { worktree_enabled: this.worktreeSettings.worktree_enabled },
+        );
+      } catch (e) {
+        console.error('Failed to save worktree settings:', e);
+      }
+      this.worktreeSettingsSaving = false;
     },
   };
 }

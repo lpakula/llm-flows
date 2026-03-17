@@ -42,6 +42,8 @@ class Project(Base):
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     integrations_rel = relationship("Integration", back_populates="project",
                                     cascade="all, delete-orphan")
+    settings = relationship("ProjectSettings", back_populates="project",
+                            uselist=False, cascade="all, delete-orphan")
 
     def _parse_flow_chain(self) -> list[str]:
         import json
@@ -113,6 +115,30 @@ class Integration(Base):
             "enabled": self.enabled,
             "config": self.get_config(),
             "last_polled_at": self.last_polled_at.isoformat() if self.last_polled_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ProjectSettings(Base):
+    __tablename__ = "project_settings"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False, unique=True)
+    # When False the daemon runs the agent in the project root without creating a worktree.
+    # Useful for orchestrator/manager repos whose flows trigger changes in other repos.
+    worktree_enabled: bool = Column(Boolean, default=True)
+    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                                  onupdate=lambda: datetime.now(timezone.utc))
+
+    project = relationship("Project", back_populates="settings")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "worktree_enabled": self.worktree_enabled if self.worktree_enabled is not None else True,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

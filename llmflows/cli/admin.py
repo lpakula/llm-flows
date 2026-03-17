@@ -7,6 +7,7 @@ import click
 
 from ..config import get_repo_root, SYSTEM_DB
 from ..db.database import init_db, get_session, reset_engine
+from ..db.models import ProjectSettings
 from ..defaults import get_defaults_dir
 from ..services.project import ProjectService
 
@@ -205,5 +206,59 @@ def project_delete(project_id):
             click.echo(f"Project {project_id} deleted.")
         else:
             click.echo(f"Project {project_id} not found.")
+    finally:
+        session.close()
+
+
+@project.command("settings")
+@click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
+@click.option("--worktree-enabled", default=None, type=click.Choice(["true", "false"]),
+              help="Enable or disable git worktrees for this project")
+def project_settings(project_id, worktree_enabled):
+    """View or update worktree settings for a project.
+
+    Run with no flags to print current settings.
+
+    Examples:
+
+    \b
+      llmflows project settings
+      llmflows project settings --worktree-enabled false
+    """
+    session = get_session()
+    try:
+        project_svc = ProjectService(session)
+
+        if project_id is None:
+            p = project_svc.resolve_current()
+            if p is None:
+                click.echo("Not inside a registered project. Use --id to specify.")
+                raise SystemExit(1)
+            project_id = p.id
+
+        project = project_svc.get(project_id)
+        if not project:
+            click.echo(f"Project {project_id} not found.")
+            raise SystemExit(1)
+
+        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
+
+        if worktree_enabled is not None:
+            if settings is None:
+                settings = ProjectSettings(project_id=project_id)
+                session.add(settings)
+            settings.worktree_enabled = worktree_enabled == "true"
+            session.commit()
+
+        enabled = settings.worktree_enabled if settings else True
+
+        click.echo()
+        click.echo(f"  Project:   {click.style(project.name, fg='cyan')}  ({project.id})")
+        click.echo(f"  Worktrees: {click.style('enabled', fg='green') if enabled else click.style('disabled', fg='yellow')}")
+        click.echo()
+
+        if worktree_enabled is not None:
+            click.secho("  Settings saved.", fg="green")
+            click.echo()
     finally:
         session.close()

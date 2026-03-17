@@ -14,7 +14,7 @@ import os
 
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, get_github_token, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
-from ..db.models import Integration, TaskType
+from ..db.models import Integration, ProjectSettings, TaskType
 from ..services.agent import AgentService
 from ..services.flow import FlowService
 from ..services.github import GitHubService
@@ -86,6 +86,10 @@ class DaemonConfigBody(BaseModel):
     gate_timeout_seconds: Optional[int] = None
 
 
+class ProjectSettingsUpdate(BaseModel):
+    worktree_enabled: Optional[bool] = None
+
+
 # --- Helpers ---
 
 def _get_services():
@@ -94,20 +98,33 @@ def _get_services():
     return session, ProjectService(session), TaskService(session)
 
 
-def _enrich_task(task_dict: dict, project_path: str, session) -> dict:
+def _get_project_settings(project_id: str, session) -> dict:
+    """Return project settings as a dict, falling back to defaults."""
+    s = session.query(ProjectSettings).filter_by(project_id=project_id).first()
+    if s:
+        return s.to_dict()
+    return {"worktree_enabled": True}
+
+
+def _enrich_task(task_dict: dict, project_path: str, session, project_settings: Optional[dict] = None) -> dict:
     """Add dynamic fields from active TaskRun and run count."""
     run_svc = RunService(session)
     active_run = run_svc.get_active(task_dict["id"])
     all_runs = run_svc.list_by_task(task_dict["id"])
+
+    worktree_enabled = (project_settings or {}).get("worktree_enabled", True)
+    branch = task_dict.get("worktree_branch", "")
+
     task_dict["agent_active"] = AgentService.is_agent_running(
-        project_path, task_dict.get("worktree_branch", ""),
+        project_path,
+        branch if worktree_enabled else "",
+        task_id="" if worktree_enabled else task_dict["id"],
     )
     task_dict["flow"] = active_run.flow_name if active_run else None
     task_dict["current_step"] = active_run.current_step if active_run else None
     task_dict["run_id"] = active_run.id if active_run else None
     task_dict["run_count"] = len(all_runs)
-    branch = task_dict.get("worktree_branch", "")
-    if branch:
+    if worktree_enabled and branch:
         wt_svc = WorktreeService(project_path)
         wt_path = wt_svc.get_worktree_path(branch)
         task_dict["worktree_path"] = str(wt_path) if wt_path else None
@@ -295,6 +312,40 @@ async def delete_project(project_id: str):
         session.close()
 
 
+@app.get("/api/projects/{project_id}/settings")
+async def get_project_settings(project_id: str):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return _get_project_settings(project_id, session)
+    finally:
+        session.close()
+
+
+@app.patch("/api/projects/{project_id}/settings")
+async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
+        if not settings:
+            settings = ProjectSettings(project_id=project_id)
+            session.add(settings)
+
+        if body.worktree_enabled is not None:
+            settings.worktree_enabled = body.worktree_enabled
+
+        session.commit()
+        return settings.to_dict()
+    finally:
+        session.close()
+
+
 # --- Task endpoints ---
 
 @app.get("/api/projects/{project_id}/tasks")
@@ -305,8 +356,9 @@ async def list_tasks(project_id: str):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        ps = _get_project_settings(project_id, session)
         tasks = task_svc.list_by_project(project_id)
-        return [_enrich_task(t.to_dict(), project.path, session) for t in tasks]
+        return [_enrich_task(t.to_dict(), project.path, session, ps) for t in tasks]
     finally:
         session.close()
 
@@ -335,7 +387,8 @@ async def create_task(project_id: str, body: TaskCreate):
             run_svc = RunService(session)
             run_svc.enqueue(project_id, task.id, body.flow)
 
-        return _enrich_task(task.to_dict(), project.path, session)
+        ps = _get_project_settings(project_id, session)
+        return _enrich_task(task.to_dict(), project.path, session, ps)
     finally:
         session.close()
 
@@ -357,7 +410,8 @@ async def update_task(task_id: str, body: TaskUpdate):
             task = task_svc.update(task_id, **updates)
 
         project = project_svc.get(task.project_id)
-        return _enrich_task(task.to_dict(), project.path, session)
+        ps = _get_project_settings(task.project_id, session)
+        return _enrich_task(task.to_dict(), project.path, session, ps)
     finally:
         session.close()
 
@@ -392,7 +446,8 @@ async def start_task(task_id: str, body: TaskStartBody):
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)
-        return _enrich_task(task.to_dict(), project.path, session)
+        ps = _get_project_settings(task.project_id, session)
+        return _enrich_task(task.to_dict(), project.path, session, ps)
     finally:
         session.close()
 
@@ -427,8 +482,14 @@ async def stop_run(run_id: str):
         task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
         killed = False
-        if task and project and task.worktree_branch:
-            killed = AgentService.kill_agent(project.path, task.worktree_branch)
+        if task and project:
+            ps = _get_project_settings(project.id, session)
+            worktree_enabled = ps.get("worktree_enabled", True)
+            killed = AgentService.kill_agent(
+                project.path,
+                task.worktree_branch if worktree_enabled else "",
+                task_id="" if worktree_enabled else task.id,
+            )
 
         run_svc.mark_completed(run_id, outcome="cancelled")
         return {"ok": True, "killed": killed}
