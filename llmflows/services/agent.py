@@ -114,8 +114,13 @@ class AgentService:
             return
 
         rule_dest_dir = self.worktree_path / ".cursor" / "rules"
+        rule_dest = rule_dest_dir / "llmflows.md"
+
+        if rule_src.resolve() == rule_dest.resolve():
+            return
+
         rule_dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(rule_src, rule_dest_dir / "llmflows.md")
+        shutil.copy2(rule_src, rule_dest)
 
     @staticmethod
     def _ensure_gitignore(llmflows_dir: Path) -> None:
