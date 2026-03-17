@@ -199,8 +199,7 @@ def run_complete(summary):
         click.echo("Not inside a git repository.", err=True)
         raise SystemExit(1)
 
-    llmflows_dir = repo_root / ".llmflows"
-    context_svc = ContextService(llmflows_dir)
+    context_svc = ContextService.find(repo_root)
     task_id = context_svc.get_current_task_id()
     run_id = context_svc.get_current_run_id()
 

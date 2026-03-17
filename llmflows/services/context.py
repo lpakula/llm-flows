@@ -18,6 +18,29 @@ class ContextService:
         """Initialize with the .llmflows/ directory in a project or worktree."""
         self.project_dir = project_dir
 
+    @classmethod
+    def find(cls, repo_root: Path) -> "ContextService":
+        """Return the right ContextService for the current execution mode.
+
+        In worktree mode, task_id/run_id live directly in <repo>/.llmflows/.
+        In no-worktree mode they live in <repo>/.llmflows/<task_id>/ so that
+        multiple concurrent tasks don't collide. Fall back to the
+        most-recently-touched subdirectory that contains a run_id file.
+        """
+        base = repo_root / ".llmflows"
+        ctx = cls(base)
+        if ctx.get_current_task_id() or ctx.get_current_run_id():
+            return ctx
+        try:
+            subdirs = sorted(
+                [d for d in base.iterdir() if d.is_dir() and (d / "run_id").exists()],
+                key=lambda d: (d / "run_id").stat().st_mtime,
+                reverse=True,
+            )
+        except (FileNotFoundError, PermissionError):
+            subdirs = []
+        return cls(subdirs[0]) if subdirs else ctx
+
     def get_current_flow(self) -> str:
         """Read the current flow from .llmflows/flow. Defaults to 'default'."""
         flow_file = self.project_dir / "flow"
