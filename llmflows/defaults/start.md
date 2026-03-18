@@ -38,6 +38,10 @@ You are an autonomous AI agent managed by llmflows.
 ---
 
 # PREVIOUS RUNS
+
+{%- if worktree_path %}
+> **Important:** Code changes from previous runs are **not on the main branch**. They persist in task worktrees (`.worktrees/task-{{ task_id }}/`). Always check worktree paths first when exploring code that was modified in earlier runs.
+{%- endif %}
 {%- for run in execution_history %}
 
 ### Run {{ loop.index }} — {{ run.flow_name }} ({{ run.outcome }})
