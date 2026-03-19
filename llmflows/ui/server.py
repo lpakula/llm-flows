@@ -115,7 +115,7 @@ def _enrich_task(task_dict: dict, project_path: str, session, project_settings: 
     worktree_enabled = (project_settings or {}).get("worktree_enabled", True)
     branch = task_dict.get("worktree_branch", "")
 
-    task_dict["agent_active"] = AgentService.is_agent_running(
+    task_dict["agent_active"] = bool(active_run) and AgentService.is_agent_running(
         project_path,
         branch if worktree_enabled else "",
         task_id="" if worktree_enabled else task_dict["id"],

@@ -214,6 +214,8 @@ def run_complete(summary):
         result = run_svc.set_summary(task_id, summary, run_id=run_id or None)
         if result:
             click.echo(f"Summary saved for run {result.id}.")
+            pid_file = context_svc.project_dir / "agent.pid"
+            pid_file.unlink(missing_ok=True)
         else:
             click.echo(f"No active run found for task {task_id}.", err=True)
             raise SystemExit(1)
