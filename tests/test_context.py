@@ -35,8 +35,6 @@ class TestContextService:
             "task_description": "Build something",
             "task_type": "feature",
             "execution_history": [],
-            "git_log": "",
-            "git_diff_stat": "",
         })
         assert "default" in result
         assert "abc123" in result
@@ -56,8 +54,6 @@ class TestContextService:
             "task_description": "",
             "task_type": "feature",
             "execution_history": [],
-            "git_log": "",
-            "git_diff_stat": "",
         })
         assert "Custom Protocol" not in result
         assert "llmflows Protocol" in result
@@ -76,13 +72,11 @@ class TestContextService:
             "task_name": "Re-run",
             "task_description": "Retry this",
             "task_type": "feature",
+            "worktree_path": "/tmp/worktrees/task-abc123",
             "execution_history": [
                 {"flow_name": "default", "outcome": "failed", "summary": "It broke"},
             ],
-            "git_log": "abc1234 initial commit",
-            "git_diff_stat": "2 files changed",
         })
         assert "PREVIOUS RUNS" in result
         assert "It broke" in result
-        assert "initial commit" in result
-        assert "2 files changed" in result
+        assert "git diff main...HEAD" in result

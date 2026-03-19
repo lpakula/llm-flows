@@ -74,17 +74,6 @@ class AgentService:
 
         self._copy_cursor_rule()
 
-        if use_task_subdir:
-            git_log = ""
-            git_diff_stat = ""
-        else:
-            from ..utils.git import _run_git, get_worktree_diff, detect_default_branch
-            worktree_str = str(self.worktree_path)
-            base_branch = detect_default_branch(worktree_str)
-            log_output = _run_git(["log", f"{base_branch}..HEAD", "--oneline"], cwd=worktree_str)
-            git_log = log_output.strip() if log_output else ""
-            git_diff_stat = get_worktree_diff(base=base_branch, cwd=worktree_str)
-
         prompt_vars = {
             "flow_name": flow_name,
             "task_id": task_id,
@@ -92,8 +81,6 @@ class AgentService:
             "task_description": task_description,
             "task_type": task_type,
             "execution_history": execution_history or [],
-            "git_log": git_log,
-            "git_diff_stat": git_diff_stat,
         }
         prompt_content = context_svc.render_start_instructions(prompt_vars)
 

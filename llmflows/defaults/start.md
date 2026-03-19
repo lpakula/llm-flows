@@ -38,9 +38,9 @@ You are an autonomous AI agent managed by llmflows.
 ---
 
 # PREVIOUS RUNS
-
 {%- if worktree_path %}
-> **Important:** Code changes from previous runs are **not on the main branch**. They persist in task worktrees (`.worktrees/task-{{ task_id }}/`). Always check worktree paths first when exploring code that was modified in earlier runs.
+
+> The worktree at `{{ worktree_path }}` contains changes from previous runs. Use `git log` and `git diff main...HEAD` to inspect them.
 {%- endif %}
 {%- for run in execution_history %}
 
@@ -53,24 +53,6 @@ You are an autonomous AI agent managed by llmflows.
 {{ run.summary | trim }}
 {%- endif %}
 {%- endfor %}
-{%- endif %}
-{%- if git_log %}
-
----
-
-# GIT CONTEXT
-
-### Commits on this branch
-```
-{{ git_log | trim }}
-```
-{%- endif %}
-{%- if git_diff_stat %}
-
-### Changes so far
-```diff
-{{ git_diff_stat | trim }}
-```
 {%- endif %}
 
 ---

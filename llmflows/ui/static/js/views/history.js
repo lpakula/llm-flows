@@ -14,6 +14,7 @@ function historyView() {
     logStreaming: false,
     _logEventSource: null,
     logsCopied: false,
+    logAtBottom: true,
     filterStatus: '',
 
     async init() {
@@ -135,11 +136,21 @@ function historyView() {
       }
     },
 
+    _scrollLogIfAtBottom() {
+      if (this.logAtBottom && this.$refs.logScroll) {
+        this.$nextTick(() => {
+          const el = this.$refs.logScroll;
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
+    },
+
     viewRunLogs(runId) {
       if (this.streamingRunId === runId) return;
       this.stopLogStream();
       this.streamingRunId = runId;
       this.logEntries = [];
+      this.logAtBottom = true;
       this.expandedRun = runId;
 
       const run = this.runs.find(r => r.id === runId);
@@ -171,6 +182,7 @@ function historyView() {
             if (this.logEntries.length > 500) {
               this.logEntries = this.logEntries.slice(-400);
             }
+            this._scrollLogIfAtBottom();
           }
         } catch {}
       };

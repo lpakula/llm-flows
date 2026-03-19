@@ -90,16 +90,6 @@ def _start_inline(session, project, task, flow_name, no_worktree,
     (llmflows_dir / "task_id").write_text(task.id)
     (llmflows_dir / "run_id").write_text(run.id)
 
-    if no_worktree:
-        git_log = ""
-        git_diff_stat = ""
-    else:
-        from ..utils.git import _run_git, get_worktree_diff
-        work_dir_str = str(work_dir)
-        log_output = _run_git(["log", "main..HEAD", "--oneline"], cwd=work_dir_str)
-        git_log = log_output.strip() if log_output else ""
-        git_diff_stat = get_worktree_diff(base="main", cwd=work_dir_str)
-
     history = run_svc.get_history(task.id)
     execution_history = [
         {
@@ -120,8 +110,6 @@ def _start_inline(session, project, task, flow_name, no_worktree,
         "task_description": task.description,
         "task_type": task.type.value,
         "execution_history": execution_history or [],
-        "git_log": git_log,
-        "git_diff_stat": git_diff_stat,
         "worktree_path": worktree_path,
     }
     prompt = context_svc.render_start_instructions(prompt_vars)

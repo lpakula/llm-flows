@@ -22,6 +22,7 @@ function taskView() {
     runModalIsFirstRun: false,
     runModalProject: null,
     logsCopied: false,
+    logAtBottom: true,
 
     async init() {
       const tid = Alpine.store('router').params.taskId;
@@ -131,6 +132,21 @@ function taskView() {
       return this.runStatusBadge(outcome);
     },
 
+    duration(run) {
+      if (!run.started_at) return '-';
+      const start = new Date(run.started_at);
+      const end = run.completed_at ? new Date(run.completed_at) : new Date();
+      const ms = end - start;
+      if (ms < 1000) return '<1s';
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      const rs = s % 60;
+      if (m < 60) return m + 'm ' + rs + 's';
+      const h = Math.floor(m / 60);
+      return h + 'h ' + (m % 60) + 'm';
+    },
+
     toggleRun(runId) {
       if (this.expandedRun === runId) {
         this.expandedRun = null;
@@ -147,11 +163,21 @@ function taskView() {
       }
     },
 
+    _scrollLogIfAtBottom() {
+      if (this.logAtBottom && this.$refs.logScroll) {
+        this.$nextTick(() => {
+          const el = this.$refs.logScroll;
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
+    },
+
     viewRunLogs(runId) {
       if (this.streamingRunId === runId) return;
       this.stopLogStream();
       this.streamingRunId = runId;
       this.logEntries = [];
+      this.logAtBottom = true;
 
       const run = this.runs.find(r => r.id === runId);
       if (run && run.log_path === 'inline') {
@@ -182,6 +208,7 @@ function taskView() {
             if (this.logEntries.length > 500) {
               this.logEntries = this.logEntries.slice(-400);
             }
+            this._scrollLogIfAtBottom();
           }
         } catch {}
       };
