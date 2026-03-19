@@ -856,7 +856,7 @@
         <div x-show="!task" class="text-gray-500 text-center py-12">Task not found</div>
 
         <!-- New Run Modal -->
-        <div x-show="runModal" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="runModal = false">
+        <div x-show="runModal" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-lg border border-gray-700" @click.stop>
             <h2 class="text-lg font-semibold mb-4">New Run</h2>
             <div x-show="Object.keys(runModalProject?.aliases || {}).length > 1" class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
