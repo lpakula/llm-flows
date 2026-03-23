@@ -221,6 +221,8 @@ def _print_event(line: str, strip_prefix: str | None = None) -> None:
     elif etype == "assistant":
         text = ""
         for part in event.get("message", {}).get("content", []):
+            if part.get("type") == "thinking":
+                continue
             text += part.get("text", "")
         if text.strip():
             click.secho(text.strip(), fg="blue")
@@ -241,6 +243,9 @@ def _print_event(line: str, strip_prefix: str | None = None) -> None:
     elif etype == "result":
         duration = (event.get("duration_ms", 0) / 1000)
         click.secho(f"--- Done ({duration:.1f}s) ---", fg="bright_black")
+
+    elif etype == "thinking":
+        pass
 
     else:
         msg = event.get("message") or event.get("error") or event.get("text") or event.get("data")

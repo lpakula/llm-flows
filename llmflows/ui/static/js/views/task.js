@@ -322,7 +322,8 @@ function taskView() {
           return [{ text: `--- Session started (${event.model || 'agent'}) ---`, cls: 'text-gray-500' }];
 
         case 'assistant': {
-          const text = (event.message?.content || []).map(c => c.text || '').join('');
+          const parts = (event.message?.content || []).filter(c => c.type !== 'thinking');
+          const text = parts.map(c => c.text || '').join('');
           if (!text.trim()) return null;
           return [{ text: text.trim(), cls: 'text-blue-300' }];
         }
@@ -351,6 +352,9 @@ function taskView() {
 
         case 'result':
           return [{ text: `--- Done (${((event.duration_ms || 0) / 1000).toFixed(1)}s) ---`, cls: 'text-gray-500' }];
+
+        case 'thinking':
+          return null;
 
         case 'raw':
           return event.text ? [{ text: event.text, cls: 'text-red-400' }] : null;
