@@ -211,6 +211,7 @@ class FlowStep(Base):
     position: int = Column(Integer, nullable=False, default=0)
     content: str = Column(Text, default="")
     gates: str = Column(Text, default="[]")
+    ifs: str = Column(Text, default="[]")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -225,6 +226,14 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    def get_ifs(self) -> list[dict]:
+        """Parse ifs JSON into a list of if-condition dicts."""
+        import json
+        try:
+            return json.loads(self.ifs or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -233,6 +242,7 @@ class FlowStep(Base):
             "position": self.position,
             "content": self.content,
             "gates": self.get_gates(),
+            "ifs": self.get_ifs(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

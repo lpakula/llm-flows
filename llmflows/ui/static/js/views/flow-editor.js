@@ -7,9 +7,9 @@ function flowEditorView() {
     editingMeta: false,
     metaForm: { name: '', description: '' },
     editingStep: null,
-    stepForm: { name: '', content: '', gates: [] },
+    stepForm: { name: '', content: '', gates: [], ifs: [] },
     showAddStep: false,
-    newStep: { name: '', content: '', position: null, gates: [] },
+    newStep: { name: '', content: '', position: null, gates: [], ifs: [] },
     _sortable: null,
 
     async init() {
@@ -70,12 +70,13 @@ function flowEditorView() {
     startEditStep(step) {
       this.editingStep = step.id;
       const gates = (step.gates || []).map(g => ({ ...g }));
-      this.stepForm = { name: step.name, content: step.content || '', gates };
+      const ifs = (step.ifs || []).map(g => ({ ...g }));
+      this.stepForm = { name: step.name, content: step.content || '', gates, ifs };
     },
 
     cancelEditStep() {
       this.editingStep = null;
-      this.stepForm = { name: '', content: '', gates: [] };
+      this.stepForm = { name: '', content: '', gates: [], ifs: [] };
     },
 
     addGate(form) {
@@ -86,12 +87,22 @@ function flowEditorView() {
       form.gates.splice(index, 1);
     },
 
+    addIf(form) {
+      form.ifs.push({ command: '', message: '' });
+    },
+
+    removeIf(form, index) {
+      form.ifs.splice(index, 1);
+    },
+
     async saveStep(stepId) {
       const gates = this.stepForm.gates.filter(g => g.command.trim());
+      const ifs = this.stepForm.ifs.filter(g => g.command.trim());
       await API.patch(`/api/flows/${this.flow.id}/steps/${stepId}`, {
         name: this.stepForm.name,
         content: this.stepForm.content,
         gates,
+        ifs,
       });
       this.editingStep = null;
       await this.load(this.flow.id);
@@ -99,13 +110,15 @@ function flowEditorView() {
 
     async addStep() {
       const gates = this.newStep.gates.filter(g => g.command.trim());
+      const ifs = this.newStep.ifs.filter(g => g.command.trim());
       const body = { name: this.newStep.name, content: this.newStep.content };
       if (gates.length) body.gates = gates;
+      if (ifs.length) body.ifs = ifs;
       if (this.newStep.position !== null && this.newStep.position !== '') {
         body.position = parseInt(this.newStep.position);
       }
       await API.post(`/api/flows/${this.flow.id}/steps`, body);
-      this.newStep = { name: '', content: '', position: null, gates: [] };
+      this.newStep = { name: '', content: '', position: null, gates: [], ifs: [] };
       this.showAddStep = false;
       await this.load(this.flow.id);
     },

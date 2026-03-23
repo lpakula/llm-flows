@@ -12,13 +12,17 @@ from ..db.models import Flow, FlowStep
 from ..defaults import get_defaults_dir
 
 
-def _serialize_gates(gates) -> str:
-    """Normalize gates to a JSON string for storage."""
-    if gates is None:
+def _serialize_json_list(value) -> str:
+    """Normalize a list (gates/ifs) to a JSON string for storage."""
+    if value is None:
         return "[]"
-    if isinstance(gates, str):
-        return gates
-    return json.dumps(gates)
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+def _serialize_gates(gates) -> str:
+    return _serialize_json_list(gates)
 
 
 class FlowService:
@@ -47,6 +51,7 @@ class FlowService:
                     position=step_data.get("position", i),
                     content=step_data.get("content", ""),
                     gates=_serialize_gates(step_data.get("gates")),
+                    ifs=_serialize_json_list(step_data.get("ifs")),
                 )
                 self.session.add(step)
 
@@ -89,6 +94,7 @@ class FlowService:
     def add_step(
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
+        ifs: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -101,6 +107,7 @@ class FlowService:
         step = FlowStep(
             flow_id=flow_id, name=name, position=position,
             content=content, gates=_serialize_gates(gates),
+            ifs=_serialize_json_list(ifs),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -208,7 +215,7 @@ class FlowService:
 
         steps_data = [
             {"name": s.name, "position": s.position, "content": s.content,
-             "gates": s.get_gates()}
+             "gates": s.get_gates(), "ifs": s.get_ifs()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -244,6 +251,9 @@ class FlowService:
                 gates = s.get_gates()
                 if gates:
                     step_data["gates"] = gates
+                ifs = s.get_ifs()
+                if ifs:
+                    step_data["ifs"] = ifs
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -282,6 +292,7 @@ class FlowService:
                         position=step_data.get("position", i),
                         content=step_data.get("content", ""),
                         gates=_serialize_gates(step_data.get("gates")),
+                        ifs=_serialize_json_list(step_data.get("ifs")),
                     )
                     self.session.add(step)
             else:

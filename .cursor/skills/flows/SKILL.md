@@ -32,6 +32,28 @@ Flow files live in `flows/` at the project root.
 
 One flow per file in the library, file named after the flow. Positions must be sequential starting at 0.
 
+## IF Conditions
+
+IFs are optional shell commands on a step that control whether the step is included. When `llmflows mode next` is about to enter a step, it evaluates all `ifs` commands. If **any** command exits non-zero, the step is **skipped** and the runner advances to the next step.
+
+```json
+{
+  "name": "lint",
+  "position": 2,
+  "content": "# LINT\n\n...",
+  "ifs": [
+    {"command": "test -f package.json", "message": "Node project exists"},
+    {"command": "grep -q eslint package.json", "message": "ESLint is configured"}
+  ]
+}
+```
+
+Each entry has `command` (shell command, must exit 0 for step to run) and `message` (human-readable description). IFs are optional — omit or use `[]` for unconditional steps.
+
+Multiple consecutive steps with failing IFs are all skipped. If all remaining steps are skipped, the flow advances to the next flow in the chain or completes.
+
+**IF vs Gates**: IFs decide whether to *enter* a step. Gates block you from *leaving* a step. Use IFs for conditional inclusion; use gates for enforcing completion.
+
 ## Gates
 
 Gates are optional shell commands on a step that `llmflows mode next` enforces before advancing. If any gate command exits non-zero, the agent is blocked and shown the failure.
@@ -50,7 +72,7 @@ Gates are optional shell commands on a step that `llmflows mode next` enforces b
 
 Each gate has `command` (shell command, must exit 0) and `message` (human-readable failure feedback sent to the agent). Gates are optional — omit or use `[]` for no enforcement.
 
-Gate commands, messages, and step content support template variables: `{{run.id}}`, `{{task.id}}`, `{{flow.name}}`. These are resolved at runtime.
+IF commands, gate commands, messages, and step content support template variables: `{{run.id}}`, `{{task.id}}`, `{{flow.name}}`. These are resolved at runtime.
 
 ## Step Content Conventions
 

@@ -8,7 +8,7 @@ from ..config import get_repo_root, load_system_config
 from ..db.database import get_session, init_db
 from ..services.context import ContextService
 from ..services.flow import FlowService
-from ..services.gate import evaluate_gates
+from ..services.gate import evaluate_gates, evaluate_ifs
 from ..services.run import RunService
 
 
@@ -65,19 +65,20 @@ def mode_next():
             click.echo(f"Flow '{flow_name}' not found or has no steps.", err=True)
             raise SystemExit(1)
 
+        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        step_vars = {
+            "run.id": run.id,
+            "task.id": run.task_id,
+            "flow.name": flow_name,
+        }
+
         # Gate enforcement: check current step's gates before advancing
         if current and current != "complete":
             step_obj = flow_svc.get_step_obj(flow_name, current)
             if step_obj:
                 gates = step_obj.get_gates()
                 if gates:
-                    gate_vars = {
-                        "run.id": run.id,
-                        "task.id": run.task_id,
-                        "flow.name": flow_name,
-                    }
-                    gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-                    failures = evaluate_gates(gates, repo_root, timeout=gate_timeout, variables=gate_vars)
+                    failures = evaluate_gates(gates, repo_root, timeout=gate_timeout, variables=step_vars)
                     if failures:
                         lines = ["Gate check failed. Fix these before advancing:\n"]
                         for f in failures:
@@ -117,14 +118,39 @@ def mode_next():
         else:
             next_step = "complete"
 
+        # IF-condition evaluation: skip steps whose conditions fail
+        while next_step and next_step != "complete":
+            step_obj = flow_svc.get_step_obj(flow_name, next_step)
+            if not step_obj:
+                break
+            ifs = step_obj.get_ifs()
+            if not ifs:
+                break
+            if evaluate_ifs(ifs, repo_root, timeout=gate_timeout, variables=step_vars):
+                break
+            # Condition failed — skip this step
+            click.echo(f"IF conditions not met for step '{next_step}', skipping.", err=True)
+            nxt = flow_svc.get_next_step(flow_name, next_step)
+            if nxt:
+                next_step = nxt
+            else:
+                next_flow = run_svc.get_next_flow_in_chain(task_id) if task_id else None
+                if next_flow:
+                    click.echo(
+                        f"\n---\nFlow '{flow_name}' complete. "
+                        f"Continuing with '{next_flow}'...\n---\n",
+                        err=True,
+                    )
+                    run_svc.advance_to_next_flow(task_id, next_flow)
+                    flow_name = next_flow
+                    step_vars["flow.name"] = flow_name
+                    steps = flow_svc.get_flow_steps(next_flow)
+                    next_step = steps[0] if steps else "complete"
+                else:
+                    next_step = "complete"
+
         # Persist next step to DB
         run_svc.update_step(task_id or run.task_id, next_step)
-
-        step_vars = {
-            "run.id": run.id,
-            "task.id": run.task_id,
-            "flow.name": flow_name,
-        }
 
         if next_step == "complete":
             content = context_svc.load_complete_step()

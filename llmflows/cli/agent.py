@@ -242,6 +242,12 @@ def _print_event(line: str, strip_prefix: str | None = None) -> None:
         duration = (event.get("duration_ms", 0) / 1000)
         click.secho(f"--- Done ({duration:.1f}s) ---", fg="bright_black")
 
+    else:
+        msg = event.get("message") or event.get("error") or event.get("text") or event.get("data")
+        if msg:
+            text = msg if isinstance(msg, str) else json.dumps(msg)
+            click.secho(text, fg="red")
+
 
 def _extract_tool(tc: dict) -> tuple[str, dict]:
     """Extract (tool_name, call_data) from a tool_call dict."""

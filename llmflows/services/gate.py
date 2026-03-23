@@ -1,4 +1,4 @@
-"""Gate evaluation — run shell commands to enforce step completion."""
+"""Gate & IF evaluation — run shell commands to enforce step completion / conditional inclusion."""
 
 import re
 import subprocess
@@ -61,3 +61,31 @@ def evaluate_gates(
                 "stderr": str(e),
             })
     return failures
+
+
+def evaluate_ifs(
+    ifs: list[dict], cwd: Path, timeout: int = 60,
+    variables: dict | None = None,
+) -> bool:
+    """Evaluate IF conditions for a step. Returns True if the step should run.
+
+    Each entry is {"command": "...", "message": "..."}.
+    ALL commands must exit 0 for the step to be included.
+    If any command exits non-zero, the step is skipped.
+    Empty list or no commands → step always runs.
+    """
+    variables = variables or {}
+    for entry in ifs:
+        command = _interpolate(entry.get("command", ""), variables)
+        if not command:
+            continue
+        try:
+            result = subprocess.run(
+                command, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if result.returncode != 0:
+                return False
+        except (subprocess.TimeoutExpired, Exception):
+            return False
+    return True

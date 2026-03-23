@@ -23,6 +23,7 @@ function taskView() {
     runModalProject: null,
     logsCopied: false,
     logAtBottom: true,
+    runSteps: {},
 
     async init() {
       const tid = Alpine.store('router').params.taskId;
@@ -52,6 +53,7 @@ function taskView() {
           const activeRun = this.runs.find(r => this.isRunActive(r));
           if (activeRun) {
             this.expandedRun = activeRun.id;
+            this.loadRunSteps(activeRun.id);
             this.viewRunLogs(activeRun.id);
           }
         }
@@ -69,10 +71,20 @@ function taskView() {
           if (found) {
             this.task = found;
             this.runs = await API.get(`/api/tasks/${tid}/runs`);
+            if (this.expandedRun) this.loadRunSteps(this.expandedRun);
             break;
           }
         }
       } catch (e) {}
+    },
+
+    async loadRunSteps(runId) {
+      try {
+        const data = await API.get(`/api/runs/${runId}/steps`);
+        this.runSteps[runId] = data.steps || [];
+      } catch (e) {
+        this.runSteps[runId] = [];
+      }
     },
 
     _resolveWorktreePrefix() {
@@ -156,6 +168,7 @@ function taskView() {
         }
       } else {
         this.expandedRun = runId;
+        this.loadRunSteps(runId);
         const run = this.runs.find(r => r.id === runId);
         if (run && this.isRunActive(run)) {
           this.viewRunLogs(runId);
@@ -339,8 +352,17 @@ function taskView() {
         case 'result':
           return [{ text: `--- Done (${((event.duration_ms || 0) / 1000).toFixed(1)}s) ---`, cls: 'text-gray-500' }];
 
-        default:
-          return null;
+        case 'raw':
+          return event.text ? [{ text: event.text, cls: 'text-red-400' }] : null;
+
+        default: {
+          const msg = event.message || event.error || event.text || event.data || JSON.stringify(event);
+          const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
+          if (!text.trim() || text === '{}') return null;
+          const cls = (event.type === 'error' || text.toLowerCase().includes('error') || text.toLowerCase().includes('cannot'))
+            ? 'text-red-400' : 'text-gray-400';
+          return [{ text: text.trim(), cls }];
+        }
       }
     },
 
@@ -441,6 +463,24 @@ function taskView() {
       this.loadRunModalModels(this.runModalAgent).then(() => {
         if (cfg.model && this.runModalModels.includes(cfg.model)) this.runModalModel = cfg.model;
       });
+    },
+
+    stepBoxClass(status) {
+      return {
+        completed: 'bg-green-900/40 border-green-700 text-green-400',
+        current: 'bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold',
+        skipped: 'bg-gray-900/30 border-gray-800 text-gray-600',
+        pending: 'bg-gray-900/50 border-gray-700 text-gray-500',
+      }[status] || 'bg-gray-900/50 border-gray-700 text-gray-500';
+    },
+
+    stepConnectorClass(status) {
+      return {
+        completed: 'bg-green-700',
+        current: 'bg-yellow-600',
+        skipped: 'bg-gray-800',
+        pending: 'bg-gray-800',
+      }[status] || 'bg-gray-800';
     },
 
     back() {

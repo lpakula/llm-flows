@@ -59,6 +59,7 @@ class StepCreate(BaseModel):
     content: str = ""
     position: Optional[int] = None
     gates: Optional[list[dict]] = None
+    ifs: Optional[list[dict]] = None
 
 
 class StepUpdate(BaseModel):
@@ -66,6 +67,7 @@ class StepUpdate(BaseModel):
     content: Optional[str] = None
     position: Optional[int] = None
     gates: Optional[list[dict]] = None
+    ifs: Optional[list[dict]] = None
 
 
 class ReorderSteps(BaseModel):
@@ -515,6 +517,73 @@ async def delete_run(run_id: str):
         session.close()
 
 
+@app.get("/api/runs/{run_id}/steps")
+async def get_run_steps(run_id: str):
+    """Return step progress for a run: all steps across the flow chain with status."""
+    session, _, _ = _get_services()
+    try:
+        from ..db.models import TaskRun
+        run = session.query(TaskRun).filter_by(id=run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        flow_svc = FlowService(session)
+        import json
+        try:
+            chain = json.loads(run.flow_chain or "[]")
+        except (json.JSONDecodeError, TypeError):
+            chain = []
+        if not chain:
+            chain = [run.flow_name]
+
+        try:
+            completed = json.loads(run.steps_completed or "[]")
+        except (json.JSONDecodeError, TypeError):
+            completed = []
+        completed_set = set(completed)
+
+        current = run.current_step or ""
+        is_active = bool(run.started_at and not run.completed_at)
+        current_flow = run.flow_name
+
+        all_steps = []
+        for flow_name in chain:
+            steps = flow_svc.get_flow_steps(flow_name)
+            for step_name in steps:
+                step_obj = flow_svc.get_step_obj(flow_name, step_name)
+                has_ifs = bool(step_obj and step_obj.get_ifs())
+                all_steps.append((flow_name, step_name, has_ifs))
+
+        current_idx = -1
+        for i, (fn, sn, _) in enumerate(all_steps):
+            if sn == current and fn == current_flow and current != "complete":
+                current_idx = i
+                break
+
+        result = []
+        for i, (flow_name, step_name, has_ifs) in enumerate(all_steps):
+            if current_idx >= 0 and i == current_idx and is_active:
+                status = "current"
+            elif step_name in completed_set:
+                status = "completed"
+            elif current_idx >= 0 and i < current_idx:
+                status = "skipped"
+            elif current == "complete" or run.completed_at:
+                status = "skipped"
+            else:
+                status = "pending"
+            result.append({
+                "name": step_name,
+                "flow": flow_name,
+                "status": status,
+                "has_ifs": has_ifs,
+            })
+
+        return {"steps": result}
+    finally:
+        session.close()
+
+
 @app.get("/api/runs/{run_id}/logs")
 async def stream_run_logs(run_id: str):
     """SSE endpoint that tails the agent's NDJSON log file for a TaskRun."""
@@ -560,7 +629,7 @@ async def stream_run_logs(run_id: str):
                             event = json.loads(line)
                             yield f"data: {json.dumps(event)}\n\n"
                         except json.JSONDecodeError:
-                            continue
+                            yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
                     pos = f.tell()
             else:
                 idle_count += 1
@@ -779,7 +848,8 @@ async def add_flow_step(flow_id: str, body: StepCreate):
     try:
         flow_svc = FlowService(session)
         step = flow_svc.add_step(
-            flow_id, body.name, body.content, body.position, gates=body.gates,
+            flow_id, body.name, body.content, body.position,
+            gates=body.gates, ifs=body.ifs,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -803,6 +873,9 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
         if body.gates is not None:
             import json
             updates["gates"] = json.dumps(body.gates)
+        if body.ifs is not None:
+            import json
+            updates["ifs"] = json.dumps(body.ifs)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")

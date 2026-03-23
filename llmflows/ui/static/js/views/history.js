@@ -16,6 +16,7 @@ function historyView() {
     logsCopied: false,
     logAtBottom: true,
     filterStatus: '',
+    runSteps: {},
 
     async init() {
       await this.load();
@@ -133,6 +134,16 @@ function historyView() {
         }
       } else {
         this.expandedRun = runId;
+        this.loadRunSteps(runId);
+      }
+    },
+
+    async loadRunSteps(runId) {
+      try {
+        const data = await API.get(`/api/runs/${runId}/steps`);
+        this.runSteps[runId] = data.steps || [];
+      } catch (e) {
+        this.runSteps[runId] = [];
       }
     },
 
@@ -227,8 +238,16 @@ function historyView() {
         }
         case 'result':
           return [{ text: `--- Done (${((event.duration_ms || 0) / 1000).toFixed(1)}s) ---`, cls: 'text-gray-500' }];
-        default:
-          return null;
+        case 'raw':
+          return event.text ? [{ text: event.text, cls: 'text-red-400' }] : null;
+        default: {
+          const msg = event.message || event.error || event.text || event.data || JSON.stringify(event);
+          const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
+          if (!text.trim() || text === '{}') return null;
+          const cls = (event.type === 'error' || text.toLowerCase().includes('error') || text.toLowerCase().includes('cannot'))
+            ? 'text-red-400' : 'text-gray-400';
+          return [{ text: text.trim(), cls }];
+        }
       }
     },
 
@@ -296,6 +315,24 @@ function historyView() {
       navigator.clipboard.writeText(text);
       this.logsCopied = true;
       setTimeout(() => this.logsCopied = false, 2000);
+    },
+
+    stepBoxClass(status) {
+      return {
+        completed: 'bg-green-900/40 border-green-700 text-green-400',
+        current: 'bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold',
+        skipped: 'bg-gray-900/30 border-gray-800 text-gray-600',
+        pending: 'bg-gray-900/50 border-gray-700 text-gray-500',
+      }[status] || 'bg-gray-900/50 border-gray-700 text-gray-500';
+    },
+
+    stepConnectorClass(status) {
+      return {
+        completed: 'bg-green-700',
+        current: 'bg-yellow-600',
+        skipped: 'bg-gray-800',
+        pending: 'bg-gray-800',
+      }[status] || 'bg-gray-800';
     },
 
     goToTask(taskId) {

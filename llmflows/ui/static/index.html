@@ -719,9 +719,11 @@
                         <td class="px-4 py-3 text-xs text-gray-600 whitespace-nowrap"
                             x-text="run.completed_at ? new Date(run.completed_at).toLocaleString() : (run.started_at ? new Date(run.started_at).toLocaleString() : new Date(run.created_at).toLocaleString())"></td>
                         <td class="px-4 py-3 text-right flex items-center justify-end gap-3" @click.stop>
-                          <button @click="viewRunLogs(run.id); expandedRun = run.id"
+                          <button @click="if (streamingRunId === run.id) { stopLogStream(); streamingRunId = null; } else { expandedRun = run.id; loadRunSteps(run.id); viewRunLogs(run.id); }"
                                   x-show="run.log_path"
-                                  class="text-xs text-blue-400 hover:text-blue-300 transition">Logs</button>
+                                  class="text-xs transition"
+                                  :class="streamingRunId === run.id ? 'text-yellow-400 hover:text-yellow-300' : 'text-blue-400 hover:text-blue-300'"
+                                  x-text="streamingRunId === run.id ? 'Hide Logs' : 'Logs'"></button>
                           <button x-show="run.status === 'running' || run.status === 'queued'"
                                   @click="forceStopRun(run.id)"
                                   class="text-xs text-red-400 hover:text-red-300 transition font-medium">Force Stop</button>
@@ -777,6 +779,37 @@
                                         [&_a]:text-blue-400 [&_a]:underline"
                                  x-html="marked.parse(run.summary || '')"></div>
                           </div>
+                          <!-- Step Progress Bar -->
+                          <template x-if="runSteps[run.id] && runSteps[run.id].length > 0">
+                            <div class="mb-4">
+                              <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-2">Steps</div>
+                              <div class="flex items-center overflow-x-auto pb-2 gap-0">
+                                <template x-for="(step, si) in runSteps[run.id]" :key="si">
+                                  <div class="flex items-center shrink-0">
+                                    <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px]"
+                                         :class="stepBoxClass(step.status)"
+                                         :title="step.name + ' (' + step.status + ')'">
+                                      <template x-if="step.status === 'completed'">
+                                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                                      </template>
+                                      <template x-if="step.status === 'current'">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse shrink-0"></span>
+                                      </template>
+                                      <template x-if="step.status === 'skipped'">
+                                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                                      </template>
+                                      <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name"></span>
+                                      <span x-show="step.has_ifs" class="text-[8px] text-purple-400 font-medium">IF</span>
+                                    </div>
+                                    <template x-if="si < runSteps[run.id].length - 1">
+                                      <div class="w-3 h-[2px] shrink-0" :class="stepConnectorClass(step.status)"></div>
+                                    </template>
+                                  </div>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+
                           <div x-show="streamingRunId === run.id">
                             <div class="flex items-center justify-between mb-2">
                               <span class="text-[10px] uppercase tracking-wide text-gray-600 flex items-center gap-2">
@@ -1078,6 +1111,9 @@
                       <span class="text-xs text-gray-500 w-6" x-text="si + 1"></span>
                       <span class="font-medium text-cyan-400" x-text="step.name"></span>
                       <span class="flex-1 text-xs text-gray-500 truncate" x-text="(step.content || '').slice(0, 80).replace(/\n/g, ' ')"></span>
+                      <template x-if="step.ifs && step.ifs.length">
+                        <span class="text-xs bg-purple-900/50 text-purple-400 border border-purple-800 px-1.5 py-0.5 rounded" x-text="step.ifs.length + ' if' + (step.ifs.length > 1 ? 's' : '')"></span>
+                      </template>
                       <template x-if="step.gates && step.gates.length">
                         <span class="text-xs bg-amber-900/50 text-amber-400 border border-amber-800 px-1.5 py-0.5 rounded" x-text="step.gates.length + ' gate' + (step.gates.length > 1 ? 's' : '')"></span>
                       </template>
@@ -1095,6 +1131,22 @@
                         <label class="block text-xs text-gray-500 mb-1">Content (Markdown)</label>
                         <textarea x-model="stepForm.content" rows="12"
                                   class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                      </div>
+                      <div>
+                        <div class="flex items-center gap-2 mb-2">
+                          <label class="block text-xs text-gray-500">IF Conditions</label>
+                          <span class="text-xs text-gray-600">All must exit 0 or step is skipped</span>
+                        </div>
+                        <template x-for="(cond, ci) in stepForm.ifs" :key="ci">
+                          <div class="flex gap-2 mb-2">
+                            <input x-model="cond.command" placeholder="command, e.g. test -f package.json"
+                                   class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <input x-model="cond.message" placeholder="description (optional)"
+                                   class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <button type="button" @click="removeIf(stepForm, ci)" class="text-xs text-red-400 hover:text-red-300 px-1">&times;</button>
+                          </div>
+                        </template>
+                        <button type="button" @click="addIf(stepForm)" class="text-xs text-purple-400 hover:text-purple-300">+ Add if</button>
                       </div>
                       <div>
                         <div class="flex items-center gap-2 mb-2">
@@ -1151,6 +1203,22 @@
                       <textarea x-model="newStep.content" rows="8"
                                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="# Step Name\n\n## PURPOSE\n..."></textarea>
+                    </div>
+                    <div>
+                      <div class="flex items-center gap-2 mb-2">
+                        <label class="block text-sm text-gray-400">IF Conditions</label>
+                        <span class="text-xs text-gray-600">optional — all must exit 0 or step is skipped</span>
+                      </div>
+                      <template x-for="(cond, ci) in newStep.ifs" :key="ci">
+                        <div class="flex gap-2 mb-2">
+                          <input x-model="cond.command" placeholder="command, e.g. test -f package.json"
+                                 class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500">
+                          <input x-model="cond.message" placeholder="description"
+                                 class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                          <button type="button" @click="removeIf(newStep, ci)" class="text-xs text-red-400 hover:text-red-300 px-1">&times;</button>
+                        </div>
+                      </template>
+                      <button type="button" @click="addIf(newStep)" class="text-xs text-purple-400 hover:text-purple-300">+ Add if</button>
                     </div>
                     <div>
                       <div class="flex items-center gap-2 mb-2">
@@ -1278,9 +1346,11 @@
                   <td class="px-4 py-3 text-xs text-gray-600 whitespace-nowrap"
                       x-text="run.created_at ? new Date(run.created_at).toLocaleString() : '-'"></td>
                   <td class="px-4 py-3 text-right" @click.stop>
-                    <button @click="viewRunLogs(run.id)"
+                    <button @click="if (streamingRunId === run.id) { stopLogStream(); streamingRunId = null; } else { expandedRun = run.id; loadRunSteps(run.id); viewRunLogs(run.id); }"
                             x-show="run.log_path"
-                            class="text-xs text-blue-400 hover:text-blue-300 transition">Logs</button>
+                            class="text-xs transition"
+                            :class="streamingRunId === run.id ? 'text-yellow-400 hover:text-yellow-300' : 'text-blue-400 hover:text-blue-300'"
+                            x-text="streamingRunId === run.id ? 'Hide Logs' : 'Logs'"></button>
                     <button @click="goToTask(run.task_id)"
                             class="text-xs text-gray-500 hover:text-gray-300 transition ml-2">Task</button>
                   </td>
@@ -1332,6 +1402,37 @@
                                     [&_a]:text-blue-400 [&_a]:underline"
                              x-html="marked.parse(run.summary || '')"></div>
                       </div>
+                      <!-- Step Progress Bar -->
+                      <template x-if="runSteps[run.id] && runSteps[run.id].length > 0">
+                        <div class="mb-4">
+                          <div class="text-[10px] uppercase tracking-wide text-gray-600 mb-2">Steps</div>
+                          <div class="flex items-center overflow-x-auto pb-2 gap-0">
+                            <template x-for="(step, si) in runSteps[run.id]" :key="si">
+                              <div class="flex items-center shrink-0">
+                                <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px]"
+                                     :class="stepBoxClass(step.status)"
+                                     :title="step.name + ' (' + step.status + ')'">
+                                  <template x-if="step.status === 'completed'">
+                                    <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                                  </template>
+                                  <template x-if="step.status === 'current'">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse shrink-0"></span>
+                                  </template>
+                                  <template x-if="step.status === 'skipped'">
+                                    <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                                  </template>
+                                  <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name"></span>
+                                  <span x-show="step.has_ifs" class="text-[8px] text-purple-400 font-medium">IF</span>
+                                </div>
+                                <template x-if="si < runSteps[run.id].length - 1">
+                                  <div class="w-3 h-[2px] shrink-0" :class="stepConnectorClass(step.status)"></div>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+
                       <!-- Logs viewer -->
                       <div x-show="streamingRunId === run.id">
                         <div class="flex items-center justify-between mb-2">
@@ -1385,10 +1486,12 @@
                           </div>
                         </div>
                       </div>
-                      <!-- Quick action to open logs if not streaming yet -->
-                      <div x-show="streamingRunId !== run.id && run.log_path" class="mt-2">
-                        <button @click.stop="viewRunLogs(run.id)"
-                                class="text-xs text-blue-400 hover:text-blue-300 transition">View Logs</button>
+                      <!-- Quick action to toggle logs -->
+                      <div x-show="run.log_path" class="mt-2">
+                        <button @click.stop="if (streamingRunId === run.id) { stopLogStream(); streamingRunId = null; } else { loadRunSteps(run.id); viewRunLogs(run.id); }"
+                                class="text-xs transition"
+                                :class="streamingRunId === run.id ? 'text-yellow-400 hover:text-yellow-300' : 'text-blue-400 hover:text-blue-300'"
+                                x-text="streamingRunId === run.id ? 'Hide Logs' : 'View Logs'"></button>
                       </div>
                     </td>
                   </tr>
