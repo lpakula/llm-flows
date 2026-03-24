@@ -692,8 +692,11 @@
                                 class="w-2 h-2 rounded-full inline-block bg-red-500"></span>
                         </td>
                         <td class="px-4 py-3">
-                          <span class="text-xs px-2 py-0.5 rounded" :class="runStatusBadge(runDisplayStatus(run))"
-                                x-text="runDisplayStatus(run)"></span>
+                          <div class="flex items-center gap-2">
+                            <span class="text-xs px-2 py-0.5 rounded" :class="runStatusBadge(runDisplayStatus(run))"
+                                  x-text="runDisplayStatus(run)"></span>
+                            <span class="text-[10px] font-mono text-gray-600" x-text="run.id"></span>
+                          </div>
                         </td>
                         <td class="px-4 py-3 text-xs text-cyan-400">
                           <template x-if="run.flow_chain && JSON.parse(run.flow_chain || '[]').length > 1">
@@ -1308,8 +1311,11 @@
                     <span class="w-2 h-2 rounded-full inline-block" :class="statusDot(run)"></span>
                   </td>
                   <td class="px-4 py-3">
-                    <span class="text-xs px-2 py-0.5 rounded" :class="statusBadge(displayStatus(run))"
-                          x-text="displayStatus(run)"></span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs px-2 py-0.5 rounded" :class="statusBadge(displayStatus(run))"
+                            x-text="displayStatus(run)"></span>
+                      <span class="text-[10px] font-mono text-gray-600" x-text="run.id"></span>
+                    </div>
                   </td>
                   <td class="px-4 py-3">
                     <button @click.stop="goToTask(run.task_id)"
