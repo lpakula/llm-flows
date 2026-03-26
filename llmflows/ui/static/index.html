@@ -361,12 +361,13 @@
                 </div>
                 <div>
                   <label class="block text-xs text-gray-500 mb-1">Model</label>
-                  <select x-model="aliasForm.model"
-                          class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <input x-model="aliasForm.model" list="aliasFormModelList" placeholder="Type or select model…"
+                         class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <datalist id="aliasFormModelList">
                     <template x-for="m in aliasFormModels" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option :value="m"></option>
                     </template>
-                  </select>
+                  </datalist>
                 </div>
                 <div>
                   <label class="block text-xs text-gray-500 mb-1">Flow Chain</label>
@@ -550,12 +551,13 @@
                 </div>
                 <div>
                   <label class="text-sm text-gray-400 mb-1 block">Model</label>
-                  <select x-model="startModel"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <input x-model="startModel" list="startModelList" placeholder="Type or select model…"
+                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <datalist id="startModelList">
                     <template x-for="m in models" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option :value="m"></option>
                     </template>
-                  </select>
+                  </datalist>
                 </div>
               </div>
 
@@ -948,12 +950,13 @@
                 </div>
                 <div>
                   <label class="text-sm text-gray-400 mb-1 block">Model</label>
-                  <select x-model="runModalModel"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <input x-model="runModalModel" list="runModalModelList" placeholder="Type or select model…"
+                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <datalist id="runModalModelList">
                     <template x-for="m in runModalModels" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option :value="m"></option>
                     </template>
-                  </select>
+                  </datalist>
                 </div>
               </div>
 

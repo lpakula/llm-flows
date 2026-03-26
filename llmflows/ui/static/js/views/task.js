@@ -428,7 +428,7 @@ function taskView() {
     async loadRunModalModels(agent) {
       try {
         this.runModalModels = await API.get(`/api/models?agent=${encodeURIComponent(agent)}`);
-        if (this.runModalModels.length && !this.runModalModels.includes(this.runModalModel)) {
+        if (!this.runModalModel && this.runModalModels.length) {
           this.runModalModel = this.runModalModels[0];
         }
       } catch (e) {
@@ -465,7 +465,7 @@ function taskView() {
       if (cfg.agent && this.runModalAgents.includes(cfg.agent)) this.runModalAgent = cfg.agent;
       if (cfg.flow_chain) this.runModalChain = [...cfg.flow_chain];
       this.loadRunModalModels(this.runModalAgent).then(() => {
-        if (cfg.model && this.runModalModels.includes(cfg.model)) this.runModalModel = cfg.model;
+        if (cfg.model) this.runModalModel = cfg.model;
       });
     },
 

@@ -69,7 +69,7 @@ function projectView() {
     async loadModelsForAgent(agent) {
       try {
         this.models = await API.get(`/api/models?agent=${encodeURIComponent(agent)}`);
-        if (this.models.length && !this.models.includes(this.startModel)) {
+        if (!this.startModel && this.models.length) {
           this.startModel = this.models[0];
         }
       } catch (e) {
@@ -174,7 +174,7 @@ function projectView() {
     async loadAliasFormModels(agent) {
       try {
         this.aliasFormModels = await API.get(`/api/models?agent=${encodeURIComponent(agent)}`);
-        if (this.aliasFormModels.length && !this.aliasFormModels.includes(this.aliasForm.model)) {
+        if (!this.aliasForm.model && this.aliasFormModels.length) {
           this.aliasForm.model = this.aliasFormModels[0];
         }
       } catch (e) {
@@ -227,7 +227,7 @@ function projectView() {
       if (cfg.agent && this.agents.includes(cfg.agent)) this.startAgent = cfg.agent;
       if (cfg.flow_chain) this.startChain = [...cfg.flow_chain];
       this.loadModelsForAgent(this.startAgent).then(() => {
-        if (cfg.model && this.models.includes(cfg.model)) this.startModel = cfg.model;
+        if (cfg.model) this.startModel = cfg.model;
       });
     },
 
