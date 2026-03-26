@@ -169,7 +169,8 @@ class AgentService:
 
         if binary == "claude":
             cmd = ["claude", "-p", prompt_content,
-                   "--output-format", "stream-json", "--verbose"]
+                   "--output-format", "stream-json", "--verbose",
+                   "--dangerously-skip-permissions"]
             if model:
                 cmd.extend(["--model", model])
             return cmd
