@@ -253,6 +253,16 @@ function taskView() {
       return { name: 'unknown', data: {} };
     },
 
+    _describeClaudeToolUse(c) {
+      const name = c.name || 'tool';
+      const input = c.input || {};
+      if (input.command) return `${name}: ${input.command.slice(0, 100)}`;
+      if (input.file_path || input.path) return `${name}: ${this._shorten(input.file_path || input.path)}`;
+      if (input.pattern) return `${name}: ${input.pattern}`;
+      if (input.glob_pattern) return `${name}: ${input.glob_pattern}`;
+      return name;
+    },
+
     _describeToolStart(tc) {
       const { name, data } = this._extractTool(tc);
       const args = data.args || {};
@@ -323,9 +333,32 @@ function taskView() {
 
         case 'assistant': {
           const parts = (event.message?.content || []).filter(c => c.type !== 'thinking');
-          const text = parts.map(c => c.text || '').join('');
-          if (!text.trim()) return null;
-          return [{ text: text.trim(), cls: 'text-blue-300' }];
+          const entries = [];
+          for (const c of parts) {
+            if (c.type === 'text' && c.text?.trim()) {
+              entries.push({ text: c.text.trim(), cls: 'text-blue-300' });
+            } else if (c.type === 'tool_use') {
+              const label = this._describeClaudeToolUse(c);
+              entries.push({ text: `  \u25b6 ${label}`, cls: 'text-yellow-400' });
+            }
+          }
+          return entries.length ? entries : null;
+        }
+
+        case 'user': {
+          const parts = (event.message?.content || []);
+          const entries = [];
+          for (const c of parts) {
+            if (c.type !== 'tool_result') continue;
+            const stdout = (event.tool_use_result?.stdout || c.content || '').trim();
+            const isErr = c.is_error || false;
+            const header = isErr ? 'Tool error' : 'Tool completed';
+            entries.push({ text: `  \u2714 ${header}`, cls: isErr ? 'text-red-400' : 'text-green-400' });
+            if (stdout) {
+              entries.push({ type: 'output', lines: stdout.split('\n'), expanded: false, cls: 'text-gray-500' });
+            }
+          }
+          return entries.length ? entries : null;
         }
 
         case 'tool_call': {
