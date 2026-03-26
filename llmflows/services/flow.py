@@ -179,19 +179,6 @@ class FlowService:
         content = (step.content or "").rstrip()
         if variables:
             content = _interpolate(content, variables)
-        gates = step.get_gates()
-        if gates:
-            gate_lines = []
-            for g in gates:
-                cmd = _interpolate(g["command"], variables) if variables else g["command"]
-                msg = _interpolate(g.get("message", ""), variables) if variables else g.get("message", "")
-                gate_lines.append(f"- `{cmd}` — {msg}")
-            content += (
-                "\n\n## GATES (enforced automatically)\n\n"
-                "The following checks must pass before you can advance to the next step:\n\n"
-                + "\n".join(gate_lines) + "\n\n"
-                "`llmflows mode next` will reject advancement until all gates pass."
-            )
         return content + self.STEP_FOOTER
 
     def get_flow_steps(self, flow_name: str) -> list[str]:

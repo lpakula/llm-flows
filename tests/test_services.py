@@ -321,7 +321,7 @@ class TestFlowService:
         assert step.name == "step1"
         assert svc.get_step_obj("obj-test", "nonexistent") is None
 
-    def test_step_content_includes_gate_info(self, test_db):
+    def test_step_content_excludes_gate_info(self, test_db):
         svc = FlowService(test_db)
         svc.create("gate-content", steps=[
             {
@@ -332,17 +332,8 @@ class TestFlowService:
             },
         ])
         content = svc.get_step_content("gate-content", "build")
-        assert "GATES" in content
-        assert "make build" in content
-        assert "Build succeeds" in content
-
-    def test_step_content_no_gate_section_when_empty(self, test_db):
-        svc = FlowService(test_db)
-        svc.create("no-gates", steps=[
-            {"name": "step1", "position": 0, "content": "# Step"},
-        ])
-        content = svc.get_step_content("no-gates", "step1")
         assert "GATES" not in content
+        assert "make build" not in content
 
     def test_duplicate_preserves_gates(self, test_db):
         svc = FlowService(test_db)
