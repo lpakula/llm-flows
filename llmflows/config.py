@@ -51,7 +51,7 @@ AGENT_REGISTRY = {
         "binary": "claude",
         "command": "claude -p \"<prompt>\"",
         "prompt_mode": "arg",
-        "output_format": "json",
+        "output_format": "stream-json",
         "models": [
             "default",
             "sonnet", "opus", "haiku",

@@ -109,6 +109,20 @@ class AgentService:
             content = "\n".join(sorted(entries)) + "\n"
         gi.write_text(content)
 
+    @staticmethod
+    def _load_etc_environment() -> dict[str, str]:
+        """Merge /etc/environment into the current env (container-level vars)."""
+        env = os.environ.copy()
+        etc_env = Path("/etc/environment")
+        if etc_env.exists():
+            for line in etc_env.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                env.setdefault(key.strip(), value.strip())
+        return env
+
     def _launch_agent(
         self, directory: Path, prompt_file: Path, log_file: Path, pid_file: Path,
         model: str = "", agent: str = "cursor",
@@ -123,6 +137,7 @@ class AgentService:
 
         try:
             cmd = self._build_agent_command(reg, prompt_file, prompt_content, model)
+            env = self._load_etc_environment()
 
             fh = open(log_file, "w")
             proc = subprocess.Popen(
@@ -130,6 +145,7 @@ class AgentService:
                 cwd=str(directory),
                 stdout=fh,
                 stderr=subprocess.STDOUT,
+                env=env,
             )
             pid_file.write_text(str(proc.pid))
             return True
@@ -152,7 +168,8 @@ class AgentService:
             return cmd
 
         if binary == "claude":
-            cmd = ["claude", "-p", prompt_content, "--output-format", "json"]
+            cmd = ["claude", "-p", prompt_content,
+                   "--output-format", "stream-json", "--verbose"]
             if model:
                 cmd.extend(["--model", model])
             return cmd
