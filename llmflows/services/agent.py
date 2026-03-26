@@ -138,6 +138,7 @@ class AgentService:
         try:
             cmd = self._build_agent_command(reg, prompt_file, prompt_content, model)
             env = self._load_etc_environment()
+            env["IS_SANDBOX"] = "1"
 
             fh = open(log_file, "w")
             proc = subprocess.Popen(
