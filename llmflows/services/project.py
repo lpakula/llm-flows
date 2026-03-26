@@ -1,25 +1,41 @@
 """Project registry service."""
 
-from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Project
+from ..db.models import Project, ProjectSettings
 
 
 class ProjectService:
     def __init__(self, session: Session):
         self.session = session
 
-    def register(self, name: str, path: str) -> Project:
+    def register(self, name: str, path: str, git_repo: bool = True) -> Project:
         """Register a project in the central database."""
         existing = self.session.query(Project).filter_by(path=path).first()
         if existing:
+            settings = self.session.query(ProjectSettings).filter_by(
+                project_id=existing.id
+            ).first()
+            if not settings:
+                settings = ProjectSettings(
+                    project_id=existing.id,
+                    is_git_repo=git_repo,
+                )
+                self.session.add(settings)
+                self.session.commit()
             return existing
 
         project = Project(name=name, path=path)
         self.session.add(project)
+        self.session.flush()
+
+        settings = ProjectSettings(
+            project_id=project.id,
+            is_git_repo=git_repo,
+        )
+        self.session.add(settings)
         self.session.commit()
         return project
 
@@ -56,9 +72,12 @@ class ProjectService:
         return self.session.query(Project).filter_by(path=path).first()
 
     def resolve_current(self) -> Optional[Project]:
-        """Resolve the current project from the working directory's git root."""
-        from ..config import get_repo_root
+        """Resolve the current project from the git root or working directory."""
+        from ..config import get_repo_root, find_project_dir
         repo_root = get_repo_root()
-        if repo_root is None:
-            return None
-        return self.get_by_path(str(repo_root))
+        if repo_root is not None:
+            return self.get_by_path(str(repo_root))
+        project_dir = find_project_dir()
+        if project_dir is not None:
+            return self.get_by_path(str(project_dir.parent))
+        return None

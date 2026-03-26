@@ -175,3 +175,8 @@ def get_repo_root(start_path: Optional[Path] = None) -> Optional[Path]:
     except Exception:
         pass
     return None
+
+
+def is_git_repo(path: Optional[Path] = None) -> bool:
+    """Check whether the given path is inside a git repository."""
+    return get_repo_root(path) is not None

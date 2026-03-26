@@ -89,7 +89,7 @@ class DaemonConfigBody(BaseModel):
 
 
 class ProjectSettingsUpdate(BaseModel):
-    worktree_enabled: Optional[bool] = None
+    is_git_repo: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -105,7 +105,7 @@ def _get_project_settings(project_id: str, session) -> dict:
     s = session.query(ProjectSettings).filter_by(project_id=project_id).first()
     if s:
         return s.to_dict()
-    return {"worktree_enabled": True}
+    return {"is_git_repo": True}
 
 
 def _enrich_task(task_dict: dict, project_path: str, session, project_settings: Optional[dict] = None) -> dict:
@@ -114,19 +114,19 @@ def _enrich_task(task_dict: dict, project_path: str, session, project_settings: 
     active_run = run_svc.get_active(task_dict["id"])
     all_runs = run_svc.list_by_task(task_dict["id"])
 
-    worktree_enabled = (project_settings or {}).get("worktree_enabled", True)
+    is_git = (project_settings or {}).get("is_git_repo", True)
     branch = task_dict.get("worktree_branch", "")
 
     task_dict["agent_active"] = bool(active_run) and AgentService.is_agent_running(
         project_path,
-        branch if worktree_enabled else "",
-        task_id="" if worktree_enabled else task_dict["id"],
+        branch if is_git else "",
+        task_id="" if is_git else task_dict["id"],
     )
     task_dict["flow"] = active_run.flow_name if active_run else None
     task_dict["current_step"] = active_run.current_step if active_run else None
     task_dict["run_id"] = active_run.id if active_run else None
     task_dict["run_count"] = len(all_runs)
-    if worktree_enabled and branch:
+    if is_git and branch:
         wt_svc = WorktreeService(project_path)
         wt_path = wt_svc.get_worktree_path(branch)
         task_dict["worktree_path"] = str(wt_path) if wt_path else None
@@ -339,8 +339,8 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
             settings = ProjectSettings(project_id=project_id)
             session.add(settings)
 
-        if body.worktree_enabled is not None:
-            settings.worktree_enabled = body.worktree_enabled
+        if body.is_git_repo is not None:
+            settings.is_git_repo = body.is_git_repo
 
         session.commit()
         return settings.to_dict()
@@ -486,11 +486,11 @@ async def stop_run(run_id: str):
         killed = False
         if task and project:
             ps = _get_project_settings(project.id, session)
-            worktree_enabled = ps.get("worktree_enabled", True)
+            is_git = ps.get("is_git_repo", True)
             killed = AgentService.kill_agent(
                 project.path,
-                task.worktree_branch if worktree_enabled else "",
-                task_id="" if worktree_enabled else task.id,
+                task.worktree_branch if is_git else "",
+                task_id="" if is_git else task.id,
             )
 
         run_svc.mark_completed(run_id, outcome="cancelled")
@@ -731,6 +731,16 @@ async def dashboard():
                 "idle": sum(1 for t in tasks if t.id not in task_ids_with_active),
             }
 
+            is_git = _get_project_settings(p.id, session).get("is_git_repo", True)
+
+            def _agent_active(run):
+                task = task_svc.get(run.task_id)
+                if not task:
+                    return False
+                if is_git:
+                    return AgentService.is_agent_running(p.path, task.worktree_branch)
+                return AgentService.is_agent_running(p.path, "", task_id=task.id)
+
             result.append({
                 "project": p.to_dict(),
                 "task_counts": task_counts,
@@ -739,9 +749,7 @@ async def dashboard():
                 "executing": [
                     {
                         "run": r.to_dict(),
-                        "agent_active": AgentService.is_agent_running(
-                            p.path, task_svc.get(r.task_id).worktree_branch if task_svc.get(r.task_id) else "",
-                        ),
+                        "agent_active": _agent_active(r),
                     }
                     for r in executing_runs
                 ],

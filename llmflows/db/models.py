@@ -125,9 +125,7 @@ class ProjectSettings(Base):
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
     project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False, unique=True)
-    # When False the daemon runs the agent in the project root without creating a worktree.
-    # Useful for orchestrator/manager repos whose flows trigger changes in other repos.
-    worktree_enabled: bool = Column(Boolean, default=True)
+    is_git_repo: bool = Column(Boolean, default=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -138,7 +136,7 @@ class ProjectSettings(Base):
         return {
             "id": self.id,
             "project_id": self.project_id,
-            "worktree_enabled": self.worktree_enabled if self.worktree_enabled is not None else True,
+            "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

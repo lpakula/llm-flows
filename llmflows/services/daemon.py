@@ -76,14 +76,16 @@ class Daemon:
             return settings
 
         class _Defaults:
-            worktree_enabled = True
+            is_git_repo = True
 
         return _Defaults()
 
     def _process_project(self, project, task_svc: TaskService, run_svc: RunService) -> None:
         """Process a single project: check active runs, pick up pending."""
         settings = self._get_project_settings(project.id, run_svc.session)
-        worktree_enabled = settings.worktree_enabled
+        is_git = getattr(settings, "is_git_repo", True)
+        if is_git is None:
+            is_git = True
 
         active_runs = run_svc.get_active_by_project(project.id)
 
@@ -92,8 +94,7 @@ class Daemon:
             if not task:
                 continue
 
-            # Determine how to locate the agent process for this task
-            if worktree_enabled:
+            if is_git:
                 if not task.worktree_branch:
                     continue
                 agent_running = AgentService.is_agent_running(project.path, task.worktree_branch)
@@ -115,8 +116,8 @@ class Daemon:
                         )
                         AgentService.kill_agent(
                             project.path,
-                            task.worktree_branch if worktree_enabled else "",
-                            task_id="" if worktree_enabled else task.id,
+                            task.worktree_branch if is_git else "",
+                            task_id="" if is_git else task.id,
                         )
                         run_svc.mark_completed(run.id, outcome="timeout")
                         continue
@@ -198,13 +199,15 @@ class Daemon:
         if settings is None:
             settings = self._get_project_settings(project.id, run_svc.session)
 
-        worktree_enabled = settings.worktree_enabled
-        logger.info("Running task %s (flow=%s, worktree=%s): %s",
-                    task.id, run.flow_name, worktree_enabled, task.description[:60])
+        is_git = getattr(settings, "is_git_repo", True)
+        if is_git is None:
+            is_git = True
+        logger.info("Running task %s (flow=%s, is_git=%s): %s",
+                    task.id, run.flow_name, is_git, task.description[:60])
 
         project_dir = Path(project.path) / ".llmflows"
 
-        if worktree_enabled:
+        if is_git:
             wt_svc = WorktreeService(project.path)
             branch = task.worktree_branch or f"task-{task.id}"
 

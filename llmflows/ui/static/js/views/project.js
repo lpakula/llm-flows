@@ -25,9 +25,9 @@ function projectView() {
     aliasForm: { name: '', agent: 'cursor', model: '', flow_chain: [] },
     aliasAddFlow: '',
     aliasFormModels: [],
-    showWorktreeForm: false,
-    worktreeSettings: { worktree_enabled: true },
-    worktreeSettingsSaving: false,
+    showSettingsForm: false,
+    projectSettings: { is_git_repo: true },
+    settingsSaving: false,
 
     async init() {
       const pid = Alpine.store('router').params.projectId;
@@ -52,7 +52,7 @@ function projectView() {
 
     async load(pid) {
       try {
-        [this.project, this.tasks, this.flows, this.agents, this.worktreeSettings] = await Promise.all([
+        [this.project, this.tasks, this.flows, this.agents, this.projectSettings] = await Promise.all([
           API.get(`/api/projects/${pid}`),
           API.get(`/api/projects/${pid}/tasks`),
           API.get('/api/flows'),
@@ -245,22 +245,27 @@ function projectView() {
       return [...this.tasks].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     },
 
-    toggleWorktreeForm() {
-      this.showWorktreeForm = !this.showWorktreeForm;
+    toggleSettingsForm() {
+      this.showSettingsForm = !this.showSettingsForm;
     },
 
-    async saveWorktreeSettings() {
+    async toggleGitRepo() {
+      this.projectSettings.is_git_repo = !this.projectSettings.is_git_repo;
+      await this.saveProjectSettings();
+    },
+
+    async saveProjectSettings() {
       if (!this.project) return;
-      this.worktreeSettingsSaving = true;
+      this.settingsSaving = true;
       try {
-        this.worktreeSettings = await API.patch(
+        this.projectSettings = await API.patch(
           `/api/projects/${this.project.id}/settings`,
-          { worktree_enabled: this.worktreeSettings.worktree_enabled },
+          { is_git_repo: this.projectSettings.is_git_repo },
         );
       } catch (e) {
-        console.error('Failed to save worktree settings:', e);
+        console.error('Failed to save settings:', e);
       }
-      this.worktreeSettingsSaving = false;
+      this.settingsSaving = false;
     },
   };
 }

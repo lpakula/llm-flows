@@ -14,7 +14,6 @@ is the project root and ephemeral files live in
 
 import logging
 import os
-import shutil
 import signal
 import subprocess
 import time
@@ -72,8 +71,6 @@ class AgentService:
         (wt_llmflows / "task_id").write_text(task_id)
         (wt_llmflows / "run_id").write_text(run_id)
 
-        self._copy_cursor_rule()
-
         prompt_vars = {
             "flow_name": flow_name,
             "task_id": task_id,
@@ -96,22 +93,6 @@ class AgentService:
             model=model, agent=agent,
         )
         return launched, prompt_content, str(log_file)
-
-    def _copy_cursor_rule(self) -> None:
-        """Copy .cursor/rules/llmflows.md from main project into worktree."""
-        main_project = self.project_dir.parent
-        rule_src = main_project / ".cursor" / "rules" / "llmflows.md"
-        if not rule_src.exists():
-            return
-
-        rule_dest_dir = self.worktree_path / ".cursor" / "rules"
-        rule_dest = rule_dest_dir / "llmflows.md"
-
-        if rule_src.resolve() == rule_dest.resolve():
-            return
-
-        rule_dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(rule_src, rule_dest)
 
     @staticmethod
     def _ensure_gitignore(llmflows_dir: Path) -> None:

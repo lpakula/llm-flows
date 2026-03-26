@@ -34,6 +34,13 @@ def init_db() -> Path:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN aliases TEXT DEFAULT '{}'"))
                 conn.commit()
 
+    if "project_settings" in tables:
+        existing = {c["name"] for c in inspector.get_columns("project_settings")}
+        if "is_git_repo" not in existing:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE project_settings ADD COLUMN is_git_repo BOOLEAN DEFAULT 1"))
+                conn.commit()
+
     if "flow_steps" in tables:
         existing = {c["name"] for c in inspector.get_columns("flow_steps")}
         if "ifs" not in existing:

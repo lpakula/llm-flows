@@ -30,18 +30,21 @@ def _resolve_or_register(session):
         return project
 
     repo_root = get_repo_root()
-    if repo_root is None:
-        click.echo("Not inside a git repository.", err=True)
-        raise SystemExit(1)
+    project_root = repo_root or Path.cwd()
+    git_repo = repo_root is not None
 
-    project = project_svc.register(name=repo_root.name, path=str(repo_root))
+    project = project_svc.register(
+        name=project_root.name,
+        path=str(project_root),
+        git_repo=git_repo,
+    )
 
-    project_dir = repo_root / ".llmflows"
+    project_dir = project_root / ".llmflows"
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    from .admin import _update_gitignore, _generate_cursor_rule
-    _update_gitignore(repo_root)
-    _generate_cursor_rule(repo_root)
+    if git_repo:
+        from .admin import _update_gitignore
+        _update_gitignore(project_root)
 
     return project
 

@@ -1,43 +1,45 @@
 """Admin CLI commands -- register, project list/delete, db reset."""
 
-import shutil
 from pathlib import Path
 
 import click
 
-from ..config import get_repo_root, SYSTEM_DB
+from ..config import get_repo_root, is_git_repo, SYSTEM_DB
 from ..db.database import init_db, get_session, reset_engine
 from ..db.models import ProjectSettings
-from ..defaults import get_defaults_dir
 from ..services.project import ProjectService
 
 
 @click.command("register")
 @click.option("--name", "-n", default=None, help="Project name (defaults to directory name)")
 def register_cmd(name):
-    """Register current repo as a llmflows project."""
+    """Register current directory as a llmflows project."""
     repo_root = get_repo_root()
-    if repo_root is None:
-        click.echo("Not inside a git repository. Run this from a git repo root.")
-        raise SystemExit(1)
+    project_root = repo_root or Path.cwd()
+    git_repo = repo_root is not None
 
     init_db()
     session = get_session()
     try:
         project_svc = ProjectService(session)
-        project = project_svc.register(name=name or repo_root.name, path=str(repo_root))
+        project = project_svc.register(
+            name=name or project_root.name,
+            path=str(project_root),
+            git_repo=git_repo,
+        )
 
-        project_dir = repo_root / ".llmflows"
+        project_dir = project_root / ".llmflows"
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        _update_gitignore(repo_root)
-        _generate_cursor_rule(repo_root)
+        if git_repo:
+            _update_gitignore(project_root)
 
         click.echo()
         click.secho("  Project registered", fg="green", bold=True)
         click.echo()
         click.echo(f"  Project:  {click.style(project.name, fg='cyan')}  ({project.id})")
         click.echo(f"  Path:     {click.style(project.path, fg='cyan')}")
+        click.echo(f"  Git repo: {click.style('yes', fg='green') if git_repo else click.style('no', fg='yellow')}")
         click.echo()
     finally:
         session.close()
@@ -57,19 +59,6 @@ def _update_gitignore(repo_root: Path) -> None:
             content += "\n"
         content += f"\n{pattern}\n"
         gitignore.write_text(content)
-
-
-def _generate_cursor_rule(repo_root: Path) -> None:
-    """Generate .cursor/rules/llmflows.md from the package default."""
-    defaults_dir = get_defaults_dir()
-    src = defaults_dir / "llmflows-rule.md"
-    if not src.exists():
-        return
-
-    dest_dir = repo_root / ".cursor" / "rules"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "llmflows.md"
-    shutil.copy2(src, dest)
 
 
 @click.group()
@@ -212,10 +201,10 @@ def project_delete(project_id):
 
 @project.command("settings")
 @click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
-@click.option("--worktree-enabled", default=None, type=click.Choice(["true", "false"]),
-              help="Enable or disable git worktrees for this project")
-def project_settings(project_id, worktree_enabled):
-    """View or update worktree settings for a project.
+@click.option("--git-repo", default=None, type=click.Choice(["true", "false"]),
+              help="Mark whether this project is a git repository")
+def project_settings(project_id, git_repo):
+    """View or update project settings.
 
     Run with no flags to print current settings.
 
@@ -223,7 +212,7 @@ def project_settings(project_id, worktree_enabled):
 
     \b
       llmflows project settings
-      llmflows project settings --worktree-enabled false
+      llmflows project settings --git-repo false
     """
     session = get_session()
     try:
@@ -243,21 +232,21 @@ def project_settings(project_id, worktree_enabled):
 
         settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
 
-        if worktree_enabled is not None:
+        if git_repo is not None:
             if settings is None:
                 settings = ProjectSettings(project_id=project_id)
                 session.add(settings)
-            settings.worktree_enabled = worktree_enabled == "true"
+            settings.is_git_repo = git_repo == "true"
             session.commit()
 
-        enabled = settings.worktree_enabled if settings else True
+        is_git = settings.is_git_repo if settings and settings.is_git_repo is not None else True
 
         click.echo()
         click.echo(f"  Project:   {click.style(project.name, fg='cyan')}  ({project.id})")
-        click.echo(f"  Worktrees: {click.style('enabled', fg='green') if enabled else click.style('disabled', fg='yellow')}")
+        click.echo(f"  Git repo:  {click.style('yes', fg='green') if is_git else click.style('no', fg='yellow')}")
         click.echo()
 
-        if worktree_enabled is not None:
+        if git_repo is not None:
             click.secho("  Settings saved.", fg="green")
             click.echo()
     finally:
