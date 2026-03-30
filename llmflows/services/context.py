@@ -23,7 +23,7 @@ class ContextService:
         """Return the right ContextService for the current execution mode.
 
         In worktree mode, task_id/run_id live directly in <repo>/.llmflows/.
-        In no-worktree mode they live in <repo>/.llmflows/<task_id>/ so that
+        In no-git mode they live in <repo>/.llmflows/<task_id>/ so that
         multiple concurrent tasks don't collide. Fall back to the
         most-recently-touched subdirectory that contains a run_id file.
         """
@@ -80,6 +80,18 @@ class ContextService:
         try:
             env = Environment(autoescape=False)
             template = env.from_string(start_file.read_text())
+            return template.render(context)
+        except TemplateError:
+            return ""
+
+    def render_recovery_instructions(self, context: dict) -> str:
+        """Render resume.md as the recovery agent prompt."""
+        resume_file = DEFAULTS_DIR / "resume.md"
+        if not resume_file.exists():
+            return ""
+        try:
+            env = Environment(autoescape=False)
+            template = env.from_string(resume_file.read_text())
             return template.render(context)
         except TemplateError:
             return ""

@@ -33,7 +33,7 @@ Add this to your agent's system prompt or automation instructions to enforce the
 ```
 When starting a task, run:
 
-llmflows task create -t "<title>" -d "<description>" --flow my-flow --inline --no-worktree
+llmflows task create -t "<title>" -d "<description>" --flow my-flow --inline --no-git
 
 Then follow the protocol instructions in the output.
 ```

@@ -85,7 +85,7 @@ Run local agent CLIs with full environment access:
 
 ☁️ **Cloud agent VMs** 
 
-Any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-worktree`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
+Any cloud agent automation is supported as long as you can install `llm-flows` and provide an initial prompt. Integration works via inline mode (`--inline --no-git`), where the agent bootstraps and drives the flow itself — no daemon or trigger integration required (e.g. **[Cursor Automations](docs/cloud-agents.md)**, **[GitHub Copilot](docs/cloud-agents.md)**).
 
 🔗 **Trigger integrations:**
 - Local UI — create and trigger runs from the local web UI
@@ -104,10 +104,10 @@ The fastest way to try `llm-flows` is in an existing Git project.
 curl -fsSL https://raw.githubusercontent.com/lpakula/llm-flows/main/scripts/install.sh | bash
 ```
 
-Or install directly:
+Or install directly with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pipx install git+https://github.com/lpakula/llm-flows
+uv tool install git+https://github.com/lpakula/llm-flows
 ```
 
 ### 2. Register your project

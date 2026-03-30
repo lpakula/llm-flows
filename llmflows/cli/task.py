@@ -54,8 +54,9 @@ def _get_session():
     return get_session()
 
 
-def _start_inline(session, project, task, flow_name, no_worktree,
-                  flow_chain=None, user_prompt=""):
+def _start_inline(session, project, task, flow_name, no_git,
+                  flow_chain=None, user_prompt="",
+                  model="", agent="cursor"):
     """Bootstrap a run immediately — no daemon required.
 
     Creates the run, sets up the working directory, writes state files,
@@ -69,11 +70,12 @@ def _start_inline(session, project, task, flow_name, no_worktree,
     task_svc = TaskService(session)
 
     run = run_svc.enqueue(project.id, task.id, flow_name,
-                          user_prompt=user_prompt, flow_chain=flow_chain)
+                          user_prompt=user_prompt, flow_chain=flow_chain,
+                          model=model, agent=agent)
     run_svc.mark_started(run.id)
 
     worktree_path = None
-    if no_worktree:
+    if no_git:
         work_dir = Path(project.path)
     else:
         branch = f"task-{task.id}"
@@ -137,15 +139,18 @@ def task():
 @click.option("--inline", "inline_now", is_flag=True,
               help="Start the run immediately (inline, no daemon)")
 @click.option("--flow", "flow_name", default="default", help="Flow to use (default: default)")
-@click.option("--no-worktree", "no_worktree", is_flag=True,
+@click.option("--no-git", "no_git", is_flag=True,
               help="Run in the current directory instead of creating a git worktree")
-def task_create(title, description, task_type, inline_now, flow_name, no_worktree):
+@click.option("--model", "-m", default="", help="Model to use for this run (inline only)")
+@click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex (inline only)")
+def task_create(title, description, task_type, inline_now, flow_name, no_git, model, agent):
     """Create a new task.
 
     Examples:
       llmflows task create -t "Fix login flow" -d "Safari shows blank page on submit"
       llmflows task create -t "Add pagination" --inline --flow default
-      llmflows task create -t "Refactor API" --inline --no-worktree
+      llmflows task create -t "Refactor API" --inline --no-git
+      llmflows task create -t "Fix bug" --inline --model gemini-3-flash --agent cursor
     """
     session = _get_session()
     try:
@@ -159,7 +164,8 @@ def task_create(title, description, task_type, inline_now, flow_name, no_worktre
         )
 
         if inline_now:
-            _start_inline(session, project, t, flow_name, no_worktree)
+            _start_inline(session, project, t, flow_name, no_git,
+                          model=model, agent=agent)
             return
 
         click.echo(f"Created {click.style(t.id, fg='cyan')} — {click.style(title, fg='green', bold=True)}")
@@ -337,7 +343,8 @@ def task_show(task_id):
             click.echo(click.style("  " + "─" * 60, fg="bright_black"))
             for r in runs:
                 status_color = {"queued": "bright_blue", "running": "bright_yellow",
-                                "completed": "green"}.get(r.status, "bright_black")
+                                "completed": "green", "interrupted": "red",
+                                "timeout": "red", "error": "red"}.get(r.status, "bright_black")
                 step = r.current_step or ("-" if r.status != "completed" else "done")
                 click.echo(
                     f"  {click.style(r.id[:8], fg='bright_black')}  "
@@ -360,9 +367,11 @@ def task_show(task_id):
 @click.option("--prompt", "-p", default="", help="User prompt for this run")
 @click.option("--inline", "inline_now", is_flag=True,
               help="Start the run immediately (inline, no daemon)")
-@click.option("--no-worktree", "no_worktree", is_flag=True,
+@click.option("--no-git", "no_git", is_flag=True,
               help="Run in the current directory instead of creating a git worktree")
-def task_start(task_id, flows, prompt, inline_now, no_worktree):
+@click.option("--model", "-m", default="", help="Model to use for this run")
+@click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex")
+def task_start(task_id, flows, prompt, inline_now, no_git, model, agent):
     """Enqueue a new run for a task.
 
     Pass --flow once for a single flow, or repeat it to chain multiple flows
@@ -374,7 +383,11 @@ def task_start(task_id, flows, prompt, inline_now, no_worktree):
     Use --inline to run inline without the daemon:
 
       llmflows task start --id abc123 --inline
-      llmflows task start --id abc123 --inline --no-worktree
+      llmflows task start --id abc123 --inline --no-git
+
+    Specify model and agent:
+
+      llmflows task start --id abc123 --model gemini-3-flash --agent cursor
     """
     chain = list(flows) or ["default"]
     session = _get_session()
@@ -391,13 +404,15 @@ def task_start(task_id, flows, prompt, inline_now, no_worktree):
             if not project:
                 click.echo(f"Project {t.project_id} not found.", err=True)
                 raise SystemExit(1)
-            _start_inline(session, project, t, chain[0], no_worktree,
-                          flow_chain=chain, user_prompt=prompt)
+            _start_inline(session, project, t, chain[0], no_git,
+                          flow_chain=chain, user_prompt=prompt,
+                          model=model, agent=agent)
             return
 
         run_svc = RunService(session)
         run = run_svc.enqueue(t.project_id, task_id, chain[0],
-                              user_prompt=prompt, flow_chain=chain)
+                              user_prompt=prompt, flow_chain=chain,
+                              model=model, agent=agent)
         chain_str = " → ".join(click.style(f, fg="bright_green") for f in chain)
         click.echo(
             f"Queued run {click.style(run.id[:8], fg='cyan')} "

@@ -684,14 +684,12 @@
                                 class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse inline-block"></span>
                           <span x-show="run.status === 'queued'"
                                 class="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                          <span x-show="run.status === 'completed' && (!run.outcome || run.outcome === 'completed')"
+                          <span x-show="run.status === 'completed'"
                                 class="w-2 h-2 rounded-full inline-block bg-green-500"></span>
-                          <span x-show="run.status === 'completed' && run.outcome === 'cancelled'"
-                                class="w-2 h-2 rounded-full inline-block bg-red-400"></span>
-                          <span x-show="run.status === 'completed' && run.outcome === 'timeout'"
-                                class="w-2 h-2 rounded-full inline-block bg-orange-400"></span>
-                          <span x-show="run.status === 'completed' && run.outcome === 'failed'"
+                          <span x-show="run.status === 'interrupted' || run.status === 'error' || run.status === 'cancelled'"
                                 class="w-2 h-2 rounded-full inline-block bg-red-500"></span>
+                          <span x-show="run.status === 'timeout'"
+                                class="w-2 h-2 rounded-full inline-block bg-orange-400"></span>
                         </td>
                         <td class="px-4 py-3">
                           <div class="flex items-center gap-2">

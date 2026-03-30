@@ -27,6 +27,8 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
+        self.auto_recover = self.config["daemon"].get("auto_recover", True)
+        self.max_recovery_attempts = self.config["daemon"].get("max_recovery_attempts", 3)
 
     def start(self) -> None:
         """Start the daemon loop."""
@@ -126,12 +128,27 @@ class Daemon:
             run_svc.session.refresh(run)
             if run.completed_at:
                 continue
-            outcome = run.outcome or "completed"
-            logger.info("Task %s run %s finished (outcome=%s)", task.id, run.id, outcome)
-            run_svc.mark_completed(run.id, outcome=outcome)
 
-            if task.github_issue_number and task.integration:
-                self._post_github_result(task, run, project)
+            flow_complete = run.outcome == "completed" or run.current_step == "complete"
+            if flow_complete:
+                outcome = run.outcome or "completed"
+                logger.info("Task %s run %s finished (outcome=%s)", task.id, run.id, outcome)
+                run_svc.mark_completed(run.id, outcome=outcome)
+                if task.github_issue_number and task.integration:
+                    self._post_github_result(task, run, project)
+            elif self.auto_recover and (run.recovery_count or 0) < self.max_recovery_attempts:
+                logger.warning(
+                    "Task %s run %s: agent stopped at step '%s' (attempt %d/%d), recovering",
+                    task.id, run.id, run.current_step or "<none>",
+                    (run.recovery_count or 0) + 1, self.max_recovery_attempts,
+                )
+                self._recover_run(run, task, project, settings, run_svc, task_svc)
+            else:
+                logger.warning(
+                    "Task %s run %s: agent stopped at step '%s', marking interrupted",
+                    task.id, run.id, run.current_step or "<none>",
+                )
+                run_svc.mark_completed(run.id, outcome="interrupted")
 
         pending = run_svc.get_pending(project.id)
         if pending:
@@ -189,6 +206,91 @@ class Daemon:
             logger.exception("Error posting GitHub result for run %s", run.id)
         finally:
             gh.close()
+
+    def _recover_run(
+        self, run, task, project, settings, run_svc: RunService, task_svc: TaskService,
+    ) -> None:
+        """Re-launch an agent for a run whose previous agent stopped mid-flow."""
+        import json
+
+        is_git = getattr(settings, "is_git_repo", True)
+        if is_git is None:
+            is_git = True
+
+        run_svc.increment_recovery_count(run.id)
+        run_svc.session.refresh(run)
+
+        project_dir = Path(project.path) / ".llmflows"
+
+        if is_git:
+            wt_svc = WorktreeService(project.path)
+            wt_path = wt_svc.get_worktree_path(task.worktree_branch) if task.worktree_branch else None
+            if not wt_path:
+                logger.error("Cannot recover task %s run %s: worktree not found", task.id, run.id)
+                run_svc.mark_completed(run.id, outcome="interrupted")
+                return
+            working_path = wt_path
+            use_task_subdir = False
+        else:
+            working_path = Path(project.path)
+            use_task_subdir = True
+
+        try:
+            steps_completed = json.loads(run.steps_completed or "[]")
+        except (json.JSONDecodeError, TypeError):
+            steps_completed = []
+
+        from .context import ContextService
+        ctx = ContextService(working_path / ".llmflows")
+        try:
+            git_diff = ctx.load_worktree_diff()
+        except Exception:
+            git_diff = ""
+
+        history = run_svc.get_history(task.id)
+        execution_history = [
+            {
+                "flow_name": r.flow_name,
+                "outcome": r.outcome or "unknown",
+                "user_prompt": r.user_prompt or "",
+                "summary": r.summary or "",
+            }
+            for r in history
+            if r.outcome != "cancelled"
+        ] or None
+
+        recovery_context = {
+            "current_step": run.current_step or "",
+            "steps_completed": steps_completed,
+            "git_diff": git_diff,
+            "recovery_attempt": run.recovery_count or 1,
+        }
+
+        agent = AgentService(project_dir, working_path)
+        launched, prompt_content, log_path = agent.prepare_and_launch(
+            run_id=run.id,
+            flow_name=run.flow_name,
+            task_name=task.name,
+            task_id=task.id,
+            task_description=run.user_prompt or task.description,
+            task_type=task.type.value,
+            execution_history=execution_history,
+            model=run.model or "",
+            agent=run.agent or "cursor",
+            use_task_subdir=use_task_subdir,
+            recovery=True,
+            recovery_context=recovery_context,
+        )
+        if launched:
+            if prompt_content:
+                run_svc.set_prompt(run.id, prompt_content)
+            if log_path:
+                run_svc.set_log_path(run.id, log_path)
+            logger.info("Recovery agent launched for task %s run %s (attempt %d)",
+                        task.id, run.id, run.recovery_count or 1)
+        else:
+            logger.error("Recovery agent failed to launch for task %s run %s", task.id, run.id)
+            run_svc.mark_completed(run.id, outcome="interrupted")
 
     def _run_task(self, run, task_svc: TaskService, run_svc: RunService, project, settings=None) -> None:
         """Set up worktree (if enabled) and launch agent for a pending TaskRun."""

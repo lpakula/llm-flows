@@ -261,3 +261,107 @@ class TestTaskRunModel:
         test_db.commit()
 
         assert len(task.runs) == 2
+
+    def test_recovery_count_defaults_to_zero(self, test_db, test_project):
+        task = Task(project_id=test_project.id, name="recovery-default")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.recovery_count == 0
+
+    def test_recovery_count_in_to_dict(self, test_db, test_project):
+        task = Task(project_id=test_project.id, name="recovery-dict")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        test_db.add(run)
+        test_db.commit()
+
+        d = run.to_dict()
+        assert "recovery_count" in d
+        assert d["recovery_count"] == 0
+
+    def test_status_returns_interrupted_when_outcome_is_interrupted(self, test_db, test_project):
+        from datetime import datetime, timezone
+
+        task = Task(project_id=test_project.id, name="status-interrupted")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(timezone.utc)
+        run.outcome = "interrupted"
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.status == "interrupted"
+
+    def test_status_returns_timeout_when_outcome_is_timeout(self, test_db, test_project):
+        from datetime import datetime, timezone
+
+        task = Task(project_id=test_project.id, name="status-timeout")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(timezone.utc)
+        run.outcome = "timeout"
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.status == "timeout"
+
+    def test_status_returns_error_when_outcome_is_error(self, test_db, test_project):
+        from datetime import datetime, timezone
+
+        task = Task(project_id=test_project.id, name="status-error")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(timezone.utc)
+        run.outcome = "error"
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.status == "error"
+
+    def test_status_returns_completed_for_successful_outcome(self, test_db, test_project):
+        from datetime import datetime, timezone
+
+        task = Task(project_id=test_project.id, name="status-completed")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(timezone.utc)
+        run.outcome = "completed"
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.status == "completed"
+
+    def test_status_returns_completed_when_outcome_is_none(self, test_db, test_project):
+        from datetime import datetime, timezone
+
+        task = Task(project_id=test_project.id, name="status-none-outcome")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(timezone.utc)
+        run.outcome = None
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.status == "completed"

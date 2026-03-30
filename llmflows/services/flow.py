@@ -151,12 +151,17 @@ class FlowService:
         self.session.commit()
         return True
 
-    STEP_FOOTER = (
-        "\n\n---\n"
-        "**YOU MUST FOLLOW THE INSTRUCTIONS**\n"
-        "When done with this step, run `llmflows mode next` to continue.\n"
-        "---"
-    )
+    @staticmethod
+    def _make_step_footer(step_index: int, total_steps: int) -> str:
+        remaining = total_steps - step_index
+        return (
+            "\n\n---\n"
+            f"**Step {step_index} of {total_steps}** — "
+            f"{remaining} step{'s' if remaining != 1 else ''} remaining before completion.\n\n"
+            "**YOU MUST FOLLOW THE INSTRUCTIONS ABOVE, then run `llmflows mode next` to continue.**\n"
+            "DO NOT STOP. You are not done until you reach the final completion step.\n"
+            "---"
+        )
 
     def get_step_obj(self, flow_name: str, step_name: str) -> Optional[FlowStep]:
         flow = self.get_by_name(flow_name)
@@ -179,7 +184,15 @@ class FlowService:
         content = (step.content or "").rstrip()
         if variables:
             content = _interpolate(content, variables)
-        return content + self.STEP_FOOTER
+
+        steps = self.get_flow_steps(flow_name)
+        try:
+            step_index = steps.index(step_name) + 1
+        except ValueError:
+            step_index = 0
+        total = len(steps)
+
+        return content + self._make_step_footer(step_index, total)
 
     def get_flow_steps(self, flow_name: str) -> list[str]:
         flow = self.get_by_name(flow_name)

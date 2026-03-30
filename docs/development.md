@@ -6,7 +6,8 @@
 # Clone and install in dev mode
 git clone https://github.com/lpakula/llm-flows.git
 cd llm-flows
-pipx install -e .
+
+uv tool install -e .
 
 # Run
 llmflows --help

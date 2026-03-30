@@ -263,6 +263,7 @@ class TaskRun(Base):
     prompt: str = Column(Text, default="")
     summary: str = Column(Text, default="")
     steps_completed: str = Column(Text, default="[]")
+    recovery_count: int = Column(Integer, nullable=False, default=0)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
@@ -272,6 +273,8 @@ class TaskRun(Base):
     @property
     def status(self) -> str:
         if self.completed_at:
+            if self.outcome and self.outcome not in ("completed",):
+                return self.outcome
             return "completed"
         if self.started_at:
             return "running"
@@ -294,6 +297,7 @@ class TaskRun(Base):
             "prompt": self.prompt,
             "summary": self.summary,
             "steps_completed": self.steps_completed,
+            "recovery_count": self.recovery_count or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,

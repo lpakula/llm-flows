@@ -49,6 +49,8 @@ class AgentService:
         model: str = "",
         agent: str = "cursor",
         use_task_subdir: bool = False,
+        recovery: bool = False,
+        recovery_context: Optional[dict] = None,
     ) -> tuple[bool, str, str]:
         """Write prompt in the working directory, then launch the selected agent.
 
@@ -56,6 +58,10 @@ class AgentService:
         into ``<working_dir>/.llmflows/<task_id>/`` instead of
         ``<working_dir>/.llmflows/`` so multiple tasks sharing the same project
         root do not collide.
+
+        When ``recovery`` is True the agent is resuming an interrupted run.
+        The flow/task_id/run_id files are left as-is and ``resume.md`` is
+        rendered instead of ``start.md``.
 
         Returns (success, prompt_content, log_path).
         """
@@ -67,24 +73,39 @@ class AgentService:
         self._ensure_gitignore(wt_llmflows)
         context_svc = ContextService(wt_llmflows)
 
-        (wt_llmflows / "flow").write_text(flow_name)
-        (wt_llmflows / "task_id").write_text(task_id)
-        (wt_llmflows / "run_id").write_text(run_id)
+        if not recovery:
+            (wt_llmflows / "flow").write_text(flow_name)
+            (wt_llmflows / "task_id").write_text(task_id)
+            (wt_llmflows / "run_id").write_text(run_id)
 
-        prompt_vars = {
-            "flow_name": flow_name,
-            "task_id": task_id,
-            "task_name": task_name,
-            "task_description": task_description,
-            "task_type": task_type,
-            "execution_history": execution_history or [],
-        }
-        prompt_content = context_svc.render_start_instructions(prompt_vars)
+        if recovery and recovery_context:
+            prompt_vars = {
+                "flow_name": flow_name,
+                "task_id": task_id,
+                "task_description": task_description,
+                "worktree_path": str(self.worktree_path) if self.worktree_path != self.project_dir.parent else None,
+                "execution_history": execution_history or [],
+                **recovery_context,
+            }
+            prompt_content = context_svc.render_recovery_instructions(prompt_vars)
+        else:
+            prompt_vars = {
+                "flow_name": flow_name,
+                "task_id": task_id,
+                "task_name": task_name,
+                "task_description": task_description,
+                "task_type": task_type,
+                "execution_history": execution_history or [],
+            }
+            prompt_content = context_svc.render_start_instructions(prompt_vars)
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
         prompt_md = prompts_dir / f"{task_id}.md"
         prompt_md.write_text(prompt_content)
+
+        if recovery:
+            self._archive_agent_log(wt_llmflows, run_id, recovery_context)
 
         log_file = wt_llmflows / f"agent-{run_id}.log"
         pid_file = wt_llmflows / "agent.pid"
@@ -93,6 +114,21 @@ class AgentService:
             model=model, agent=agent,
         )
         return launched, prompt_content, str(log_file)
+
+    @staticmethod
+    def _archive_agent_log(
+        llmflows_dir: Path, run_id: str, recovery_context: Optional[dict] = None,
+    ) -> None:
+        """Rename the current agent log so the new attempt gets a clean file."""
+        current_log = llmflows_dir / f"agent-{run_id}.log"
+        if not current_log.exists():
+            return
+        attempt = (recovery_context or {}).get("recovery_attempt", 1)
+        archived = llmflows_dir / f"agent-{run_id}.attempt-{attempt}.log"
+        try:
+            current_log.rename(archived)
+        except OSError:
+            pass
 
     @staticmethod
     def _ensure_gitignore(llmflows_dir: Path) -> None:
@@ -182,7 +218,7 @@ class AgentService:
 
         When *worktree_branch* is set the pid file lives inside the worktree.
         When it is empty and *task_id* is provided the pid file lives in the
-        project-level task subdir (no-worktree mode).
+        project-level task subdir (no-git mode).
         """
         if worktree_branch:
             from .worktree import WorktreeService

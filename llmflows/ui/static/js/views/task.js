@@ -131,6 +131,8 @@ function taskView() {
         completed: 'bg-green-900/50 text-green-300',
         cancelled: 'bg-red-900/50 text-red-400',
         failed: 'bg-red-900/50 text-red-300',
+        interrupted: 'bg-red-900/50 text-red-300',
+        error: 'bg-red-900/50 text-red-300',
         timeout: 'bg-orange-900/50 text-orange-300',
       }[status] || 'bg-gray-700 text-gray-300';
     },

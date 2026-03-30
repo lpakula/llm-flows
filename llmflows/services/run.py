@@ -125,6 +125,15 @@ class RunService:
         self.session.commit()
         return run
 
+    def increment_recovery_count(self, run_id: str) -> Optional[TaskRun]:
+        """Increment the recovery counter for a run."""
+        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        if not run:
+            return None
+        run.recovery_count = (run.recovery_count or 0) + 1
+        self.session.commit()
+        return run
+
     def set_log_path(self, run_id: str, log_path: str) -> Optional[TaskRun]:
         """Store the log file path on the run."""
         run = self.session.query(TaskRun).filter_by(id=run_id).first()

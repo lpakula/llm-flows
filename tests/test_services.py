@@ -624,6 +624,195 @@ class TestRunService:
         assert len(runs) == 2
 
 
+class TestAgentLogArchive:
+    def test_archive_agent_log(self, temp_dir):
+        log_file = temp_dir / "agent-abc123.log"
+        log_file.write_text("some log output")
+
+        AgentService._archive_agent_log(
+            temp_dir, "abc123", {"recovery_attempt": 1},
+        )
+
+        assert not log_file.exists()
+        archived = temp_dir / "agent-abc123.attempt-1.log"
+        assert archived.exists()
+        assert archived.read_text() == "some log output"
+
+    def test_archive_agent_log_no_file(self, temp_dir):
+        AgentService._archive_agent_log(
+            temp_dir, "missing", {"recovery_attempt": 1},
+        )
+
+    def test_archive_agent_log_second_attempt(self, temp_dir):
+        log_file = temp_dir / "agent-xyz.log"
+        log_file.write_text("attempt 2 log")
+
+        AgentService._archive_agent_log(
+            temp_dir, "xyz", {"recovery_attempt": 2},
+        )
+
+        archived = temp_dir / "agent-xyz.attempt-2.log"
+        assert archived.exists()
+        assert archived.read_text() == "attempt 2 log"
+
+
+class TestRunServiceRecovery:
+    def test_increment_recovery_count(self, test_db, test_project):
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Recovery")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+
+        assert run.recovery_count == 0
+        run_svc.increment_recovery_count(run.id)
+        test_db.refresh(run)
+        assert run.recovery_count == 1
+
+    def test_increment_recovery_count_multiple(self, test_db, test_project):
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Recovery multi")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+
+        run_svc.increment_recovery_count(run.id)
+        run_svc.increment_recovery_count(run.id)
+        run_svc.increment_recovery_count(run.id)
+        test_db.refresh(run)
+        assert run.recovery_count == 3
+
+    def test_increment_recovery_count_nonexistent(self, test_db, test_project):
+        run_svc = RunService(test_db)
+        assert run_svc.increment_recovery_count("nope") is None
+
+
+class TestDaemonRecovery:
+    def _make_daemon(self, auto_recover=True, max_recovery=3, timeout=60):
+        from llmflows.services.daemon import Daemon
+        daemon = Daemon.__new__(Daemon)
+        daemon.run_timeout_minutes = timeout
+        daemon.auto_recover = auto_recover
+        daemon.max_recovery_attempts = max_recovery
+        return daemon
+
+    def test_agent_stopped_flow_incomplete_triggers_recovery(self, test_db, test_project):
+        """When agent stops mid-flow, daemon should call _recover_run."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Recover me")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+        run_svc.update_step(task.id, "research")
+
+        daemon = self._make_daemon()
+
+        with patch.object(AgentService, "is_agent_running", return_value=False), \
+             patch.object(type(daemon), "_recover_run") as mock_recover:
+            daemon._process_project(test_project, task_svc, run_svc)
+            mock_recover.assert_called_once()
+            call_args = mock_recover.call_args
+            assert call_args[0][0].id == run.id
+            assert call_args[0][1].id == task.id
+
+    def test_agent_stopped_flow_complete_marks_completed(self, test_db, test_project):
+        """When agent reaches the complete step, daemon should mark it completed."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Done task")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+        run_svc.update_step(task.id, "complete")
+
+        daemon = self._make_daemon()
+
+        with patch.object(AgentService, "is_agent_running", return_value=False):
+            daemon._process_project(test_project, task_svc, run_svc)
+
+        test_db.refresh(run)
+        assert run.completed_at is not None
+        assert run.outcome == "completed"
+
+    def test_agent_stopped_outcome_completed_marks_completed(self, test_db, test_project):
+        """When agent set outcome=completed (via set_summary), daemon should honor it."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Summary task")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+        run_svc.update_step(task.id, "research")
+        run.outcome = "completed"
+        test_db.commit()
+
+        daemon = self._make_daemon()
+
+        with patch.object(AgentService, "is_agent_running", return_value=False):
+            daemon._process_project(test_project, task_svc, run_svc)
+
+        test_db.refresh(run)
+        assert run.completed_at is not None
+        assert run.outcome == "completed"
+
+    def test_recovery_exhausted_marks_interrupted(self, test_db, test_project):
+        """When recovery_count >= max, daemon should mark as interrupted."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Exhausted")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+        run_svc.update_step(task.id, "research")
+        run.recovery_count = 3
+        test_db.commit()
+
+        daemon = self._make_daemon(max_recovery=3)
+
+        with patch.object(AgentService, "is_agent_running", return_value=False):
+            daemon._process_project(test_project, task_svc, run_svc)
+
+        test_db.refresh(run)
+        assert run.completed_at is not None
+        assert run.outcome == "interrupted"
+
+    def test_auto_recover_disabled_marks_interrupted(self, test_db, test_project):
+        """When auto_recover is False, daemon should mark incomplete runs as interrupted."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "No recover")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+        run_svc.update_step(task.id, "research")
+
+        daemon = self._make_daemon(auto_recover=False)
+
+        with patch.object(AgentService, "is_agent_running", return_value=False):
+            daemon._process_project(test_project, task_svc, run_svc)
+
+        test_db.refresh(run)
+        assert run.completed_at is not None
+        assert run.outcome == "interrupted"
+
+    def test_agent_stopped_no_current_step_triggers_recovery(self, test_db, test_project):
+        """Agent died before even calling mode next (no current_step)."""
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Early stop")
+        task_svc.update(task.id, worktree_branch="task-branch")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+
+        daemon = self._make_daemon()
+
+        with patch.object(AgentService, "is_agent_running", return_value=False), \
+             patch.object(type(daemon), "_recover_run") as mock_recover:
+            daemon._process_project(test_project, task_svc, run_svc)
+            mock_recover.assert_called_once()
+
+
 class TestDaemonTimeout:
     def test_timeout_kills_expired_run(self, test_db, test_project):
         """Daemon should mark a run as 'timeout' when it exceeds run_timeout_minutes."""

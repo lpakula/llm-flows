@@ -80,3 +80,53 @@ class TestContextService:
         assert "PREVIOUS RUNS" in result
         assert "It broke" in result
         assert "git diff main...HEAD" in result
+
+    def test_render_recovery_instructions(self, temp_dir):
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_recovery_instructions({
+            "flow_name": "default",
+            "task_id": "abc123",
+            "task_description": "Build the feature",
+            "current_step": "execute",
+            "steps_completed": ["research"],
+            "git_diff": "+ added line",
+            "recovery_attempt": 1,
+            "execution_history": [],
+        })
+        assert "Recovery" in result
+        assert "abc123" in result
+        assert "Build the feature" in result
+        assert "execute" in result
+        assert "research" in result
+        assert "+ added line" in result
+        assert "recovery attempt 1" in result
+
+    def test_render_recovery_instructions_no_current_step(self, temp_dir):
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_recovery_instructions({
+            "flow_name": "default",
+            "task_id": "t001",
+            "task_description": "Do the thing",
+            "current_step": "",
+            "steps_completed": [],
+            "git_diff": "",
+            "recovery_attempt": 2,
+            "execution_history": [],
+        })
+        assert "Run `llmflows mode next` to start the flow" in result
+        assert "re-read the step" not in result
+
+    def test_render_recovery_instructions_at_complete_step(self, temp_dir):
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_recovery_instructions({
+            "flow_name": "default",
+            "task_id": "t002",
+            "task_description": "Finish up",
+            "current_step": "complete",
+            "steps_completed": ["research", "execute"],
+            "git_diff": "some diff",
+            "recovery_attempt": 1,
+            "execution_history": [],
+        })
+        assert "completion step" in result
+        assert "llmflows mode current" in result

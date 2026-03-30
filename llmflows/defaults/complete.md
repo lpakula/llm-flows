@@ -35,4 +35,5 @@ Summarize everything important from this execution and save it for future refere
 - After running `llmflows run complete`, **stop** -- do not run any other commands
 
 ---
-**YOU MUST FOLLOW THE WORKFLOW**
+**YOU MUST FOLLOW THE WORKFLOW ABOVE.**
+This is the final step. Run `llmflows run complete` with your summary, then stop.

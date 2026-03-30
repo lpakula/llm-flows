@@ -48,6 +48,13 @@ def init_db() -> Path:
                 conn.execute(text("ALTER TABLE flow_steps ADD COLUMN ifs TEXT DEFAULT '[]'"))
                 conn.commit()
 
+    if "task_runs" in tables:
+        existing = {c["name"] for c in inspector.get_columns("task_runs")}
+        if "recovery_count" not in existing:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE task_runs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"))
+                conn.commit()
+
     session = sessionmaker(bind=engine)()
     try:
         from ..services.flow import FlowService

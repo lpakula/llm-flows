@@ -94,6 +94,8 @@ function historyView() {
         completed: 'bg-green-900/50 text-green-300',
         cancelled: 'bg-red-900/50 text-red-400',
         failed: 'bg-red-900/50 text-red-300',
+        interrupted: 'bg-red-900/50 text-red-300',
+        error: 'bg-red-900/50 text-red-300',
         timeout: 'bg-orange-900/50 text-orange-300',
       }[status] || 'bg-gray-700 text-gray-300';
     },
@@ -101,10 +103,11 @@ function historyView() {
     statusDot(run) {
       if (run.status === 'running') return 'bg-yellow-400 animate-pulse';
       if (run.status === 'queued') return 'bg-blue-400';
+      if (run.status === 'interrupted' || run.status === 'error') return 'bg-red-500';
+      if (run.status === 'timeout') return 'bg-orange-400';
       if (run.status === 'completed') {
         if (run.outcome === 'failed') return 'bg-red-500';
         if (run.outcome === 'cancelled') return 'bg-red-400';
-        if (run.outcome === 'timeout') return 'bg-orange-400';
         return 'bg-green-500';
       }
       return 'bg-gray-500';

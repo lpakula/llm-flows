@@ -26,6 +26,9 @@ RUN_STATUS_COLORS = {
     "queued": "bright_blue",
     "running": "bright_yellow",
     "completed": "green",
+    "interrupted": "red",
+    "timeout": "red",
+    "error": "red",
 }
 
 
