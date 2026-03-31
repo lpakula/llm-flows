@@ -203,7 +203,8 @@ class AgentService:
             return cmd
 
         if binary == "qwen":
-            cmd = ["qwen", "-p", prompt_content]
+            cmd = ["qwen", "-p", prompt_content, "-y",
+                   "--output-format", "stream-json"]
             if model and model != "default":
                 cmd.extend(["--model", model])
             return cmd

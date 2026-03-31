@@ -73,9 +73,9 @@ AGENT_REGISTRY = {
     "qwen": {
         "label": "Qwen Code",
         "binary": "qwen",
-        "command": "qwen -p \"<prompt>\"",
+        "command": "qwen -p \"<prompt>\" -y --output-format stream-json",
         "prompt_mode": "arg",
-        "output_format": "text",
+        "output_format": "stream-json",
         "models": [
             "default",
         ],

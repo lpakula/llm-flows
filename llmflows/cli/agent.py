@@ -210,6 +210,7 @@ def _print_event(line: str, strip_prefix: str | None = None) -> None:
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
+        click.echo(line)
         return
 
     etype = event.get("type", "")
