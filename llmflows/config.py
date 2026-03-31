@@ -22,7 +22,7 @@ KNOWN_AGENTS = [
     "cursor",
     "claude-code",
     "codex",
-    "qwen-code",
+    "qwen",
 ]
 
 AGENT_REGISTRY = {
@@ -70,7 +70,7 @@ AGENT_REGISTRY = {
             "gpt-5.4", "gpt-5.3-codex-spark",
         ],
     },
-    "qwen-code": {
+    "qwen": {
         "label": "Qwen Code",
         "binary": "qwen",
         "command": "qwen -p \"<prompt>\"",

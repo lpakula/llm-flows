@@ -204,7 +204,7 @@ llmflows alias delete <name> --yes
 ```
 
 Options for `alias set`:
-- `--agent` / `-a` — agent name (e.g. `cursor`, `claude-code`, `codex`, `qwen-code`)
+- `--agent` / `-a` — agent name (e.g. `cursor`, `claude-code`, `codex`, `qwen`)
 - `--model` / `-m` — model name
 - `--flow` / `-f` — comma-separated flow chain (e.g. `default,submit-pr`)
 
