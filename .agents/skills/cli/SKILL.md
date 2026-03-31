@@ -80,7 +80,7 @@ Use `--no-git` on cloud VMs or non-git projects to skip worktree creation.
 
 Options for model/agent:
 - `--model` / `-m` — model name (e.g. `gemini-3-flash`, `sonnet-4.6`, `sonnet-4.6-thinking`)
-- `--agent` / `-a` — agent backend: `cursor`, `claude-code`, `codex` (default: `cursor`)
+- `--agent` / `-a` — agent backend: `cursor`, `claude-code`, `codex`, `qwen-code` (default: `cursor`)
 
 ### Monitor runs
 

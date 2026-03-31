@@ -22,6 +22,7 @@ KNOWN_AGENTS = [
     "cursor",
     "claude-code",
     "codex",
+    "qwen-code",
 ]
 
 AGENT_REGISTRY = {
@@ -67,6 +68,16 @@ AGENT_REGISTRY = {
         "output_format": "json",
         "models": [
             "gpt-5.4", "gpt-5.3-codex-spark",
+        ],
+    },
+    "qwen-code": {
+        "label": "Qwen Code",
+        "binary": "qwen",
+        "command": "qwen -p \"<prompt>\"",
+        "prompt_mode": "arg",
+        "output_format": "text",
+        "models": [
+            "default",
         ],
     },
 }

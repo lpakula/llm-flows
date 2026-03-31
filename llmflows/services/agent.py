@@ -202,6 +202,12 @@ class AgentService:
             cmd = ["codex", "exec", "--json", prompt_content]
             return cmd
 
+        if binary == "qwen":
+            cmd = ["qwen", "-p", prompt_content]
+            if model and model != "default":
+                cmd.extend(["--model", model])
+            return cmd
+
         # Fallback for unknown but registered agents
         cmd = [binary]
         if mode == "file":
