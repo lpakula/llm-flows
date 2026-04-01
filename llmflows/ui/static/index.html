@@ -730,7 +730,7 @@
                           <button x-show="run.status === 'running' || run.status === 'queued'"
                                   @click="forceStopRun(run.id)"
                                   class="text-xs text-red-400 hover:text-red-300 transition font-medium">Force Stop</button>
-                          <button x-show="run.status === 'completed'"
+                          <button x-show="run.status !== 'running' && run.status !== 'queued'"
                                   @click="deleteRun(run.id)"
                                   class="text-xs text-gray-600 hover:text-red-400 transition">Delete</button>
                         </td>
