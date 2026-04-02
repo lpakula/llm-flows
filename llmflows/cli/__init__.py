@@ -8,7 +8,6 @@ from .agent import agent
 from .alias import alias
 from .daemon import daemon
 from .flow import flow
-from .mode import mode_cmd
 from .run import run
 from .task import task
 from .ui import ui
@@ -28,7 +27,6 @@ cli.add_command(agent)
 cli.add_command(alias)
 cli.add_command(daemon)
 cli.add_command(flow)
-cli.add_command(mode_cmd)
 cli.add_command(run)
 cli.add_command(task)
 cli.add_command(ui)

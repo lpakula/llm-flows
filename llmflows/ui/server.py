@@ -80,6 +80,7 @@ class TaskStartBody(BaseModel):
     user_prompt: str = ""
     model: str = ""
     agent: str = "cursor"
+    step_overrides: dict = {}
 
 
 class DaemonConfigBody(BaseModel):
@@ -444,7 +445,8 @@ async def start_task(task_id: str, body: TaskStartBody):
                         user_prompt=body.user_prompt or task.description or "",
                         flow_chain=chain,
                         model=body.model,
-                        agent=body.agent)
+                        agent=body.agent,
+                        step_overrides=body.step_overrides)
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)
@@ -519,7 +521,7 @@ async def delete_run(run_id: str):
 
 @app.get("/api/runs/{run_id}/steps")
 async def get_run_steps(run_id: str):
-    """Return step progress for a run: all steps across the flow chain with status."""
+    """Return step progress for a run using StepRun records."""
     session, _, _ = _get_services()
     try:
         from ..db.models import TaskRun
@@ -527,7 +529,16 @@ async def get_run_steps(run_id: str):
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
 
+        run_svc = RunService(session)
         flow_svc = FlowService(session)
+        step_runs = run_svc.list_step_runs(run_id)
+
+        step_run_map = {}
+        for sr in step_runs:
+            key = (sr.flow_name, sr.step_name)
+            if key not in step_run_map or (sr.started_at and (not step_run_map[key].started_at or sr.started_at > step_run_map[key].started_at)):
+                step_run_map[key] = sr
+
         import json
         try:
             chain = json.loads(run.flow_chain or "[]")
@@ -536,52 +547,101 @@ async def get_run_steps(run_id: str):
         if not chain:
             chain = [run.flow_name]
 
-        try:
-            completed = json.loads(run.steps_completed or "[]")
-        except (json.JSONDecodeError, TypeError):
-            completed = []
-        completed_set = set(completed)
-
-        current = run.current_step or ""
-        is_active = bool(run.started_at and not run.completed_at)
-        current_flow = run.flow_name
-
-        all_steps = []
+        result = []
         for flow_name in chain:
             steps = flow_svc.get_flow_steps(flow_name)
             for step_name in steps:
                 step_obj = flow_svc.get_step_obj(flow_name, step_name)
                 has_ifs = bool(step_obj and step_obj.get_ifs())
-                all_steps.append((flow_name, step_name, has_ifs))
+                sr = step_run_map.get((flow_name, step_name))
+                if sr:
+                    status = sr.status
+                    step_data = sr.to_dict()
+                else:
+                    status = "pending"
+                    step_data = None
+                result.append({
+                    "name": step_name,
+                    "flow": flow_name,
+                    "status": status,
+                    "has_ifs": has_ifs,
+                    "step_run": step_data,
+                })
 
-        current_idx = -1
-        for i, (fn, sn, _) in enumerate(all_steps):
-            if sn == current and fn == current_flow and current != "complete":
-                current_idx = i
-                break
-
-        result = []
-        for i, (flow_name, step_name, has_ifs) in enumerate(all_steps):
-            if current_idx >= 0 and i == current_idx and is_active:
-                status = "current"
-            elif step_name in completed_set:
-                status = "completed"
-            elif current_idx >= 0 and i < current_idx:
-                status = "skipped"
-            elif current == "complete" or run.completed_at:
-                status = "skipped"
-            else:
-                status = "pending"
+        summary_sr = step_run_map.get((run.flow_name, "__summary__"))
+        if summary_sr:
             result.append({
-                "name": step_name,
-                "flow": flow_name,
-                "status": status,
-                "has_ifs": has_ifs,
+                "name": "__summary__",
+                "flow": run.flow_name,
+                "status": summary_sr.status,
+                "has_ifs": False,
+                "step_run": summary_sr.to_dict(),
             })
 
         return {"steps": result}
     finally:
         session.close()
+
+
+@app.get("/api/step-runs/{step_run_id}/logs")
+async def stream_step_run_logs(step_run_id: str):
+    """SSE endpoint that tails a StepRun's log file."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        sr = run_svc.get_step_run(step_run_id)
+        if not sr:
+            raise HTTPException(status_code=404, detail="StepRun not found")
+        if not sr.log_path:
+            raise HTTPException(status_code=404, detail="No log path set for this step run")
+        if sr.log_path == "inline":
+            raise HTTPException(
+                status_code=404,
+                detail="This step was started inline. Logs are managed by the calling agent.",
+            )
+        log_path = Path(sr.log_path)
+    finally:
+        session.close()
+
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found on disk")
+
+    async def tail_log():
+        pos = 0
+        idle_count = 0
+        max_idle = 120
+        while idle_count < max_idle:
+            try:
+                size = log_path.stat().st_size
+            except FileNotFoundError:
+                break
+
+            if size > pos:
+                idle_count = 0
+                with open(log_path, "r") as f:
+                    f.seek(pos)
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except json.JSONDecodeError:
+                            yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
+                    pos = f.tell()
+            else:
+                idle_count += 1
+
+            await asyncio.sleep(1)
+
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        tail_log(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/runs/{run_id}/logs")
@@ -774,6 +834,10 @@ async def list_flows():
                 "name": f.name,
                 "description": f.description,
                 "step_count": len(f.steps),
+                "steps": [
+                    {"name": s.name, "position": s.position}
+                    for s in sorted(f.steps, key=lambda s: s.position)
+                ],
                 "created_at": f.created_at.isoformat() if f.created_at else None,
                 "updated_at": f.updated_at.isoformat() if f.updated_at else None,
             }

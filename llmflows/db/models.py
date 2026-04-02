@@ -262,6 +262,7 @@ class TaskRun(Base):
     user_prompt: str = Column(Text, default="")
     prompt: str = Column(Text, default="")
     summary: str = Column(Text, default="")
+    step_overrides: str = Column(Text, default="{}")
     steps_completed: str = Column(Text, default="[]")
     recovery_count: int = Column(Integer, nullable=False, default=0)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -269,6 +270,8 @@ class TaskRun(Base):
     completed_at: datetime = Column(DateTime, nullable=True)
 
     task = relationship("Task", back_populates="runs")
+    step_runs = relationship("StepRun", back_populates="run", cascade="all, delete-orphan",
+                             order_by="StepRun.step_position")
 
     @property
     def status(self) -> str:
@@ -296,9 +299,56 @@ class TaskRun(Base):
             "user_prompt": self.user_prompt,
             "prompt": self.prompt,
             "summary": self.summary,
+            "step_overrides": self.step_overrides,
             "steps_completed": self.steps_completed,
             "recovery_count": self.recovery_count or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class StepRun(Base):
+    __tablename__ = "step_runs"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    run_id: str = Column(String(6), ForeignKey("task_runs.id"), nullable=False)
+    step_name: str = Column(String(255), nullable=False)
+    step_position: int = Column(Integer, nullable=False)
+    flow_name: str = Column(String(255), nullable=False)
+    agent: str = Column(String(50), nullable=False, default="cursor")
+    model: str = Column(String(100), nullable=False, default="")
+    log_path: str = Column(Text, default="")
+    prompt: str = Column(Text, default="")
+    outcome: str = Column(String(50), nullable=True)
+    retry_count: int = Column(Integer, nullable=False, default=0)
+    started_at: datetime = Column(DateTime, nullable=True)
+    completed_at: datetime = Column(DateTime, nullable=True)
+
+    run = relationship("TaskRun", back_populates="step_runs")
+
+    @property
+    def status(self) -> str:
+        if self.completed_at:
+            return self.outcome or "completed"
+        if self.started_at:
+            return "running"
+        return "pending"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "run_id": self.run_id,
+            "step_name": self.step_name,
+            "step_position": self.step_position,
+            "flow_name": self.flow_name,
+            "agent": self.agent or "cursor",
+            "model": self.model,
+            "log_path": self.log_path,
+            "prompt": self.prompt,
+            "status": self.status,
+            "outcome": self.outcome,
+            "retry_count": self.retry_count or 0,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }

@@ -365,3 +365,36 @@ class TestTaskRunModel:
         test_db.commit()
 
         assert run.status == "completed"
+
+    def test_step_overrides_default(self, test_db, test_project):
+        task = Task(project_id=test_project.id, name="overrides-default")
+        test_db.add(task)
+        test_db.flush()
+
+        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        test_db.add(run)
+        test_db.commit()
+
+        assert run.step_overrides == "{}"
+
+    def test_step_overrides_stored_and_returned(self, test_db, test_project):
+        import json
+
+        task = Task(project_id=test_project.id, name="overrides-stored")
+        test_db.add(task)
+        test_db.flush()
+
+        overrides = {"default/research": {"agent": "claude-code", "model": "sonnet"}}
+        run = TaskRun(
+            project_id=test_project.id,
+            task_id=task.id,
+            flow_name="default",
+            step_overrides=json.dumps(overrides),
+        )
+        test_db.add(run)
+        test_db.commit()
+
+        d = run.to_dict()
+        assert "step_overrides" in d
+        parsed = json.loads(d["step_overrides"])
+        assert parsed["default/research"]["agent"] == "claude-code"

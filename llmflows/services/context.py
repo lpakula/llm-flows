@@ -1,9 +1,6 @@
-"""Context service -- renders start instructions and loads worktree diff.
+"""Context service -- renders step prompts and collects artifacts."""
 
-Step content is loaded from the database via FlowService.
-System templates (start.md, complete.md) live in package defaults.
-"""
-
+import os
 from pathlib import Path
 
 from jinja2 import Environment, TemplateError
@@ -18,96 +15,95 @@ class ContextService:
         """Initialize with the .llmflows/ directory in a project or worktree."""
         self.project_dir = project_dir
 
-    @classmethod
-    def find(cls, repo_root: Path) -> "ContextService":
-        """Return the right ContextService for the current execution mode.
+    def render_step_instructions(self, context: dict) -> str:
+        """Render step_start.md as the prompt for a single step agent."""
+        template_file = DEFAULTS_DIR / "step_start.md"
+        if not template_file.exists():
+            return ""
+        try:
+            env = Environment(autoescape=False)
+            template = env.from_string(template_file.read_text())
+            return template.render(context)
+        except TemplateError:
+            return ""
 
-        In worktree mode, task_id/run_id live directly in <repo>/.llmflows/.
-        In no-git mode they live in <repo>/.llmflows/<task_id>/ so that
-        multiple concurrent tasks don't collide. Fall back to the
-        most-recently-touched subdirectory that contains a run_id file.
+    def render_summary_step(self, context: dict) -> str:
+        """Render summary_step.md as step content for the auto-appended summary step."""
+        template_file = DEFAULTS_DIR / "step_summary.md"
+        if not template_file.exists():
+            return ""
+        try:
+            env = Environment(autoescape=False)
+            template = env.from_string(template_file.read_text())
+            return template.render(context)
+        except TemplateError:
+            return ""
+
+    @staticmethod
+    def collect_artifacts(artifacts_dir: Path) -> list[dict]:
+        """Collect artifacts from completed steps.
+
+        Returns a list of dicts, each with:
+          - position: int
+          - step_name: str
+          - files: list of {name, content}
         """
-        base = repo_root / ".llmflows"
-        ctx = cls(base)
-        if ctx.get_current_task_id() or ctx.get_current_run_id():
-            return ctx
+        if not artifacts_dir.exists():
+            return []
+
+        artifacts = []
         try:
-            subdirs = sorted(
-                [d for d in base.iterdir() if d.is_dir() and (d / "run_id").exists()],
-                key=lambda d: (d / "run_id").stat().st_mtime,
-                reverse=True,
+            step_dirs = sorted(
+                d for d in artifacts_dir.iterdir()
+                if d.is_dir() and d.name[0:2].isdigit()
             )
-        except (FileNotFoundError, PermissionError):
-            subdirs = []
-        return cls(subdirs[0]) if subdirs else ctx
+        except (PermissionError, OSError):
+            return []
 
-    def get_current_flow(self) -> str:
-        """Read the current flow from .llmflows/flow. Defaults to 'default'."""
-        flow_file = self.project_dir / "flow"
-        if flow_file.exists():
+        for step_dir in step_dirs:
+            parts = step_dir.name.split("-", 1)
             try:
-                return flow_file.read_text().strip() or "default"
-            except Exception:
-                pass
-        return "default"
+                position = int(parts[0])
+            except (ValueError, IndexError):
+                continue
+            step_name = parts[1] if len(parts) > 1 else step_dir.name
 
-
-    def get_current_task_id(self) -> str:
-        """Read the current task_id from .llmflows/task_id."""
-        task_id_file = self.project_dir / "task_id"
-        if task_id_file.exists():
+            files = []
             try:
-                return task_id_file.read_text().strip()
-            except Exception:
-                pass
-        return ""
+                for f in sorted(step_dir.iterdir()):
+                    if not f.is_file():
+                        continue
+                    try:
+                        content = f.read_text(errors="replace")
+                        if len(content) > 10000:
+                            content = content[:10000] + "\n... (truncated)"
+                        files.append({"name": f.name, "content": content})
+                    except (PermissionError, OSError):
+                        continue
+            except (PermissionError, OSError):
+                continue
 
-    def get_current_run_id(self) -> str:
-        """Read the current run_id from .llmflows/run_id."""
-        run_id_file = self.project_dir / "run_id"
-        if run_id_file.exists():
-            try:
-                return run_id_file.read_text().strip()
-            except Exception:
-                pass
-        return ""
+            if files:
+                artifacts.append({
+                    "position": position,
+                    "step_name": step_name,
+                    "files": files,
+                })
 
-    def render_start_instructions(self, context: dict) -> str:
-        """Render start.md as the full agent prompt."""
-        start_file = DEFAULTS_DIR / "start.md"
-        if not start_file.exists():
+        return artifacts
+
+    @staticmethod
+    def read_summary_artifact(artifacts_dir: Path) -> str:
+        """Read the summary.md file from the artifacts root, if it exists."""
+        summary_file = artifacts_dir / "summary.md"
+        if not summary_file.exists():
             return ""
         try:
-            env = Environment(autoescape=False)
-            template = env.from_string(start_file.read_text())
-            return template.render(context)
-        except TemplateError:
+            return summary_file.read_text().strip()
+        except (PermissionError, OSError):
             return ""
 
-    def render_recovery_instructions(self, context: dict) -> str:
-        """Render resume.md as the recovery agent prompt."""
-        resume_file = DEFAULTS_DIR / "resume.md"
-        if not resume_file.exists():
-            return ""
-        try:
-            env = Environment(autoescape=False)
-            template = env.from_string(resume_file.read_text())
-            return template.render(context)
-        except TemplateError:
-            return ""
-
-    def load_complete_step(self) -> str:
-        """Load the auto-appended complete step content."""
-        complete_file = DEFAULTS_DIR / "complete.md"
-        if not complete_file.exists():
-            return ""
-        try:
-            return complete_file.read_text()
-        except Exception:
-            return ""
-
-    def load_worktree_diff(self) -> str:
-        """Load the git diff from the worktree against the base branch."""
-        from ..utils.git import get_worktree_diff
-        worktree_root = self.project_dir.parent
-        return get_worktree_diff(base="main", cwd=str(worktree_root))
+    @staticmethod
+    def get_artifacts_dir(project_path: Path, task_id: str, run_id: str) -> Path:
+        """Return the artifacts directory for a run, always under the main project root."""
+        return project_path / ".llmflows" / task_id / run_id / "artifacts"

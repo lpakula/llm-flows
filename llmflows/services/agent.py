@@ -1,15 +1,11 @@
-"""Agent launcher -- writes prompt and launches coding agents.
+"""Agent launcher -- renders step prompts and launches coding agents.
 
-Supports multiple agent backends (Cursor, Claude Code, Codex).
-Agent output is streamed to .llmflows/agent-{run_id}.log in the working directory.
+Each flow step runs as a separate agent process. The daemon orchestrates
+step transitions; the agent receives a self-contained prompt, does the
+work, and exits.
+
+Agent output is streamed to a per-step log file.
 Agent PID is stored in .llmflows/agent.pid for liveness checks.
-
-When worktrees are enabled (the default) the working directory is the worktree
-root and ephemeral files live in ``<worktree>/.llmflows/``.
-
-When worktrees are disabled (manager/orchestrator repos) the working directory
-is the project root and ephemeral files live in
-``<project>/.llmflows/<task_id>/`` so that concurrent task runs don't collide.
 """
 
 import logging
@@ -37,77 +33,66 @@ class AgentService:
         self.project_dir = project_dir
         self.worktree_path = worktree_path or project_dir.parent
 
-    def prepare_and_launch(
+    def prepare_and_launch_step(
         self,
         run_id: str,
-        flow_name: str,
-        task_name: str,
         task_id: str,
-        task_description: str = "",
-        task_type: str = "feature",
-        execution_history: Optional[list[dict]] = None,
+        task_description: str,
+        user_prompt: str,
+        step_name: str,
+        step_position: int,
+        step_content: str,
+        flow_name: str,
         model: str = "",
         agent: str = "cursor",
+        artifacts_dir: Optional[Path] = None,
+        gate_failures: Optional[list[dict]] = None,
         use_task_subdir: bool = False,
-        recovery: bool = False,
-        recovery_context: Optional[dict] = None,
     ) -> tuple[bool, str, str]:
-        """Write prompt in the working directory, then launch the selected agent.
-
-        When ``use_task_subdir`` is True (worktree disabled) ephemeral files go
-        into ``<working_dir>/.llmflows/<task_id>/`` instead of
-        ``<working_dir>/.llmflows/`` so multiple tasks sharing the same project
-        root do not collide.
-
-        When ``recovery`` is True the agent is resuming an interrupted run.
-        The flow/task_id/run_id files are left as-is and ``resume.md`` is
-        rendered instead of ``start.md``.
+        """Render a step prompt and launch an agent for it.
 
         Returns (success, prompt_content, log_path).
         """
+        if artifacts_dir is None:
+            artifacts_dir = ContextService.get_artifacts_dir(
+                self.project_dir.parent, task_id, run_id,
+            )
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
         if use_task_subdir:
             wt_llmflows = self.worktree_path / ".llmflows" / task_id
         else:
             wt_llmflows = self.worktree_path / ".llmflows"
         wt_llmflows.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(wt_llmflows)
+
         context_svc = ContextService(wt_llmflows)
 
-        if not recovery:
-            (wt_llmflows / "flow").write_text(flow_name)
-            (wt_llmflows / "task_id").write_text(task_id)
-            (wt_llmflows / "run_id").write_text(run_id)
+        previous_artifacts = context_svc.collect_artifacts(artifacts_dir)
 
-        if recovery and recovery_context:
-            prompt_vars = {
-                "flow_name": flow_name,
-                "task_id": task_id,
-                "task_description": task_description,
-                "worktree_path": str(self.worktree_path) if self.worktree_path != self.project_dir.parent else None,
-                "execution_history": execution_history or [],
-                **recovery_context,
-            }
-            prompt_content = context_svc.render_recovery_instructions(prompt_vars)
-        else:
-            prompt_vars = {
-                "flow_name": flow_name,
-                "task_id": task_id,
-                "task_name": task_name,
-                "task_description": task_description,
-                "task_type": task_type,
-                "execution_history": execution_history or [],
-            }
-            prompt_content = context_svc.render_start_instructions(prompt_vars)
+        is_summary = step_name == "__summary__"
+        step_output_dir = artifacts_dir / f"{step_position:02d}-{step_name}" if not is_summary else None
+
+        prompt_vars = {
+            "worktree_path": str(self.worktree_path) if self.worktree_path != self.project_dir.parent else None,
+            "task_id": task_id,
+            "task_description": task_description,
+            "user_prompt": user_prompt,
+            "step_name": step_name,
+            "step_content": step_content,
+            "flow_name": flow_name,
+            "artifacts": previous_artifacts,
+            "artifacts_output_dir": str(step_output_dir) if step_output_dir else "",
+            "gate_failures": gate_failures,
+        }
+        prompt_content = context_svc.render_step_instructions(prompt_vars)
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
-        prompt_md = prompts_dir / f"{task_id}.md"
+        prompt_md = prompts_dir / f"{task_id}-{step_position:02d}-{step_name}.md"
         prompt_md.write_text(prompt_content)
 
-        if recovery:
-            self._archive_agent_log(wt_llmflows, run_id, recovery_context)
-
-        log_file = wt_llmflows / f"agent-{run_id}.log"
+        log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}.log"
         pid_file = wt_llmflows / "agent.pid"
         launched = self._launch_agent(
             self.worktree_path, prompt_md, log_file, pid_file,
@@ -116,25 +101,10 @@ class AgentService:
         return launched, prompt_content, str(log_file)
 
     @staticmethod
-    def _archive_agent_log(
-        llmflows_dir: Path, run_id: str, recovery_context: Optional[dict] = None,
-    ) -> None:
-        """Rename the current agent log so the new attempt gets a clean file."""
-        current_log = llmflows_dir / f"agent-{run_id}.log"
-        if not current_log.exists():
-            return
-        attempt = (recovery_context or {}).get("recovery_attempt", 1)
-        archived = llmflows_dir / f"agent-{run_id}.attempt-{attempt}.log"
-        try:
-            current_log.rename(archived)
-        except OSError:
-            pass
-
-    @staticmethod
     def _ensure_gitignore(llmflows_dir: Path) -> None:
         """Ensure .llmflows/ has a .gitignore for ephemeral files."""
         gi = llmflows_dir / ".gitignore"
-        entries = {"agent-*.log", "agent.pid", "flow", "task_id", "run_id"}
+        entries = {"agent-*.log", "agent.pid", "*/artifacts/"}
         if gi.exists():
             existing = gi.read_text()
             missing = [e for e in sorted(entries) if e not in existing]
@@ -209,7 +179,6 @@ class AgentService:
                 cmd.extend(["--model", model])
             return cmd
 
-        # Fallback for unknown but registered agents
         cmd = [binary]
         if mode == "file":
             cmd.extend(["-f", str(prompt_file)])
@@ -221,12 +190,7 @@ class AgentService:
     def _resolve_pid_file(
         project_path: str, worktree_branch: str, task_id: str = ""
     ) -> Optional[Path]:
-        """Return the agent.pid path for a task, or None if not locatable.
-
-        When *worktree_branch* is set the pid file lives inside the worktree.
-        When it is empty and *task_id* is provided the pid file lives in the
-        project-level task subdir (no-git mode).
-        """
+        """Return the agent.pid path for a task, or None if not locatable."""
         if worktree_branch:
             from .worktree import WorktreeService
             wt_path = WorktreeService(project_path).get_worktree_path(worktree_branch)

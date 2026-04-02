@@ -331,6 +331,9 @@
                       <span class="text-gray-300 text-xs font-mono" x-text="a.model || '-'"></span>
                       <span class="text-gray-500 text-xs">Flow:</span>
                       <span class="text-gray-300 text-xs font-mono" x-text="(a.flow_chain || []).join(' \u2192 ') || '-'"></span>
+                      <span x-show="Object.keys(a.step_overrides || {}).length > 0"
+                            class="text-yellow-500 text-[10px] font-mono"
+                            x-text="Object.keys(a.step_overrides || {}).length + ' override' + (Object.keys(a.step_overrides || {}).length > 1 ? 's' : '')"></span>
                     </div>
                     <div class="flex items-center gap-2">
                       <button @click="editAlias(a.name)" class="text-xs text-blue-400 hover:text-blue-300 transition">Edit</button>
@@ -345,55 +348,117 @@
               <!-- Alias form -->
               <div x-show="showNewAliasForm || editingAlias" class="bg-gray-800/30 rounded-lg p-3 space-y-3">
                 <div class="text-xs text-gray-400 font-medium" x-text="editingAlias ? ('Edit \u201c' + editingAlias + '\u201d') : 'New Alias'"></div>
+                <!-- Name -->
                 <div>
                   <label class="block text-xs text-gray-500 mb-1">Alias Name</label>
                   <input x-model="aliasForm.name" :disabled="!!editingAlias" type="text" placeholder="e.g. fast"
                          class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
                 </div>
+                <!-- Default agent/model + Apply to all -->
                 <div>
-                  <label class="block text-xs text-gray-500 mb-1">Agent</label>
-                  <select x-model="aliasForm.agent" @change="loadAliasFormModels(aliasForm.agent)"
-                          class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <template x-for="a in agents" :key="a">
-                      <option :value="a" x-text="a"></option>
-                    </template>
-                  </select>
+                  <label class="block text-xs text-gray-500 mb-1">Default Agent &amp; Model</label>
+                  <div class="flex items-end gap-2 flex-wrap">
+                    <div>
+                      <select x-model="aliasForm.agent" @change="loadAliasFormModels(aliasForm.agent)"
+                              class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <template x-for="a in agents" :key="a">
+                          <option :value="a" x-text="a"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div>
+                      <select x-model="aliasForm.model"
+                              class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <template x-for="m in aliasFormModels" :key="m">
+                          <option :value="m" x-text="m"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label class="block text-xs text-gray-500 mb-1">Model</label>
-                  <input x-model="aliasForm.model" list="aliasFormModelList" placeholder="Type or select model…"
-                         class="w-full max-w-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <datalist id="aliasFormModelList">
-                    <template x-for="m in aliasFormModels" :key="m">
-                      <option :value="m"></option>
-                    </template>
-                  </datalist>
-                </div>
+                <!-- Flow chain + inline step blocks -->
                 <div>
                   <label class="block text-xs text-gray-500 mb-1">Flow Chain</label>
-                  <div class="space-y-1 mb-2">
-                    <template x-for="(name, i) in aliasForm.flow_chain" :key="i">
-                      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5 max-w-xs">
-                        <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
-                        <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
-                        <button @click="aliasForm.flow_chain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">&#x2715;</button>
-                      </div>
-                    </template>
-                  </div>
-                  <div class="flex gap-2 max-w-xs">
+                  <div class="flex gap-2 max-w-xs mb-3">
                     <select x-model="aliasAddFlow"
                             class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="" disabled selected>Select flow...</option>
+                      <option value="" disabled selected>Add flow...</option>
                       <template x-for="f in flows" :key="f.id">
                         <option :value="f.name" x-text="f.name"></option>
                       </template>
                     </select>
-                    <button @click="if (aliasAddFlow) { aliasForm.flow_chain.push(aliasAddFlow); aliasAddFlow = ''; }"
+                    <button @click="addFlowToChain()"
                             :disabled="!aliasAddFlow"
                             :class="!aliasAddFlow ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
                             class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
                   </div>
+                  <!-- Inline step pipeline -->
+                  <div x-show="aliasFormSteps.length > 0" class="flex items-center overflow-x-auto pb-2 gap-0">
+                    <template x-for="(fs, si) in aliasFormSteps" :key="fs.key">
+                      <div class="flex items-center shrink-0">
+                        <!-- Connector -->
+                        <template x-if="si > 0">
+                          <div class="w-3 h-[2px] shrink-0 bg-gray-700"></div>
+                        </template>
+                        <!-- Step block -->
+                        <div class="relative">
+                          <div @click="toggleStepEdit(fs.key)"
+                               class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] cursor-pointer hover:brightness-125 transition"
+                               :class="hasStepOverride(fs.key)
+                                 ? 'bg-yellow-900/40 border-yellow-700 text-yellow-300'
+                                 : 'bg-gray-900/50 border-gray-700 text-gray-400'">
+                            <span x-text="fs.stepName"></span>
+                            <span class="text-[8px] opacity-50 ml-0.5" x-text="resolvedStepAgent(fs.key)"></span>
+                          </div>
+                          <!-- Edit popover -->
+                          <div x-show="aliasEditingStep === fs.key" x-transition @click.outside="aliasEditingStep = null"
+                               class="absolute top-full left-0 mt-1 z-10 bg-gray-800 border border-gray-600 rounded-lg p-2.5 shadow-xl min-w-[220px]">
+                            <div class="text-[10px] text-gray-500 mb-1.5 font-mono" x-text="fs.key"></div>
+                            <div class="space-y-1.5">
+                              <div>
+                                <label class="text-[10px] text-gray-500 block mb-0.5">Agent</label>
+                                <select :value="getAliasStepOverride(fs.key, 'agent')"
+                                        @change="setAliasStepOverride(fs.key, 'agent', $event.target.value)"
+                                        class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                  <option value="">default</option>
+                                  <template x-for="a in agents" :key="a">
+                                    <option :value="a" x-text="a"></option>
+                                  </template>
+                                </select>
+                              </div>
+                              <div>
+                                <label class="text-[10px] text-gray-500 block mb-0.5">Model</label>
+                                <input type="text" :value="getAliasStepOverride(fs.key, 'model')"
+                                       @input="setAliasStepOverride(fs.key, 'model', $event.target.value)"
+                                       placeholder="default"
+                                       class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              </div>
+                              <div class="flex justify-between items-center pt-1">
+                                <button x-show="hasStepOverride(fs.key)"
+                                        @click="setAliasStepOverride(fs.key, 'agent', ''); setAliasStepOverride(fs.key, 'model', '')"
+                                        class="text-[10px] text-red-400 hover:text-red-300">Reset to default</button>
+                                <button @click="aliasEditingStep = null"
+                                        class="text-[10px] text-gray-400 hover:text-gray-200 ml-auto">Done</button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                  <div x-show="aliasForm.flow_chain.length === 0" class="text-xs text-gray-600 px-1">No flows selected</div>
+                  <!-- Flow remove buttons -->
+                  <div x-show="aliasForm.flow_chain.length > 0" class="flex items-center gap-2 mt-2">
+                    <template x-for="(flowName, fi) in aliasForm.flow_chain" :key="fi">
+                      <button @click="removeFlowFromChain(fi)"
+                              class="text-[10px] text-gray-600 hover:text-red-400 transition font-mono flex items-center gap-0.5">
+                        <span>&#x2715;</span>
+                        <span x-text="flowName"></span>
+                      </button>
+                    </template>
+                  </div>
                 </div>
+
                 <div class="flex gap-2">
                   <button @click="saveAlias()"
                           :disabled="!aliasForm.name.trim()"
@@ -438,8 +503,6 @@
                       <span class="text-xs text-gray-500" x-text="t.run_count || 0"></span>
                     </td>
                     <td class="px-4 py-3 text-right" @click.stop>
-                      <button @click="openStartDialog(t)"
-                              class="text-xs text-blue-400 hover:text-blue-300 mr-2">Run</button>
                       <button @click="deleteTask(t.id)"
                               class="text-xs text-gray-600 hover:text-red-400 transition">Delete</button>
                     </td>
@@ -490,100 +553,6 @@
           </div>
         </div>
 
-        <!-- Run Modal -->
-        <div x-show="startingTask" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="startingTask = null">
-          <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-lg border border-gray-700" @click.stop>
-            <h2 class="text-lg font-semibold mb-4">New Run</h2>
-            <div x-show="Object.keys(project?.aliases || {}).length > 1" class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
-              <span class="text-xs text-gray-500">Alias:</span>
-              <template x-for="a in sortedAliases()" :key="a.name">
-                <button @click="applyAlias(a.name)"
-                        class="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 font-mono rounded-lg transition"
-                        :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></button>
-              </template>
-            </div>
-            <div class="space-y-4">
-
-              <!-- Flow chain builder -->
-              <div>
-                <div class="flex items-center justify-between mb-1">
-                  <label class="text-sm text-gray-400">Flow chain</label>
-                  <span class="text-xs text-gray-600">executed in order</span>
-                </div>
-                <!-- Selected chain -->
-                <div class="space-y-1 mb-2">
-                  <template x-for="(name, i) in startChain" :key="i">
-                    <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5">
-                      <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
-                      <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
-                      <button @click="startChain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">✕</button>
-                    </div>
-                  </template>
-                  <div x-show="startChain.length === 0" class="text-xs text-gray-600 px-1">No flows selected</div>
-                </div>
-                <!-- Add flow -->
-                <div class="flex gap-2">
-                  <select x-model="addFlowSelect"
-                          class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="" disabled selected>Select flow...</option>
-                    <template x-for="f in flows" :key="f.id">
-                      <option :value="f.name" x-text="f.name"></option>
-                    </template>
-                  </select>
-                  <button @click="if (addFlowSelect) { startChain.push(addFlowSelect); addFlowSelect = ''; }"
-                          :disabled="!addFlowSelect"
-                          :class="!addFlowSelect ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
-                          class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
-                </div>
-              </div>
-
-              <!-- Agent + Model selectors -->
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <label class="text-sm text-gray-400 mb-1 block">Agent</label>
-                  <select x-model="startAgent" @change="onAgentChange(startAgent)"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <template x-for="a in agents" :key="a">
-                      <option :value="a" x-text="a"></option>
-                    </template>
-                  </select>
-                  <p x-show="agents.length === 0" class="text-xs text-red-400 mt-1">No agents detected in PATH</p>
-                </div>
-                <div>
-                  <label class="text-sm text-gray-400 mb-1 block">Model</label>
-                  <input x-model="startModel" list="startModelList" placeholder="Type or select model…"
-                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <datalist id="startModelList">
-                    <template x-for="m in models" :key="m">
-                      <option :value="m"></option>
-                    </template>
-                  </datalist>
-                </div>
-              </div>
-
-              <!-- Prompt section -->
-              <div>
-                <label class="block text-sm text-gray-400 mb-1">Prompt</label>
-                <!-- First run: show task description as base prompt -->
-                <div x-show="isFirstRun && startTaskDescription.trim()" class="mb-2">
-                  <div class="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Task description (included automatically)</div>
-                  <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 max-h-32 overflow-y-auto whitespace-pre-wrap"
-                       x-text="startTaskDescription"></div>
-                </div>
-                <textarea x-model="startPrompt" rows="4"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
-                          :placeholder="isFirstRun ? 'Additional instructions (optional)' : 'What should the agent do?'"></textarea>
-              </div>
-            </div>
-            <div class="flex justify-end gap-3 mt-6">
-              <button @click="startingTask = null"
-                      class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
-              <button @click="confirmStart()" :disabled="startChain.length === 0 || !startModel || !startAgent"
-                      :class="startChain.length === 0 || !startModel || !startAgent ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
-                      class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">Run</button>
-            </div>
-          </div>
-        </div>
       </div>
     </template>
 
@@ -740,18 +709,23 @@
                         </td>
                         <td class="px-4 py-3 text-xs text-gray-400"
                             x-text="run.status === 'completed' ? '-' : (run.current_step || '-')"></td>
-                        <td class="px-4 py-3 text-xs text-gray-500 max-w-[200px]">
-                          <div class="truncate" x-text="run.user_prompt || '-'"></div>
+                        <td class="px-4 py-3 text-xs text-gray-500 max-w-[300px]" x-data="{ open: false }" @click.stop>
+                          <template x-if="!run.user_prompt">
+                            <span class="text-gray-600">-</span>
+                          </template>
+                          <template x-if="run.user_prompt">
+                            <div>
+                              <div class="cursor-pointer hover:text-gray-300 transition" @click="open = !open">
+                                <div x-show="!open" class="truncate" x-text="run.user_prompt"></div>
+                                <div x-show="open" class="whitespace-pre-wrap break-words max-h-48 overflow-y-auto" x-text="run.user_prompt"></div>
+                              </div>
+                            </div>
+                          </template>
                         </td>
                         <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap" x-text="duration(run)"></td>
                         <td class="px-4 py-3 text-xs text-gray-600 whitespace-nowrap"
                             x-text="run.completed_at ? new Date(run.completed_at).toLocaleString() : (run.started_at ? new Date(run.started_at).toLocaleString() : new Date(run.created_at).toLocaleString())"></td>
                         <td class="px-4 py-3 text-right flex items-center justify-end gap-3" @click.stop>
-                          <button @click="if (streamingRunId === run.id) { stopLogStream(); streamingRunId = null; } else { expandedRun = run.id; loadRunSteps(run.id); viewRunLogs(run.id); }"
-                                  x-show="run.log_path"
-                                  class="text-xs transition"
-                                  :class="streamingRunId === run.id ? 'text-yellow-400 hover:text-yellow-300' : 'text-blue-400 hover:text-blue-300'"
-                                  x-text="streamingRunId === run.id ? 'Hide Logs' : 'Logs'"></button>
                           <button x-show="run.status === 'running' || run.status === 'queued'"
                                   @click="forceStopRun(run.id)"
                                   class="text-xs text-red-400 hover:text-red-300 transition font-medium">Force Stop</button>
@@ -814,20 +788,24 @@
                               <div class="flex items-center overflow-x-auto pb-2 gap-0">
                                 <template x-for="(step, si) in runSteps[run.id]" :key="si">
                                   <div class="flex items-center shrink-0">
-                                    <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px]"
-                                         :class="stepBoxClass(step.status)"
-                                         :title="step.name + ' (' + step.status + ')'">
+                                    <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] cursor-pointer hover:brightness-125 transition"
+                                         :class="[stepBoxClass(step.status), viewingStepId && step.step_run && viewingStepId === step.step_run.id ? 'border-2' : '']"
+                                         :title="step.name + ' (' + step.status + ')' + (step.step_run ? ' — click to view logs' : '')"
+                                         @click.stop.prevent="step.step_run && viewStepLogs(run.id, step)">
                                       <template x-if="step.status === 'completed'">
                                         <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                                       </template>
-                                      <template x-if="step.status === 'current'">
+                                      <template x-if="step.status === 'running'">
                                         <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse shrink-0"></span>
                                       </template>
                                       <template x-if="step.status === 'skipped'">
                                         <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
                                       </template>
-                                      <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name"></span>
+                                      <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name === '__summary__' ? 'summary' : step.name"></span>
                                       <span x-show="step.has_ifs" class="text-[8px] text-purple-400 font-medium">IF</span>
+                                      <template x-if="step.step_run && step.step_run.agent">
+                                        <span class="text-[8px] text-gray-600 ml-0.5" x-text="step.step_run.agent"></span>
+                                      </template>
                                     </div>
                                     <template x-if="si < runSteps[run.id].length - 1">
                                       <div class="w-3 h-[2px] shrink-0" :class="stepConnectorClass(step.status)"></div>
@@ -841,14 +819,14 @@
                           <div x-show="streamingRunId === run.id">
                             <div class="flex items-center justify-between mb-2">
                               <span class="text-[10px] uppercase tracking-wide text-gray-600 flex items-center gap-2">
-                                Agent Log
+                                <span x-text="viewingStepName ? ('Step: ' + viewingStepName) : 'Agent Log'">Agent Log</span>
                                 <span x-show="logStreaming" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
                               </span>
                               <button @click.stop="stopLogStream(); streamingRunId = null"
                                       class="text-xs text-gray-500 hover:text-gray-300 transition">Close</button>
                             </div>
                             <!-- Initial prompt (start.md) -->
-                            <div x-show="run.prompt" class="mb-2">
+                            <div x-show="run.prompt && !viewingStepPrompt" class="mb-2">
                               <details class="group">
                                 <summary class="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none hover:text-gray-400 list-none flex items-center gap-1">
                                   <span class="text-gray-700 group-open:rotate-90 transition-transform inline-block">▶</span>
@@ -856,6 +834,17 @@
                                 </summary>
                                 <pre class="mt-1 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto"
                                      x-text="run.prompt"></pre>
+                              </details>
+                            </div>
+                            <!-- Step injected context -->
+                            <div x-show="viewingStepPrompt" class="mb-2">
+                              <details class="group">
+                                <summary class="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none hover:text-gray-400 list-none flex items-center gap-1">
+                                  <span class="text-gray-700 group-open:rotate-90 transition-transform inline-block">▶</span>
+                                  Injected context
+                                </summary>
+                                <pre class="mt-1 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto"
+                                     x-text="viewingStepPrompt"></pre>
                               </details>
                             </div>
                             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
@@ -920,73 +909,25 @@
         <div x-show="runModal" x-transition.opacity class="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div class="bg-gray-900 rounded-2xl p-6 w-full max-w-lg border border-gray-700" @click.stop>
             <h2 class="text-lg font-semibold mb-4">New Run</h2>
-            <div x-show="Object.keys(runModalProject?.aliases || {}).length > 1" class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
-              <span class="text-xs text-gray-500">Alias:</span>
-              <template x-for="a in sortedRunModalAliases()" :key="a.name">
-                <button @click="applyRunModalAlias(a.name)"
-                        class="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 font-mono rounded-lg transition"
-                        :class="a.name === 'default' ? 'text-blue-400' : 'text-cyan-400'" x-text="a.name"></button>
-              </template>
-            </div>
             <div class="space-y-4">
-              <!-- Flow chain builder -->
+              <!-- Alias selector -->
               <div>
-                <div class="flex items-center justify-between mb-1">
-                  <label class="text-sm text-gray-400">Flow chain</label>
-                  <span class="text-xs text-gray-600">executed in order</span>
-                </div>
-                <div class="space-y-1 mb-2">
-                  <template x-for="(name, i) in runModalChain" :key="i">
-                    <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5">
-                      <span class="text-xs text-gray-500 w-4" x-text="i + 1 + '.'"></span>
-                      <span class="flex-1 text-sm text-cyan-400 font-mono" x-text="name"></span>
-                      <button @click="runModalChain.splice(i, 1)" class="text-gray-600 hover:text-red-400 text-xs">✕</button>
-                    </div>
+                <label class="text-sm text-gray-400 mb-1 block">Alias</label>
+                <div class="flex flex-wrap gap-2">
+                  <template x-for="a in sortedRunModalAliases()" :key="a.name">
+                    <button @click="applyRunModalAlias(a.name)"
+                            class="px-3 py-1.5 text-sm font-mono rounded-lg transition border"
+                            :class="runModalAlias === a.name
+                              ? 'bg-blue-600/30 border-blue-500 text-blue-300'
+                              : 'bg-gray-800 border-gray-700 hover:bg-gray-700 text-gray-400'"
+                            x-text="a.name"></button>
                   </template>
-                  <div x-show="runModalChain.length === 0" class="text-xs text-gray-600 px-1">No flows selected</div>
-                </div>
-                <div class="flex gap-2">
-                  <select x-model="runModalFlowSelect"
-                          class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="" disabled selected>Select flow...</option>
-                    <template x-for="f in $store.app.flows" :key="f.id">
-                      <option :value="f.name" x-text="f.name"></option>
-                    </template>
-                  </select>
-                  <button @click="if (runModalFlowSelect) { runModalChain.push(runModalFlowSelect); runModalFlowSelect = ''; }"
-                          :disabled="!runModalFlowSelect"
-                          :class="!runModalFlowSelect ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-600'"
-                          class="text-xs px-3 py-1.5 bg-gray-700 rounded-lg transition">+ Add</button>
-                </div>
-              </div>
-              <!-- Agent + Model selectors -->
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <label class="text-sm text-gray-400 mb-1 block">Agent</label>
-                  <select x-model="runModalAgent" @change="onRunModalAgentChange(runModalAgent)"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <template x-for="a in runModalAgents" :key="a">
-                      <option :value="a" x-text="a"></option>
-                    </template>
-                  </select>
-                  <p x-show="runModalAgents.length === 0" class="text-xs text-red-400 mt-1">No agents detected in PATH</p>
-                </div>
-                <div>
-                  <label class="text-sm text-gray-400 mb-1 block">Model</label>
-                  <input x-model="runModalModel" list="runModalModelList" placeholder="Type or select model…"
-                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <datalist id="runModalModelList">
-                    <template x-for="m in runModalModels" :key="m">
-                      <option :value="m"></option>
-                    </template>
-                  </datalist>
                 </div>
               </div>
 
               <!-- Prompt section -->
               <div>
                 <label class="block text-sm text-gray-400 mb-1">Prompt</label>
-                <!-- First run: show task description as base prompt -->
                 <div x-show="runModalIsFirstRun && (task?.description || '').trim()" class="mb-2">
                   <div class="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Task description (included automatically)</div>
                   <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 max-h-32 overflow-y-auto whitespace-pre-wrap"
@@ -1000,8 +941,8 @@
             <div class="flex justify-end gap-3 mt-6">
               <button @click="runModal = false"
                       class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">Cancel</button>
-              <button @click="submitRunModal()" :disabled="runModalChain.length === 0 || !runModalModel || !runModalAgent"
-                      :class="runModalChain.length === 0 || !runModalModel || !runModalAgent ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
+              <button @click="submitRunModal()" :disabled="!runModalAlias"
+                      :class="!runModalAlias ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-500'"
                       class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg transition">Run</button>
             </div>
           </div>
@@ -1448,20 +1389,23 @@
                           <div class="flex items-center overflow-x-auto pb-2 gap-0">
                             <template x-for="(step, si) in runSteps[run.id]" :key="si">
                               <div class="flex items-center shrink-0">
-                                <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px]"
+                                <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] cursor-pointer hover:brightness-125 transition"
                                      :class="stepBoxClass(step.status)"
                                      :title="step.name + ' (' + step.status + ')'">
                                   <template x-if="step.status === 'completed'">
                                     <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                                   </template>
-                                  <template x-if="step.status === 'current'">
+                                  <template x-if="step.status === 'running'">
                                     <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse shrink-0"></span>
                                   </template>
                                   <template x-if="step.status === 'skipped'">
                                     <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
                                   </template>
-                                  <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name"></span>
+                                  <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name === '__summary__' ? 'summary' : step.name"></span>
                                   <span x-show="step.has_ifs" class="text-[8px] text-purple-400 font-medium">IF</span>
+                                  <template x-if="step.step_run && step.step_run.agent">
+                                    <span class="text-[8px] text-gray-600 ml-0.5" x-text="step.step_run.agent"></span>
+                                  </template>
                                 </div>
                                 <template x-if="si < runSteps[run.id].length - 1">
                                   <div class="w-3 h-[2px] shrink-0" :class="stepConnectorClass(step.status)"></div>

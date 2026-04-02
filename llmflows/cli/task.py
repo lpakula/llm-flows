@@ -57,21 +57,28 @@ def _get_session():
 def _start_inline(session, project, task, flow_name, no_git,
                   flow_chain=None, user_prompt="",
                   model="", agent="cursor"):
-    """Bootstrap a run immediately — no daemon required.
+    """Bootstrap an inline run — renders the first step prompt to stdout.
 
-    Creates the run, sets up the working directory, writes state files,
-    and outputs the rendered protocol to stdout for the calling agent.
+    Creates the run, sets up the working directory, and outputs the
+    first step's prompt for the calling agent. The daemon handles
+    subsequent steps.
     """
     from ..services.agent import AgentService
     from ..services.context import ContextService
+    from ..services.flow import FlowService
     from ..services.worktree import WorktreeService
 
     run_svc = RunService(session)
     task_svc = TaskService(session)
+    flow_svc = FlowService(session)
+
+    alias_cfg = project.get_alias("default") or {}
+    step_overrides = alias_cfg.get("step_overrides", {})
 
     run = run_svc.enqueue(project.id, task.id, flow_name,
                           user_prompt=user_prompt, flow_chain=flow_chain,
-                          model=model, agent=agent)
+                          model=model, agent=agent,
+                          step_overrides=step_overrides)
     run_svc.mark_started(run.id)
 
     worktree_path = None
@@ -91,36 +98,50 @@ def _start_inline(session, project, task, flow_name, no_git,
     llmflows_dir = work_dir / ".llmflows"
     llmflows_dir.mkdir(parents=True, exist_ok=True)
     AgentService._ensure_gitignore(llmflows_dir)
-    (llmflows_dir / "flow").write_text(flow_name)
-    (llmflows_dir / "task_id").write_text(task.id)
-    (llmflows_dir / "run_id").write_text(run.id)
 
-    history = run_svc.get_history(task.id)
-    execution_history = [
-        {
-            "flow_name": r.flow_name,
-            "outcome": r.outcome or "unknown",
-            "user_prompt": r.user_prompt or "",
-            "summary": r.summary or "",
-        }
-        for r in history
-        if r.outcome != "cancelled"
-    ] or None
+    steps = flow_svc.get_flow_steps(flow_name)
+    if not steps:
+        click.echo(f"Flow '{flow_name}' has no steps.", err=True)
+        raise SystemExit(1)
+
+    first_step = steps[0]
+    step_obj = flow_svc.get_step_obj(flow_name, first_step)
+    step_content = (step_obj.content or "").rstrip() if step_obj else ""
+
+    artifacts_dir = ContextService.get_artifacts_dir(Path(project.path), task.id, run.id)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    step_output_dir = artifacts_dir / f"00-{first_step}"
 
     context_svc = ContextService(llmflows_dir)
-    prompt_vars = {
-        "flow_name": flow_name,
-        "task_id": task.id,
-        "task_name": task.name,
-        "task_description": task.description,
-        "task_type": task.type.value,
-        "execution_history": execution_history or [],
+    prompt = context_svc.render_step_instructions({
         "worktree_path": worktree_path,
-    }
-    prompt = context_svc.render_start_instructions(prompt_vars)
+        "task_id": task.id,
+        "task_description": task.description,
+        "user_prompt": user_prompt or task.description,
+        "step_name": first_step,
+        "step_content": step_content,
+        "flow_name": flow_name,
+        "artifacts": [],
+        "artifacts_output_dir": str(step_output_dir),
+        "gate_failures": None,
+    })
 
-    run_svc.set_prompt(run.id, prompt)
-    run_svc.set_log_path(run.id, "inline")
+    override_key = f"{flow_name}/{first_step}"
+    step_cfg = step_overrides.get(override_key, {})
+    resolved_agent = step_cfg.get("agent") or agent
+    resolved_model = step_cfg.get("model") or model
+
+    step_run = run_svc.create_step_run(
+        run_id=run.id,
+        step_name=first_step,
+        step_position=0,
+        flow_name=flow_name,
+        agent=resolved_agent,
+        model=resolved_model,
+    )
+    run_svc.update_run_step(run.id, first_step, flow_name)
+    run_svc.set_step_prompt(step_run.id, prompt)
+    run_svc.set_step_log_path(step_run.id, "inline")
 
     click.echo(prompt)
 
@@ -410,9 +431,14 @@ def task_start(task_id, flows, prompt, inline_now, no_git, model, agent):
             return
 
         run_svc = RunService(session)
+        project_svc = ProjectService(session)
+        project = project_svc.get(t.project_id)
+        alias_cfg = (project.get_alias("default") or {}) if project else {}
+        step_overrides = alias_cfg.get("step_overrides", {})
         run = run_svc.enqueue(t.project_id, task_id, chain[0],
                               user_prompt=prompt, flow_chain=chain,
-                              model=model, agent=agent)
+                              model=model, agent=agent,
+                              step_overrides=step_overrides)
         chain_str = " → ".join(click.style(f, fg="bright_green") for f in chain)
         click.echo(
             f"Queued run {click.style(run.id[:8], fg='cyan')} "

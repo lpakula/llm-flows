@@ -54,6 +54,10 @@ def init_db() -> Path:
             with engine.connect() as conn:
                 conn.execute(text("ALTER TABLE task_runs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"))
                 conn.commit()
+        if "step_overrides" not in existing:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE task_runs ADD COLUMN step_overrides TEXT DEFAULT '{}'"))
+                conn.commit()
 
     session = sessionmaker(bind=engine)()
     try:

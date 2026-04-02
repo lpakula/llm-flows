@@ -12,18 +12,19 @@ function taskView() {
     worktreePrefix: null,
     _logEventSource: null,
     runModal: false,
+    runModalAlias: '',
     runModalChain: [],
-    runModalFlowSelect: '',
     runModalPrompt: '',
     runModalModel: '',
-    runModalModels: [],
     runModalAgent: '',
-    runModalAgents: [],
     runModalIsFirstRun: false,
     runModalProject: null,
     logsCopied: false,
     logAtBottom: true,
     runSteps: {},
+    viewingStepId: null,
+    viewingStepName: null,
+    viewingStepPrompt: null,
     editingDescription: false,
     editDescText: '',
 
@@ -190,7 +191,28 @@ function taskView() {
     },
 
     viewRunLogs(runId) {
-      if (this.streamingRunId === runId) return;
+      if (this.streamingRunId === runId && !this.viewingStepId) return;
+
+      const steps = this.runSteps[runId] || [];
+      const activeStep = steps.find(s => s.step_run && s.status === 'running');
+      if (activeStep) {
+        this.viewStepLogs(runId, activeStep);
+        return;
+      }
+
+      this.viewingStepId = null;
+      this.viewingStepName = null;
+      this.viewingStepPrompt = null;
+      this.stopLogStream();
+      this.streamingRunId = null;
+      this.logEntries = [];
+      this.logAtBottom = true;
+    },
+
+    viewRunLogsDirect(runId) {
+      this.viewingStepId = null;
+      this.viewingStepName = null;
+      this.viewingStepPrompt = null;
       this.stopLogStream();
       this.streamingRunId = runId;
       this.logEntries = [];
@@ -438,58 +460,40 @@ function taskView() {
     },
 
     async openRunModal() {
-      const flows = Alpine.store('app').flows;
-      this.runModalFlowSelect = '';
       this.runModalPrompt = '';
       this.runModalIsFirstRun = this.runs.length === 0;
-
+      this.runModalAlias = '';
+      this.runModalChain = [];
+      this.runModalModel = '';
+      this.runModalAgent = '';
       try {
-        this.runModalAgents = await API.get('/api/agents');
         const project = this.task ? await API.get(`/api/projects/${this.task.project_id}`) : null;
         this.runModalProject = project;
-        const da = (project?.aliases || {})['default'] || { agent: 'cursor', model: 'auto', flow_chain: ['default'] };
-        this.runModalChain = [...(da.flow_chain || ['default'])];
-        this.runModalAgent = this.runModalAgents.includes(da.agent) ? da.agent : (this.runModalAgents[0] || 'cursor');
-        await this.loadRunModalModels(this.runModalAgent);
-        this.runModalModel = da.model || this.runModalModels[0] || '';
+        if (project?.aliases?.['default']) {
+          this.applyRunModalAlias('default');
+        }
       } catch (e) {
         this.runModalProject = null;
-        this.runModalChain = [];
-        this.runModalModel = '';
-        this.runModalAgent = '';
       }
-
       this.runModal = true;
     },
 
-    async loadRunModalModels(agent) {
-      try {
-        this.runModalModels = await API.get(`/api/models?agent=${encodeURIComponent(agent)}`);
-        if (!this.runModalModel && this.runModalModels.length) {
-          this.runModalModel = this.runModalModels[0];
-        }
-      } catch (e) {
-        this.runModalModels = [];
-      }
-    },
-
-    async onRunModalAgentChange(agent) {
-      await this.loadRunModalModels(agent);
-    },
-
     async submitRunModal() {
-      if (!this.task || this.runModalChain.length === 0 || !this.runModalModel || !this.runModalAgent) return;
+      if (!this.task || !this.runModalAlias) return;
+      const cfg = (this.runModalProject?.aliases || {})[this.runModalAlias];
+      if (!cfg) return;
       let prompt = this.runModalPrompt;
       if (this.runModalIsFirstRun && this.runModalPrompt.trim()) {
         const desc = (this.task.description || '').trim();
         prompt = desc ? desc + '\n\n' + this.runModalPrompt.trim() : this.runModalPrompt.trim();
       }
       await API.post(`/api/tasks/${this.task.id}/start`, {
-        flow: this.runModalChain[0],
-        flow_chain: this.runModalChain,
+        flow: cfg.flow_chain?.[0] || 'default',
+        flow_chain: cfg.flow_chain || ['default'],
         user_prompt: prompt,
-        model: this.runModalModel,
-        agent: this.runModalAgent,
+        model: cfg.model || '',
+        agent: cfg.agent || 'cursor',
+        step_overrides: cfg.step_overrides || {},
       });
       this.runModal = false;
       this.runs = await API.get(`/api/tasks/${this.task.id}/runs`);
@@ -504,25 +508,79 @@ function taskView() {
     applyRunModalAlias(name) {
       const cfg = (this.runModalProject?.aliases || {})[name];
       if (!cfg) return;
-      if (cfg.agent && this.runModalAgents.includes(cfg.agent)) this.runModalAgent = cfg.agent;
-      if (cfg.flow_chain) this.runModalChain = [...cfg.flow_chain];
-      this.loadRunModalModels(this.runModalAgent).then(() => {
-        if (cfg.model) this.runModalModel = cfg.model;
-      });
+      this.runModalAlias = name;
+      this.runModalAgent = cfg.agent || 'cursor';
+      this.runModalModel = cfg.model || '';
+      this.runModalChain = [...(cfg.flow_chain || ['default'])];
+    },
+
+    viewStepLogs(runId, step) {
+      const sr = step.step_run;
+      if (!sr || !sr.id) return;
+      this.viewingStepId = sr.id;
+      this.viewingStepName = step.name === '__summary__' ? 'summary' : step.name;
+      this.viewingStepPrompt = sr.prompt || null;
+
+      this.stopLogStream();
+      this.streamingRunId = runId;
+      this.logEntries = [];
+      this.logAtBottom = true;
+
+      if (sr.log_path === 'inline') {
+        this.logStreaming = false;
+        this.logEntries.push({
+          text: 'This step was started inline. Logs are managed by the calling agent.',
+          cls: 'text-gray-500',
+        });
+        return;
+      }
+
+      this.logStreaming = true;
+      const source = new EventSource(`/api/step-runs/${sr.id}/logs`);
+      this._logEventSource = source;
+      source.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          if (event.type === 'done') {
+            this.logStreaming = false;
+            source.close();
+            return;
+          }
+          const entries = this.parseLogEvent(event);
+          if (entries) {
+            for (const entry of entries) {
+              this.logEntries.push(entry);
+            }
+            if (this.logEntries.length > 500) {
+              this.logEntries = this.logEntries.slice(-400);
+            }
+            this._scrollLogIfAtBottom();
+          }
+        } catch {}
+      };
+      source.onerror = () => {
+        this.logStreaming = false;
+        source.close();
+      };
     },
 
     stepBoxClass(status) {
       return {
         completed: 'bg-green-900/40 border-green-700 text-green-400',
+        running: 'bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold',
         current: 'bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold',
         skipped: 'bg-gray-900/30 border-gray-800 text-gray-600',
         pending: 'bg-gray-900/50 border-gray-700 text-gray-500',
+        failed: 'bg-red-900/40 border-red-700 text-red-400',
+        timeout: 'bg-orange-900/40 border-orange-700 text-orange-400',
+        error: 'bg-red-900/40 border-red-700 text-red-400',
       }[status] || 'bg-gray-900/50 border-gray-700 text-gray-500';
     },
 
     stepConnectorClass(status) {
       return {
         completed: 'bg-green-700',
+        running: 'bg-yellow-600',
         current: 'bg-yellow-600',
         skipped: 'bg-gray-800',
         pending: 'bg-gray-800',

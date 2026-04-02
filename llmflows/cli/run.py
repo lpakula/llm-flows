@@ -1,10 +1,8 @@
-"""Run CLI -- list/inspect runs and agent-facing commands."""
+"""Run CLI -- list/inspect runs."""
 
 import click
 
-from ..config import get_repo_root
 from ..db.database import get_session, init_db
-from ..services.context import ContextService
 from ..services.project import ProjectService
 from ..services.run import RunService
 
@@ -183,44 +181,3 @@ def run_logs(run_id, follow, raw):
     stream_run_logs(run_id, follow=follow, raw=raw)
 
 
-# ── run complete (agent-facing) ───────────────────────────────────────────────
-
-@run.command("complete")
-@click.option("--summary", required=True, help="Execution summary text")
-def run_complete(summary):
-    """Save execution summary to the active TaskRun.
-
-    Called by the agent at the end of the complete step.
-    Example: llmflows run complete --summary "$(cat <<'EOF'
-    ## What was done
-    ...
-    EOF
-    )"
-    """
-    repo_root = get_repo_root()
-    if repo_root is None:
-        click.echo("Not inside a git repository.", err=True)
-        raise SystemExit(1)
-
-    context_svc = ContextService.find(repo_root)
-    task_id = context_svc.get_current_task_id()
-    run_id = context_svc.get_current_run_id()
-
-    if not task_id:
-        click.echo("No task_id found in .llmflows/task_id", err=True)
-        raise SystemExit(1)
-
-    init_db()
-    session = get_session()
-    try:
-        run_svc = RunService(session)
-        result = run_svc.set_summary(task_id, summary, run_id=run_id or None)
-        if result:
-            click.echo(f"Summary saved for run {result.id}.")
-            pid_file = context_svc.project_dir / "agent.pid"
-            pid_file.unlink(missing_ok=True)
-        else:
-            click.echo(f"No active run found for task {task_id}.", err=True)
-            raise SystemExit(1)
-    finally:
-        session.close()

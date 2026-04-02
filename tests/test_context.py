@@ -11,122 +11,112 @@ class TestContextService:
         project_dir.mkdir()
         return ContextService(project_dir)
 
-    def test_get_current_flow_default(self, temp_dir):
+    def test_render_step_instructions(self, temp_dir):
         svc = self._setup_dirs(temp_dir)
-        assert svc.get_current_flow() == "default"
-
-    def test_get_current_flow_from_file(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        (svc.project_dir / "flow").write_text("custom")
-        assert svc.get_current_flow() == "custom"
-
-    def test_get_current_task_id(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        assert svc.get_current_task_id() == ""
-        (svc.project_dir / "task_id").write_text("abc123")
-        assert svc.get_current_task_id() == "abc123"
-
-    def test_render_start_instructions(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        result = svc.render_start_instructions({
-            "flow_name": "default",
+        result = svc.render_step_instructions({
             "task_id": "abc123",
-            "task_name": "My Task",
             "task_description": "Build something",
-            "task_type": "feature",
-            "execution_history": [],
+            "user_prompt": "Build something",
+            "step_name": "research",
+            "step_content": "# Research the problem",
+            "flow_name": "default",
+            "artifacts": [],
+            "artifacts_output_dir": "/tmp/artifacts/00-research",
+            "gate_failures": None,
         })
-        assert "default" in result
         assert "abc123" in result
-        assert "llmflows mode next" in result
+        assert "Build something" in result
+        assert "Research the problem" in result
+        assert "When you have completed" in result
 
-    def test_render_start_instructions_not_overridable(self, temp_dir):
-        """Project-level start.md should not override the package default."""
+    def test_render_step_instructions_with_artifacts(self, temp_dir):
         svc = self._setup_dirs(temp_dir)
-        mode_dir = svc.project_dir / "context" / "mode"
-        mode_dir.mkdir(parents=True, exist_ok=True)
-        (mode_dir / "start.md").write_text("# Custom Protocol")
-
-        result = svc.render_start_instructions({
-            "flow_name": "default",
-            "task_id": "t1",
-            "task_name": "Test",
-            "task_description": "",
-            "task_type": "feature",
-            "execution_history": [],
-        })
-        assert "Custom Protocol" not in result
-        assert "llmflows Protocol" in result
-
-    def test_load_complete_step(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        content = svc.load_complete_step()
-        assert "COMPLETE" in content
-        assert "llmflows run complete" in content
-
-    def test_render_start_with_execution_history(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        result = svc.render_start_instructions({
-            "flow_name": "default",
+        result = svc.render_step_instructions({
             "task_id": "abc123",
-            "task_name": "Re-run",
-            "task_description": "Retry this",
-            "task_type": "feature",
-            "worktree_path": "/tmp/worktrees/task-abc123",
-            "execution_history": [
-                {"flow_name": "default", "outcome": "failed", "summary": "It broke"},
-            ],
-        })
-        assert "PREVIOUS RUNS" in result
-        assert "It broke" in result
-        assert "git diff main...HEAD" in result
-
-    def test_render_recovery_instructions(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        result = svc.render_recovery_instructions({
+            "task_description": "Build feature",
+            "user_prompt": "Build feature",
+            "step_name": "implement",
+            "step_content": "# Implement based on research",
             "flow_name": "default",
+            "artifacts": [{
+                "position": 0,
+                "step_name": "research",
+                "files": [{"name": "findings.md", "content": "Found the answer."}],
+            }],
+            "artifacts_output_dir": "/tmp/artifacts/01-implement",
+            "gate_failures": None,
+        })
+        assert "Previous Step Artifacts" in result
+        assert "findings.md" in result
+        assert "Found the answer." in result
+
+    def test_render_step_instructions_with_gate_failures(self, temp_dir):
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_step_instructions({
             "task_id": "abc123",
-            "task_description": "Build the feature",
-            "current_step": "execute",
-            "steps_completed": ["research"],
-            "git_diff": "+ added line",
-            "recovery_attempt": 1,
-            "execution_history": [],
-        })
-        assert "Recovery" in result
-        assert "abc123" in result
-        assert "Build the feature" in result
-        assert "execute" in result
-        assert "research" in result
-        assert "+ added line" in result
-        assert "recovery attempt 1" in result
-
-    def test_render_recovery_instructions_no_current_step(self, temp_dir):
-        svc = self._setup_dirs(temp_dir)
-        result = svc.render_recovery_instructions({
+            "task_description": "Fix bug",
+            "user_prompt": "Fix bug",
+            "step_name": "implement",
+            "step_content": "# Fix the issue",
             "flow_name": "default",
-            "task_id": "t001",
-            "task_description": "Do the thing",
-            "current_step": "",
-            "steps_completed": [],
-            "git_diff": "",
-            "recovery_attempt": 2,
-            "execution_history": [],
+            "artifacts": [],
+            "artifacts_output_dir": "/tmp/artifacts/01-implement",
+            "gate_failures": [{
+                "command": "pytest tests/",
+                "message": "Tests must pass",
+                "output": "FAILED test_foo.py",
+            }],
         })
-        assert "Run `llmflows mode next` to start the flow" in result
-        assert "re-read the step" not in result
+        assert "Previous Attempt Failed" in result
+        assert "Tests must pass" in result
+        assert "FAILED test_foo.py" in result
 
-    def test_render_recovery_instructions_at_complete_step(self, temp_dir):
+    def test_render_step_instructions_with_worktree(self, temp_dir):
         svc = self._setup_dirs(temp_dir)
-        result = svc.render_recovery_instructions({
+        result = svc.render_step_instructions({
+            "worktree_path": "/tmp/worktrees/task-abc",
+            "task_id": "abc123",
+            "task_description": "Task desc",
+            "user_prompt": "Task desc",
+            "step_name": "research",
+            "step_content": "Do research",
             "flow_name": "default",
-            "task_id": "t002",
-            "task_description": "Finish up",
-            "current_step": "complete",
-            "steps_completed": ["research", "execute"],
-            "git_diff": "some diff",
-            "recovery_attempt": 1,
-            "execution_history": [],
+            "artifacts": [],
+            "artifacts_output_dir": "/tmp/artifacts/00-research",
+            "gate_failures": None,
         })
-        assert "completion step" in result
-        assert "llmflows mode current" in result
+        assert "/tmp/worktrees/task-abc" in result
+        assert "cd /tmp/worktrees/task-abc" in result
+
+    def test_collect_artifacts(self, temp_dir):
+        artifacts_dir = temp_dir / "artifacts"
+        step_dir = artifacts_dir / "00-research"
+        step_dir.mkdir(parents=True)
+        (step_dir / "findings.md").write_text("# Findings\nImportant stuff")
+
+        result = ContextService.collect_artifacts(artifacts_dir)
+        assert len(result) == 1
+        assert result[0]["position"] == 0
+        assert result[0]["step_name"] == "research"
+        assert result[0]["files"][0]["name"] == "findings.md"
+        assert "Important stuff" in result[0]["files"][0]["content"]
+
+    def test_collect_artifacts_empty(self, temp_dir):
+        result = ContextService.collect_artifacts(temp_dir / "nonexistent")
+        assert result == []
+
+    def test_read_summary_artifact(self, temp_dir):
+        artifacts_dir = temp_dir / "artifacts"
+        artifacts_dir.mkdir()
+        (artifacts_dir / "summary.md").write_text("# Summary\nDone.")
+
+        result = ContextService.read_summary_artifact(artifacts_dir)
+        assert "Done." in result
+
+    def test_read_summary_artifact_missing(self, temp_dir):
+        result = ContextService.read_summary_artifact(temp_dir)
+        assert result == ""
+
+    def test_get_artifacts_dir(self, temp_dir):
+        result = ContextService.get_artifacts_dir(temp_dir, "task1", "run1")
+        assert result == temp_dir / ".llmflows" / "task1" / "run1" / "artifacts"

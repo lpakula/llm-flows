@@ -51,24 +51,29 @@ def alias_list(project_id):
         model_w = max((len(c.get("model", "")) for c in aliases.values()), default=5)
         model_w = max(model_w, 5)
 
+        over_w = 9
         cols = [
             click.style("NAME".ljust(name_w), bold=True),
             click.style("AGENT".ljust(agent_w), bold=True),
             click.style("MODEL".ljust(model_w), bold=True),
+            click.style("OVERRIDES".ljust(over_w), bold=True),
             click.style("FLOW CHAIN", bold=True),
         ]
         click.echo("  ".join(cols))
-        click.echo(click.style("  ".join(["─" * name_w, "─" * agent_w, "─" * model_w, "─" * 30]), fg="bright_black"))
+        click.echo(click.style("  ".join(["─" * name_w, "─" * agent_w, "─" * model_w, "─" * over_w, "─" * 30]), fg="bright_black"))
 
         sorted_names = sorted(aliases.keys(), key=lambda n: (n != "default", n))
         for name in sorted_names:
             cfg = aliases[name]
             chain = " → ".join(cfg.get("flow_chain", []))
+            override_count = len(cfg.get("step_overrides", {}))
+            override_str = str(override_count) if override_count else "-"
             name_color = "blue" if name == "default" else "cyan"
             cols = [
                 click.style(name.ljust(name_w), fg=name_color),
                 click.style(cfg.get("agent", "").ljust(agent_w), fg="white"),
                 click.style(cfg.get("model", "").ljust(model_w), fg="white"),
+                click.style(override_str.ljust(over_w), fg="yellow" if override_count else "white"),
                 click.style(chain, fg="white"),
             ]
             click.echo("  ".join(cols))
@@ -94,6 +99,18 @@ def alias_show(name, project_id):
         click.echo(f"Agent:      {cfg.get('agent', '-')}")
         click.echo(f"Model:      {cfg.get('model', '-')}")
         click.echo(f"Flow chain: {' → '.join(cfg.get('flow_chain', []))}")
+
+        overrides = cfg.get("step_overrides", {})
+        if overrides:
+            click.echo(f"\nStep overrides:")
+            for key in sorted(overrides):
+                o = overrides[key]
+                parts = []
+                if o.get("agent"):
+                    parts.append(f"agent={o['agent']}")
+                if o.get("model"):
+                    parts.append(f"model={o['model']}")
+                click.echo(f"  {click.style(key, fg='yellow')}  {', '.join(parts)}")
     finally:
         session.close()
 
@@ -103,8 +120,11 @@ def alias_show(name, project_id):
 @click.option("--agent", "-a", default=None, help="Agent name")
 @click.option("--model", "-m", default=None, help="Model name")
 @click.option("--flow", "-f", "flow_chain", default=None, help="Comma-separated flow chain (e.g. default,review)")
+@click.option("--step-override", "-s", "step_overrides", multiple=True,
+              help="Per-step agent/model: flow/step:agent:model (repeatable)")
+@click.option("--clear-overrides", is_flag=True, help="Remove all step overrides")
 @click.option("--project", "project_id", default=None, help="Project ID (defaults to current repo)")
-def alias_set(name, agent, model, flow_chain, project_id):
+def alias_set(name, agent, model, flow_chain, step_overrides, clear_overrides, project_id):
     """Create or update an alias.
 
     Examples:
@@ -113,9 +133,11 @@ def alias_set(name, agent, model, flow_chain, project_id):
       llmflows alias set fast --agent cursor --model sonnet-4.6 --flow default
       llmflows alias set thorough -m sonnet-4.6-thinking -f react-js,submit-pr
       llmflows alias set default -m sonnet-4.6-thinking
+      llmflows alias set default -s "default/research:claude-code:sonnet"
+      llmflows alias set default -s "default/validate:claude-code:haiku"
     """
-    if not agent and not model and not flow_chain:
-        click.echo("Provide at least one of --agent, --model, or --flow.")
+    if not agent and not model and not flow_chain and not step_overrides and not clear_overrides:
+        click.echo("Provide at least one of --agent, --model, --flow, --step-override, or --clear-overrides.")
         raise SystemExit(1)
 
     session = _get_session()
@@ -131,6 +153,30 @@ def alias_set(name, agent, model, flow_chain, project_id):
         if flow_chain:
             existing["flow_chain"] = [f.strip() for f in flow_chain.split(",") if f.strip()]
 
+        if clear_overrides:
+            existing.pop("step_overrides", None)
+
+        if step_overrides:
+            so = existing.get("step_overrides", {})
+            for entry in step_overrides:
+                parts = entry.split(":")
+                if len(parts) < 2:
+                    click.echo(f"Invalid step-override format: '{entry}'. Use flow/step:agent:model", err=True)
+                    raise SystemExit(1)
+                key = parts[0]
+                entry_agent = parts[1] if len(parts) > 1 and parts[1] else None
+                entry_model = parts[2] if len(parts) > 2 and parts[2] else None
+                cfg = {}
+                if entry_agent:
+                    cfg["agent"] = entry_agent
+                if entry_model:
+                    cfg["model"] = entry_model
+                if cfg:
+                    so[key] = cfg
+                else:
+                    so.pop(key, None)
+            existing["step_overrides"] = so
+
         existing.setdefault("agent", "cursor")
         existing.setdefault("model", "auto")
         existing.setdefault("flow_chain", ["default"])
@@ -143,6 +189,17 @@ def alias_set(name, agent, model, flow_chain, project_id):
         click.echo(f"  Agent: {existing['agent']}")
         click.echo(f"  Model: {existing['model']}")
         click.echo(f"  Flow:  {' → '.join(existing['flow_chain'])}")
+        so = existing.get("step_overrides", {})
+        if so:
+            click.echo(f"  Step overrides:")
+            for key in sorted(so):
+                o = so[key]
+                parts = []
+                if o.get("agent"):
+                    parts.append(f"agent={o['agent']}")
+                if o.get("model"):
+                    parts.append(f"model={o['model']}")
+                click.echo(f"    {key}: {', '.join(parts)}")
     finally:
         session.close()
 

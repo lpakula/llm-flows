@@ -1,5 +1,6 @@
-"""System daemon -- watches all projects, consumes pending TaskRuns."""
+"""System daemon -- watches all projects, orchestrates step-per-run execution."""
 
+import json
 import logging
 import signal
 import threading
@@ -12,6 +13,9 @@ from ..config import get_github_token, load_system_config
 from ..db.database import get_session, reset_engine
 from ..db.models import Integration
 from .agent import AgentService
+from .context import ContextService
+from .flow import FlowService
+from .gate import evaluate_gates, evaluate_ifs, _interpolate
 from .project import ProjectService
 from .run import RunService
 from .task import TaskService
@@ -27,8 +31,7 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
-        self.auto_recover = self.config["daemon"].get("auto_recover", True)
-        self.max_recovery_attempts = self.config["daemon"].get("max_recovery_attempts", 3)
+        self.max_step_retries = self.config["daemon"].get("max_recovery_attempts", 3)
 
     def start(self) -> None:
         """Start the daemon loop."""
@@ -61,9 +64,10 @@ class Daemon:
             project_svc = ProjectService(session)
             task_svc = TaskService(session)
             run_svc = RunService(session)
+            flow_svc = FlowService(session)
 
             for project in project_svc.list_all():
-                self._process_project(project, task_svc, run_svc)
+                self._process_project(project, task_svc, run_svc, flow_svc)
 
             self._poll_integrations(session)
         finally:
@@ -82,8 +86,13 @@ class Daemon:
 
         return _Defaults()
 
-    def _process_project(self, project, task_svc: TaskService, run_svc: RunService) -> None:
-        """Process a single project: check active runs, pick up pending."""
+    # ── Core orchestration ────────────────────────────────────────────────────
+
+    def _process_project(
+        self, project, task_svc: TaskService,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Process a single project: orchestrate active runs step-by-step, pick up pending."""
         settings = self._get_project_settings(project.id, run_svc.session)
         is_git = getattr(settings, "is_git_repo", True)
         if is_git is None:
@@ -96,63 +105,429 @@ class Daemon:
             if not task:
                 continue
 
-            if is_git:
-                if not task.worktree_branch:
-                    continue
-                agent_running = AgentService.is_agent_running(project.path, task.worktree_branch)
-            else:
-                agent_running = AgentService.is_agent_running(
-                    project.path, "", task_id=task.id
-                )
-
-            if agent_running:
-                if self.run_timeout_minutes and run.started_at:
-                    started = run.started_at
-                    if started.tzinfo is None:
-                        started = started.replace(tzinfo=timezone.utc)
-                    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-                    if elapsed > self.run_timeout_minutes * 60:
-                        logger.warning(
-                            "Task %s run %s timed out after %dm (limit %dm)",
-                            task.id, run.id, int(elapsed / 60), self.run_timeout_minutes,
-                        )
-                        AgentService.kill_agent(
-                            project.path,
-                            task.worktree_branch if is_git else "",
-                            task_id="" if is_git else task.id,
-                        )
-                        run_svc.mark_completed(run.id, outcome="timeout")
-                        continue
-                return
-
-            run_svc.session.refresh(run)
-            if run.completed_at:
+            working_path, use_task_subdir = self._resolve_working_path(
+                project, task, is_git,
+            )
+            if working_path is None:
                 continue
 
-            flow_complete = run.outcome == "completed" or run.current_step == "complete"
-            if flow_complete:
-                outcome = run.outcome or "completed"
-                logger.info("Task %s run %s finished (outcome=%s)", task.id, run.id, outcome)
-                run_svc.mark_completed(run.id, outcome=outcome)
-                if task.github_issue_number and task.integration:
-                    self._post_github_result(task, run, project)
-            elif self.auto_recover and (run.recovery_count or 0) < self.max_recovery_attempts:
-                logger.warning(
-                    "Task %s run %s: agent stopped at step '%s' (attempt %d/%d), recovering",
-                    task.id, run.id, run.current_step or "<none>",
-                    (run.recovery_count or 0) + 1, self.max_recovery_attempts,
+            active_step = run_svc.get_active_step(run.id)
+
+            if active_step:
+                self._process_active_step(
+                    run, task, project, active_step, working_path,
+                    is_git, use_task_subdir, run_svc, flow_svc, task_svc,
                 )
-                self._recover_run(run, task, project, settings, run_svc, task_svc)
             else:
-                logger.warning(
-                    "Task %s run %s: agent stopped at step '%s', marking interrupted",
-                    task.id, run.id, run.current_step or "<none>",
-                )
-                run_svc.mark_completed(run.id, outcome="interrupted")
+                if not run.current_step:
+                    self._launch_first_step(
+                        run, task, project, working_path,
+                        is_git, use_task_subdir, run_svc, flow_svc,
+                    )
 
         pending = run_svc.get_pending(project.id)
         if pending:
-            self._run_task(pending, task_svc, run_svc, project, settings)
+            self._start_run(pending, task_svc, run_svc, flow_svc, project, settings)
+
+    def _resolve_working_path(
+        self, project, task, is_git: bool,
+    ) -> tuple[Optional[Path], bool]:
+        """Resolve the working directory for a task. Returns (path, use_task_subdir)."""
+        if is_git:
+            if not task.worktree_branch:
+                return None, False
+            wt_svc = WorktreeService(project.path)
+            wt_path = wt_svc.get_worktree_path(task.worktree_branch)
+            return wt_path, False
+        return Path(project.path), True
+
+    def _process_active_step(
+        self, run, task, project, step_run,
+        working_path: Path, is_git: bool, use_task_subdir: bool,
+        run_svc: RunService, flow_svc: FlowService, task_svc: TaskService,
+    ) -> None:
+        """Handle a running step: check liveness, evaluate gates on completion, advance."""
+        if is_git:
+            agent_running = AgentService.is_agent_running(project.path, task.worktree_branch)
+        else:
+            agent_running = AgentService.is_agent_running(project.path, "", task_id=task.id)
+
+        if agent_running:
+            if self.run_timeout_minutes and step_run.started_at:
+                started = step_run.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                if elapsed > self.run_timeout_minutes * 60:
+                    logger.warning(
+                        "Task %s run %s step '%s' timed out after %dm",
+                        task.id, run.id, step_run.step_name, int(elapsed / 60),
+                    )
+                    AgentService.kill_agent(
+                        project.path,
+                        task.worktree_branch if is_git else "",
+                        task_id="" if is_git else task.id,
+                    )
+                    run_svc.mark_step_completed(step_run.id, outcome="timeout")
+                    run_svc.mark_completed(run.id, outcome="timeout")
+            return
+
+        run_svc.session.refresh(step_run)
+        if step_run.completed_at:
+            return
+
+        run_svc.mark_step_completed(step_run.id, outcome="completed")
+        logger.info(
+            "Task %s run %s step '%s' completed",
+            task.id, run.id, step_run.step_name,
+        )
+
+        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        step_vars = {
+            "run.id": run.id,
+            "task.id": run.task_id,
+            "flow.name": step_run.flow_name,
+        }
+
+        step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name)
+        gates = list(step_obj.get_gates()) if step_obj else []
+
+        if step_run.step_name != "__summary__":
+            project_root = Path(task.project.path)
+            artifact_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
+            step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
+            gates.insert(0, {
+                "command": f'test -d "{step_artifact_dir}" && test "$(ls -A "{step_artifact_dir}")"',
+                "message": f"Step '{step_run.step_name}' must produce output artifacts in {step_artifact_dir}",
+            })
+
+        if gates:
+            failures = evaluate_gates(gates, working_path, timeout=gate_timeout, variables=step_vars)
+            if failures:
+                retry_count = len([
+                    sr for sr in run_svc.list_step_runs(run.id)
+                    if sr.step_name == step_run.step_name and sr.completed_at
+                ])
+                if retry_count < self.max_step_retries:
+                    logger.warning(
+                        "Task %s run %s step '%s' gate failed (attempt %d/%d), retrying",
+                        task.id, run.id, step_run.step_name,
+                        retry_count + 1, self.max_step_retries,
+                    )
+                    gate_failure_info = [
+                        {
+                            "command": f["command"],
+                            "message": f["message"],
+                            "output": f.get("stderr", ""),
+                        }
+                        for f in failures
+                    ]
+                    self._launch_step(
+                        run, task, working_path, use_task_subdir,
+                        step_run.step_name, step_run.step_position,
+                        step_run.flow_name, run_svc, flow_svc,
+                        gate_failures=gate_failure_info,
+                    )
+                    return
+                else:
+                    logger.error(
+                        "Task %s run %s step '%s' gate failed after %d attempts, marking interrupted",
+                        task.id, run.id, step_run.step_name, retry_count,
+                    )
+                    run_svc.mark_completed(run.id, outcome="interrupted")
+                    return
+
+        self._advance_to_next_step(
+            run, task, working_path, use_task_subdir,
+            step_run.step_name, step_run.step_position, step_run.flow_name,
+            run_svc, flow_svc, task_svc,
+        )
+
+    def _advance_to_next_step(
+        self, run, task, working_path: Path, use_task_subdir: bool,
+        current_step_name: str, current_position: int, current_flow: str,
+        run_svc: RunService, flow_svc: FlowService, task_svc: TaskService,
+    ) -> None:
+        """Determine the next step and launch it, or complete the run."""
+        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        step_vars = {
+            "run.id": run.id,
+            "task.id": run.task_id,
+            "flow.name": current_flow,
+        }
+
+        if current_step_name == "__summary__":
+            artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
+            summary = ContextService.read_summary_artifact(artifacts_dir)
+            logger.info("Task %s run %s completed", task.id, run.id)
+            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            if task.github_issue_number and task.integration:
+                self._post_github_result(task, run, task.project)
+            return
+
+        next_step_name = flow_svc.get_next_step(current_flow, current_step_name)
+        next_flow = current_flow
+        next_position = current_position + 1
+
+        if not next_step_name:
+            try:
+                chain = json.loads(run.flow_chain or "[]")
+            except (json.JSONDecodeError, TypeError):
+                chain = []
+            if next_flow in chain:
+                idx = chain.index(next_flow)
+                if idx + 1 < len(chain):
+                    next_flow = chain[idx + 1]
+                    steps = flow_svc.get_flow_steps(next_flow)
+                    next_step_name = steps[0] if steps else None
+                    step_vars["flow.name"] = next_flow
+
+        if not next_step_name:
+            self._launch_summary_step(
+                run, task, working_path, use_task_subdir,
+                next_position, run_svc, flow_svc,
+            )
+            return
+
+        while next_step_name:
+            step_obj = flow_svc.get_step_obj(next_flow, next_step_name)
+            if not step_obj:
+                break
+            ifs = step_obj.get_ifs()
+            if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
+                break
+            logger.info(
+                "Task %s run %s: IF conditions not met for step '%s', skipping",
+                task.id, run.id, next_step_name,
+            )
+            nxt = flow_svc.get_next_step(next_flow, next_step_name)
+            next_position += 1
+            if nxt:
+                next_step_name = nxt
+            else:
+                next_step_name = None
+
+        if not next_step_name:
+            self._launch_summary_step(
+                run, task, working_path, use_task_subdir,
+                next_position, run_svc, flow_svc,
+            )
+            return
+
+        self._launch_step(
+            run, task, working_path, use_task_subdir,
+            next_step_name, next_position, next_flow,
+            run_svc, flow_svc,
+        )
+
+    def _launch_first_step(
+        self, run, task, project, working_path: Path,
+        is_git: bool, use_task_subdir: bool,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Launch the first step of a run that has been started but has no steps yet."""
+        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
+
+        steps = flow_svc.get_flow_steps(run.flow_name)
+        if not steps:
+            logger.error("Flow '%s' has no steps for task %s run %s", run.flow_name, task.id, run.id)
+            run_svc.mark_completed(run.id, outcome="error")
+            return
+
+        first_step = steps[0]
+        position = 0
+
+        while first_step:
+            step_obj = flow_svc.get_step_obj(run.flow_name, first_step)
+            if not step_obj:
+                break
+            ifs = step_obj.get_ifs()
+            if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
+                break
+            logger.info("Task %s run %s: IF conditions not met for step '%s', skipping",
+                        task.id, run.id, first_step)
+            nxt = flow_svc.get_next_step(run.flow_name, first_step)
+            position += 1
+            first_step = nxt
+
+        if not first_step:
+            self._launch_summary_step(
+                run, task, working_path, use_task_subdir,
+                position, run_svc, flow_svc,
+            )
+            return
+
+        self._launch_step(
+            run, task, working_path, use_task_subdir,
+            first_step, position, run.flow_name,
+            run_svc, flow_svc,
+        )
+
+    def _launch_step(
+        self, run, task, working_path: Path, use_task_subdir: bool,
+        step_name: str, step_position: int, flow_name: str,
+        run_svc: RunService, flow_svc: FlowService,
+        gate_failures: Optional[list[dict]] = None,
+    ) -> None:
+        """Create a StepRun, render prompt, and launch agent for a step."""
+        step_obj = flow_svc.get_step_obj(flow_name, step_name)
+        step_content = (step_obj.content or "").rstrip() if step_obj else ""
+
+        step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": flow_name}
+        if step_content:
+            from .gate import _interpolate
+            step_content = _interpolate(step_content, step_vars)
+
+        try:
+            overrides = json.loads(run.step_overrides or "{}")
+        except (json.JSONDecodeError, TypeError):
+            overrides = {}
+        override_key = f"{flow_name}/{step_name}"
+        step_cfg = overrides.get(override_key, {})
+        resolved_agent = step_cfg.get("agent") or run.agent or "cursor"
+        resolved_model = step_cfg.get("model") or run.model or ""
+
+        step_run = run_svc.create_step_run(
+            run_id=run.id,
+            step_name=step_name,
+            step_position=step_position,
+            flow_name=flow_name,
+            agent=resolved_agent,
+            model=resolved_model,
+        )
+
+        run_svc.update_run_step(run.id, step_name, flow_name)
+
+        project_dir = Path(task.project.path) / ".llmflows"
+        agent_svc = AgentService(project_dir, working_path)
+
+        launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
+            run_id=run.id,
+            task_id=task.id,
+            task_description=task.description or "",
+            user_prompt=run.user_prompt or task.description or "",
+            step_name=step_name,
+            step_position=step_position,
+            step_content=step_content,
+            flow_name=flow_name,
+            model=resolved_model,
+            agent=resolved_agent,
+            gate_failures=gate_failures,
+            use_task_subdir=use_task_subdir,
+        )
+
+        if launched:
+            if prompt_content:
+                run_svc.set_step_prompt(step_run.id, prompt_content)
+            if log_path:
+                run_svc.set_step_log_path(step_run.id, log_path)
+            logger.info(
+                "Launched step '%s' (pos=%d, agent=%s, model=%s) for task %s run %s",
+                step_name, step_position, resolved_agent, resolved_model,
+                task.id, run.id,
+            )
+        else:
+            logger.error(
+                "Failed to launch step '%s' for task %s run %s",
+                step_name, task.id, run.id,
+            )
+            run_svc.mark_step_completed(step_run.id, outcome="error")
+            run_svc.mark_completed(run.id, outcome="error")
+
+    def _launch_summary_step(
+        self, run, task, working_path: Path, use_task_subdir: bool,
+        step_position: int, run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Launch the auto-appended summary step."""
+        project_root = Path(task.project.path)
+        artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
+        ctx = ContextService(working_path / ".llmflows")
+        summary_content = ctx.render_summary_step({
+            "artifacts_output_dir": str(artifacts_dir),
+        })
+
+        step_run = run_svc.create_step_run(
+            run_id=run.id,
+            step_name="__summary__",
+            step_position=step_position,
+            flow_name=run.flow_name,
+            agent=run.agent or "cursor",
+            model=run.model or "",
+        )
+
+        run_svc.update_run_step(run.id, "__summary__", run.flow_name)
+
+        project_dir = Path(task.project.path) / ".llmflows"
+        agent_svc = AgentService(project_dir, working_path)
+
+        launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
+            run_id=run.id,
+            task_id=task.id,
+            task_description=task.description or "",
+            user_prompt=run.user_prompt or task.description or "",
+            step_name="__summary__",
+            step_position=step_position,
+            step_content=summary_content,
+            flow_name=run.flow_name,
+            model=run.model or "",
+            agent=run.agent or "cursor",
+            use_task_subdir=use_task_subdir,
+        )
+
+        if launched:
+            if prompt_content:
+                run_svc.set_step_prompt(step_run.id, prompt_content)
+            if log_path:
+                run_svc.set_step_log_path(step_run.id, log_path)
+            logger.info("Launched summary step for task %s run %s", task.id, run.id)
+        else:
+            logger.error("Failed to launch summary step for task %s run %s", task.id, run.id)
+            run_svc.mark_step_completed(step_run.id, outcome="error")
+            artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
+            summary = ContextService.read_summary_artifact(artifacts_dir)
+            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+
+    def _start_run(
+        self, run, task_svc: TaskService, run_svc: RunService,
+        flow_svc: FlowService, project, settings=None,
+    ) -> None:
+        """Set up worktree (if enabled) and mark run as started for step orchestration."""
+        task = task_svc.get(run.task_id)
+        if not task:
+            return
+
+        if settings is None:
+            settings = self._get_project_settings(project.id, run_svc.session)
+
+        is_git = getattr(settings, "is_git_repo", True)
+        if is_git is None:
+            is_git = True
+        logger.info("Starting run for task %s (flow=%s, is_git=%s): %s",
+                    task.id, run.flow_name, is_git, (task.description or "")[:60])
+
+        if is_git:
+            wt_svc = WorktreeService(project.path)
+            branch = task.worktree_branch or f"task-{task.id}"
+
+            wt_path = wt_svc.get_worktree_path(branch)
+            if not wt_path:
+                success, msg = wt_svc.create(branch)
+                if not success:
+                    logger.error("Failed to create worktree for task %s: %s", task.id, msg)
+                    run_svc.mark_completed(run.id, outcome="error")
+                    return
+                task_svc.update(task.id, worktree_branch=branch)
+                wt_path = wt_svc.get_worktree_path(branch)
+
+            if not wt_path:
+                logger.error("Worktree path not found for task %s branch %s", task.id, branch)
+                run_svc.mark_completed(run.id, outcome="error")
+                return
+
+        run_svc.mark_started(run.id)
+
+    # ── GitHub integration ────────────────────────────────────────────────────
 
     def _poll_integrations(self, session) -> None:
         """Poll all enabled GitHub integrations for @llmflows comments."""
@@ -206,173 +581,6 @@ class Daemon:
             logger.exception("Error posting GitHub result for run %s", run.id)
         finally:
             gh.close()
-
-    def _recover_run(
-        self, run, task, project, settings, run_svc: RunService, task_svc: TaskService,
-    ) -> None:
-        """Re-launch an agent for a run whose previous agent stopped mid-flow."""
-        import json
-
-        is_git = getattr(settings, "is_git_repo", True)
-        if is_git is None:
-            is_git = True
-
-        run_svc.increment_recovery_count(run.id)
-        run_svc.session.refresh(run)
-
-        project_dir = Path(project.path) / ".llmflows"
-
-        if is_git:
-            wt_svc = WorktreeService(project.path)
-            wt_path = wt_svc.get_worktree_path(task.worktree_branch) if task.worktree_branch else None
-            if not wt_path:
-                logger.error("Cannot recover task %s run %s: worktree not found", task.id, run.id)
-                run_svc.mark_completed(run.id, outcome="interrupted")
-                return
-            working_path = wt_path
-            use_task_subdir = False
-        else:
-            working_path = Path(project.path)
-            use_task_subdir = True
-
-        try:
-            steps_completed = json.loads(run.steps_completed or "[]")
-        except (json.JSONDecodeError, TypeError):
-            steps_completed = []
-
-        from .context import ContextService
-        ctx = ContextService(working_path / ".llmflows")
-        try:
-            git_diff = ctx.load_worktree_diff()
-        except Exception:
-            git_diff = ""
-
-        history = run_svc.get_history(task.id)
-        execution_history = [
-            {
-                "flow_name": r.flow_name,
-                "outcome": r.outcome or "unknown",
-                "user_prompt": r.user_prompt or "",
-                "summary": r.summary or "",
-            }
-            for r in history
-            if r.outcome != "cancelled"
-        ] or None
-
-        recovery_context = {
-            "current_step": run.current_step or "",
-            "steps_completed": steps_completed,
-            "git_diff": git_diff,
-            "recovery_attempt": run.recovery_count or 1,
-        }
-
-        agent = AgentService(project_dir, working_path)
-        launched, prompt_content, log_path = agent.prepare_and_launch(
-            run_id=run.id,
-            flow_name=run.flow_name,
-            task_name=task.name,
-            task_id=task.id,
-            task_description=run.user_prompt or task.description,
-            task_type=task.type.value,
-            execution_history=execution_history,
-            model=run.model or "",
-            agent=run.agent or "cursor",
-            use_task_subdir=use_task_subdir,
-            recovery=True,
-            recovery_context=recovery_context,
-        )
-        if launched:
-            if prompt_content:
-                run_svc.set_prompt(run.id, prompt_content)
-            if log_path:
-                run_svc.set_log_path(run.id, log_path)
-            logger.info("Recovery agent launched for task %s run %s (attempt %d)",
-                        task.id, run.id, run.recovery_count or 1)
-        else:
-            logger.error("Recovery agent failed to launch for task %s run %s", task.id, run.id)
-            run_svc.mark_completed(run.id, outcome="interrupted")
-
-    def _run_task(self, run, task_svc: TaskService, run_svc: RunService, project, settings=None) -> None:
-        """Set up worktree (if enabled) and launch agent for a pending TaskRun."""
-        task = task_svc.get(run.task_id)
-        if not task:
-            return
-
-        if settings is None:
-            settings = self._get_project_settings(project.id, run_svc.session)
-
-        is_git = getattr(settings, "is_git_repo", True)
-        if is_git is None:
-            is_git = True
-        logger.info("Running task %s (flow=%s, is_git=%s): %s",
-                    task.id, run.flow_name, is_git, task.description[:60])
-
-        project_dir = Path(project.path) / ".llmflows"
-
-        if is_git:
-            wt_svc = WorktreeService(project.path)
-            branch = task.worktree_branch or f"task-{task.id}"
-
-            wt_path = wt_svc.get_worktree_path(branch)
-            if not wt_path:
-                success, msg = wt_svc.create(branch)
-                if not success:
-                    logger.error("Failed to create worktree for task %s: %s", task.id, msg)
-                    run_svc.mark_completed(run.id, outcome="error")
-                    return
-                task_svc.update(task.id, worktree_branch=branch)
-                wt_path = wt_svc.get_worktree_path(branch)
-
-            if not wt_path:
-                logger.error(
-                    "Worktree path not found after creation for task %s branch %s",
-                    task.id, branch,
-                )
-                run_svc.mark_completed(run.id, outcome="error")
-                return
-
-            working_path = wt_path
-            use_task_subdir = False
-        else:
-            # No worktree — agent runs in the project root
-            working_path = Path(project.path)
-            use_task_subdir = True
-
-        run_svc.mark_started(run.id)
-
-        history = run_svc.get_history(task.id)
-        execution_history = [
-            {
-                "flow_name": r.flow_name,
-                "outcome": r.outcome or "unknown",
-                "user_prompt": r.user_prompt or "",
-                "summary": r.summary or "",
-            }
-            for r in history
-            if r.outcome != "cancelled"
-        ] or None
-
-        agent = AgentService(project_dir, working_path)
-        launched, prompt_content, log_path = agent.prepare_and_launch(
-            run_id=run.id,
-            flow_name=run.flow_name,
-            task_name=task.name,
-            task_id=task.id,
-            task_description=run.user_prompt or task.description,
-            task_type=task.type.value,
-            execution_history=execution_history,
-            model=run.model or "",
-            agent=run.agent or "cursor",
-            use_task_subdir=use_task_subdir,
-        )
-        if launched:
-            if prompt_content:
-                run_svc.set_prompt(run.id, prompt_content)
-            if log_path:
-                run_svc.set_log_path(run.id, log_path)
-        else:
-            logger.error("Agent failed to launch for task %s run %s", task.id, run.id)
-            run_svc.mark_completed(run.id, outcome="error")
 
 
 def write_pid_file(pid: int) -> Path:

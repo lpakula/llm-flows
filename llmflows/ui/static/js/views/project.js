@@ -12,20 +12,14 @@ function projectView() {
     editingName: false,
     editName: '',
     newTask: { title: '', description: '', type: 'feature' },
-    startingTask: null,
-    startTaskDescription: '',
-    startChain: ['default'],
-    addFlowSelect: '',
-    startPrompt: '',
-    startModel: '',
-    startAgent: '',
-    isFirstRun: false,
     showAliasForm: false,
     showNewAliasForm: false,
     editingAlias: null,
-    aliasForm: { name: '', agent: 'cursor', model: '', flow_chain: [] },
+    aliasForm: { name: '', agent: 'cursor', model: '', flow_chain: [], step_overrides: {} },
     aliasAddFlow: '',
     aliasFormModels: [],
+    aliasFormSteps: [],
+    aliasEditingStep: null,
     showSettingsForm: false,
     projectSettings: { is_git_repo: true },
     settingsSaving: false,
@@ -61,7 +55,7 @@ function projectView() {
           API.get(`/api/projects/${pid}/settings`),
         ]);
         const da = this._defaultAlias();
-        await this.loadModelsForAgent(this.startAgent || da.agent || 'cursor');
+        await this.loadModelsForAgent(da.agent || 'cursor');
       } catch (e) {
         console.error('Project load error:', e);
       }
@@ -70,9 +64,6 @@ function projectView() {
     async loadModelsForAgent(agent) {
       try {
         this.models = await API.get(`/api/models?agent=${encodeURIComponent(agent)}`);
-        if (!this.startModel && this.models.length) {
-          this.startModel = this.models[0];
-        }
       } catch (e) {
         this.models = [];
       }
@@ -125,41 +116,6 @@ function projectView() {
       Alpine.store('router').navigate('dashboard');
     },
 
-    async openStartDialog(task) {
-      const da = this._defaultAlias();
-      this.startingTask = task.id;
-      this.startTaskDescription = task.description || '';
-      this.startChain = [...(da.flow_chain || ['default'])];
-      this.addFlowSelect = '';
-      this.startPrompt = '';
-      this.startAgent = this.agents.includes(da.agent) ? da.agent : (this.agents[0] || 'cursor');
-      await this.loadModelsForAgent(this.startAgent);
-      this.startModel = da.model || this.models[0] || '';
-      this.isFirstRun = (task.run_count || 0) === 0;
-    },
-
-    async onAgentChange(agent) {
-      await this.loadModelsForAgent(agent);
-    },
-
-    async confirmStart() {
-      if (!this.startingTask || this.startChain.length === 0 || !this.startModel || !this.startAgent) return;
-      let prompt = this.startPrompt;
-      if (this.isFirstRun && this.startPrompt.trim()) {
-        const desc = this.startTaskDescription.trim();
-        prompt = desc ? desc + '\n\n' + this.startPrompt.trim() : this.startPrompt.trim();
-      }
-      await API.post(`/api/tasks/${this.startingTask}/start`, {
-        flow: this.startChain[0],
-        flow_chain: this.startChain,
-        user_prompt: prompt,
-        model: this.startModel,
-        agent: this.startAgent,
-      });
-      this.startingTask = null;
-      await this.load(this.project.id);
-    },
-
     // -- Alias management --
 
     toggleAliasPanel() {
@@ -173,9 +129,11 @@ function projectView() {
     resetAliasForm() {
       this.editingAlias = null;
       const defaultAgent = this.agents[0] || 'cursor';
-      this.aliasForm = { name: '', agent: defaultAgent, model: '', flow_chain: ['default'] };
+      this.aliasForm = { name: '', agent: defaultAgent, model: '', flow_chain: ['default'], step_overrides: {} };
       this.aliasAddFlow = '';
+      this.aliasEditingStep = null;
       this.loadAliasFormModels(defaultAgent);
+      this._loadAliasFormSteps();
     },
 
     async loadAliasFormModels(agent) {
@@ -198,26 +156,99 @@ function projectView() {
         agent: cfg.agent || this.agents[0] || 'cursor',
         model: cfg.model || '',
         flow_chain: [...(cfg.flow_chain || ['default'])],
+        step_overrides: JSON.parse(JSON.stringify(cfg.step_overrides || {})),
       };
       this.aliasAddFlow = '';
+      this.aliasEditingStep = null;
       await this.loadAliasFormModels(this.aliasForm.agent);
       if (cfg.model && this.aliasFormModels.includes(cfg.model)) {
         this.aliasForm.model = cfg.model;
       }
+      this._loadAliasFormSteps();
     },
 
     async saveAlias() {
       if (!this.project || !this.aliasForm.name.trim()) return;
       const aliases = { ...(this.project.aliases || {}) };
-      aliases[this.aliasForm.name.trim()] = {
+      const cleanOverrides = {};
+      for (const [k, v] of Object.entries(this.aliasForm.step_overrides || {})) {
+        if (v.agent || v.model) cleanOverrides[k] = v;
+      }
+      const entry = {
         agent: this.aliasForm.agent,
         model: this.aliasForm.model,
         flow_chain: [...this.aliasForm.flow_chain],
       };
+      if (Object.keys(cleanOverrides).length > 0) {
+        entry.step_overrides = cleanOverrides;
+      }
+      aliases[this.aliasForm.name.trim()] = entry;
       await API.patch(`/api/projects/${this.project.id}`, { aliases });
       this.showNewAliasForm = false;
       this.resetAliasForm();
       await this.load(this.project.id);
+    },
+
+    _loadAliasFormSteps() {
+      const steps = [];
+      for (const flowName of (this.aliasForm.flow_chain || [])) {
+        const flow = (this.flows || []).find(f => f.name === flowName);
+        if (flow) {
+          const sorted = [...(flow.steps || [])].sort((a, b) => a.position - b.position);
+          for (const s of sorted) {
+            steps.push({ flowName, stepName: s.name, key: `${flowName}/${s.name}` });
+          }
+        }
+      }
+      this.aliasFormSteps = steps;
+    },
+
+    getAliasStepOverride(key, field) {
+      return (this.aliasForm.step_overrides[key] || {})[field] || '';
+    },
+
+    setAliasStepOverride(key, field, value) {
+      if (!this.aliasForm.step_overrides[key]) {
+        this.aliasForm.step_overrides[key] = {};
+      }
+      if (value) {
+        this.aliasForm.step_overrides[key][field] = value;
+      } else {
+        delete this.aliasForm.step_overrides[key][field];
+      }
+      if (!this.aliasForm.step_overrides[key].agent && !this.aliasForm.step_overrides[key].model) {
+        delete this.aliasForm.step_overrides[key];
+      }
+    },
+
+    resolvedStepAgent(key) {
+      return (this.aliasForm.step_overrides[key] || {}).agent || this.aliasForm.agent || 'cursor';
+    },
+
+    resolvedStepModel(key) {
+      return (this.aliasForm.step_overrides[key] || {}).model || this.aliasForm.model || 'auto';
+    },
+
+    hasStepOverride(key) {
+      const o = this.aliasForm.step_overrides[key];
+      return o && (o.agent || o.model);
+    },
+
+    toggleStepEdit(key) {
+      this.aliasEditingStep = this.aliasEditingStep === key ? null : key;
+    },
+
+    removeFlowFromChain(index) {
+      this.aliasForm.flow_chain.splice(index, 1);
+      this._loadAliasFormSteps();
+      this.aliasEditingStep = null;
+    },
+
+    addFlowToChain() {
+      if (!this.aliasAddFlow) return;
+      this.aliasForm.flow_chain.push(this.aliasAddFlow);
+      this.aliasAddFlow = '';
+      this._loadAliasFormSteps();
     },
 
     async deleteAlias(name) {
@@ -226,16 +257,6 @@ function projectView() {
       delete aliases[name];
       await API.patch(`/api/projects/${this.project.id}`, { aliases });
       await this.load(this.project.id);
-    },
-
-    applyAlias(name) {
-      const cfg = (this.project?.aliases || {})[name];
-      if (!cfg) return;
-      if (cfg.agent && this.agents.includes(cfg.agent)) this.startAgent = cfg.agent;
-      if (cfg.flow_chain) this.startChain = [...cfg.flow_chain];
-      this.loadModelsForAgent(this.startAgent).then(() => {
-        if (cfg.model) this.startModel = cfg.model;
-      });
     },
 
     async deleteTask(taskId) {

@@ -190,19 +190,19 @@ class TestFlowService:
         names = [s.name for s in sorted(flow.steps, key=lambda s: s.position)]
         assert names == ["c", "a", "b"]
 
-    def test_get_step_content(self, test_db):
+    def test_get_step_obj(self, test_db):
         svc = FlowService(test_db)
         svc.create("content-test", steps=[
             {"name": "research", "content": "# Do Research"},
         ])
-        content = svc.get_step_content("content-test", "research")
-        assert content.startswith("# Do Research")
-        assert "llmflows mode next" in content
+        step = svc.get_step_obj("content-test", "research")
+        assert step is not None
+        assert step.content == "# Do Research"
 
-    def test_get_step_content_not_found(self, test_db):
+    def test_get_step_obj_not_found(self, test_db):
         svc = FlowService(test_db)
         svc.create("no-step")
-        assert svc.get_step_content("no-step", "nonexistent") is None
+        assert svc.get_step_obj("no-step", "nonexistent") is None
 
     def test_get_flow_steps(self, test_db):
         svc = FlowService(test_db)
@@ -321,7 +321,7 @@ class TestFlowService:
         assert step.name == "step1"
         assert svc.get_step_obj("obj-test", "nonexistent") is None
 
-    def test_step_content_excludes_gate_info(self, test_db):
+    def test_step_obj_has_gates(self, test_db):
         svc = FlowService(test_db)
         svc.create("gate-content", steps=[
             {
@@ -331,9 +331,12 @@ class TestFlowService:
                 "gates": [{"command": "make build", "message": "Build succeeds"}],
             },
         ])
-        content = svc.get_step_content("gate-content", "build")
-        assert "GATES" not in content
-        assert "make build" not in content
+        step = svc.get_step_obj("gate-content", "build")
+        assert step is not None
+        assert step.content == "# Build"
+        gates = step.get_gates()
+        assert len(gates) == 1
+        assert gates[0]["command"] == "make build"
 
     def test_duplicate_preserves_gates(self, test_db):
         svc = FlowService(test_db)
@@ -481,6 +484,27 @@ class TestRunService:
         assert run.started_at is None
         assert run.status == "queued"
 
+    def test_enqueue_with_step_overrides(self, test_db, test_project):
+        import json
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "Override test")
+
+        overrides = {"default/research": {"agent": "claude-code", "model": "sonnet"}}
+        run = run_svc.enqueue(test_project.id, task.id, "default",
+                              step_overrides=overrides)
+        parsed = json.loads(run.step_overrides)
+        assert parsed == overrides
+
+    def test_enqueue_without_step_overrides(self, test_db, test_project):
+        import json
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "No overrides")
+
+        run = run_svc.enqueue(test_project.id, task.id, "default")
+        assert json.loads(run.step_overrides) == {}
+
     def test_get_pending(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
@@ -501,53 +525,69 @@ class TestRunService:
         assert run.started_at is not None
         assert run.status == "running"
 
-    def test_update_step(self, test_db, test_project):
+    def test_update_run_step(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
         task = task_svc.create(test_project.id, "Step test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        run_svc.update_step(task.id, "research")
+        run_svc.update_run_step(run.id, "research", "default")
         assert run.current_step == "research"
         completed = json.loads(run.steps_completed)
         assert "research" in completed
 
-        run_svc.update_step(task.id, "execute")
-        assert run.current_step == "execute"
-        completed = json.loads(run.steps_completed)
-        assert completed == ["research", "execute"]
-
-    def test_set_log_path(self, test_db, test_project):
+    def test_create_step_run(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Log path test")
+        task = task_svc.create(test_project.id, "Step run test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        run_svc.set_log_path(run.id, "/tmp/wt/.llmflows/agent-abc123.log")
-        assert run.log_path == "/tmp/wt/.llmflows/agent-abc123.log"
+        sr = run_svc.create_step_run(run.id, "research", 0, "default", "cursor", "auto")
+        assert sr.id is not None
+        assert sr.step_name == "research"
+        assert sr.agent == "cursor"
+        assert sr.started_at is not None
 
-    def test_set_prompt(self, test_db, test_project):
+    def test_mark_step_completed(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Prompt test")
+        task = task_svc.create(test_project.id, "Step complete test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        run_svc.set_prompt(run.id, "# Full agent prompt\nDo the task.")
-        assert run.prompt == "# Full agent prompt\nDo the task."
+        sr = run_svc.create_step_run(run.id, "research", 0, "default")
+        run_svc.mark_step_completed(sr.id, "completed")
+        test_db.refresh(sr)
+        assert sr.completed_at is not None
+        assert sr.outcome == "completed"
 
-    def test_set_summary(self, test_db, test_project):
+    def test_get_active_step(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Summary test")
+        task = task_svc.create(test_project.id, "Active step test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        run_svc.set_summary(task.id, "Did everything right.")
-        assert run.summary == "Did everything right."
-        assert run.outcome == "completed"
+        sr = run_svc.create_step_run(run.id, "research", 0, "default")
+        active = run_svc.get_active_step(run.id)
+        assert active is not None
+        assert active.id == sr.id
+
+    def test_list_step_runs(self, test_db, test_project):
+        task_svc = TaskService(test_db)
+        run_svc = RunService(test_db)
+        task = task_svc.create(test_project.id, "List steps test")
+        run = run_svc.enqueue(test_project.id, task.id)
+        run_svc.mark_started(run.id)
+
+        run_svc.create_step_run(run.id, "research", 0, "default")
+        run_svc.create_step_run(run.id, "implement", 1, "default")
+        steps = run_svc.list_step_runs(run.id)
+        assert len(steps) == 2
+        assert steps[0].step_name == "research"
+        assert steps[1].step_name == "implement"
 
     def test_mark_completed(self, test_db, test_project):
         task_svc = TaskService(test_db)
@@ -599,13 +639,11 @@ class TestRunService:
 
         r1 = run_svc.enqueue(test_project.id, task.id, "default")
         run_svc.mark_started(r1.id)
-        run_svc.set_summary(task.id, "First run summary")
-        run_svc.mark_completed(r1.id)
+        run_svc.mark_completed(r1.id, summary="First run summary")
 
         r2 = run_svc.enqueue(test_project.id, task.id, "custom")
         run_svc.mark_started(r2.id)
-        run_svc.set_summary(task.id, "Second run summary")
-        run_svc.mark_completed(r2.id)
+        run_svc.mark_completed(r2.id, summary="Second run summary")
 
         history = run_svc.get_history(task.id)
         assert len(history) == 2
@@ -624,268 +662,43 @@ class TestRunService:
         assert len(runs) == 2
 
 
-class TestAgentLogArchive:
-    def test_archive_agent_log(self, temp_dir):
-        log_file = temp_dir / "agent-abc123.log"
-        log_file.write_text("some log output")
-
-        AgentService._archive_agent_log(
-            temp_dir, "abc123", {"recovery_attempt": 1},
-        )
-
-        assert not log_file.exists()
-        archived = temp_dir / "agent-abc123.attempt-1.log"
-        assert archived.exists()
-        assert archived.read_text() == "some log output"
-
-    def test_archive_agent_log_no_file(self, temp_dir):
-        AgentService._archive_agent_log(
-            temp_dir, "missing", {"recovery_attempt": 1},
-        )
-
-    def test_archive_agent_log_second_attempt(self, temp_dir):
-        log_file = temp_dir / "agent-xyz.log"
-        log_file.write_text("attempt 2 log")
-
-        AgentService._archive_agent_log(
-            temp_dir, "xyz", {"recovery_attempt": 2},
-        )
-
-        archived = temp_dir / "agent-xyz.attempt-2.log"
-        assert archived.exists()
-        assert archived.read_text() == "attempt 2 log"
-
-
-class TestRunServiceRecovery:
-    def test_increment_recovery_count(self, test_db, test_project):
+class TestStepRunService:
+    def test_step_run_log_and_prompt(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Recovery")
+        task = task_svc.create(test_project.id, "Log+prompt test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        assert run.recovery_count == 0
-        run_svc.increment_recovery_count(run.id)
-        test_db.refresh(run)
-        assert run.recovery_count == 1
+        sr = run_svc.create_step_run(run.id, "research", 0, "default")
+        run_svc.set_step_log_path(sr.id, "/tmp/test.log")
+        run_svc.set_step_prompt(sr.id, "# Do research")
+        test_db.refresh(sr)
+        assert sr.log_path == "/tmp/test.log"
+        assert sr.prompt == "# Do research"
 
-    def test_increment_recovery_count_multiple(self, test_db, test_project):
+    def test_get_step_run(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Recovery multi")
+        task = task_svc.create(test_project.id, "Get step run")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        run_svc.increment_recovery_count(run.id)
-        run_svc.increment_recovery_count(run.id)
-        run_svc.increment_recovery_count(run.id)
-        test_db.refresh(run)
-        assert run.recovery_count == 3
+        sr = run_svc.create_step_run(run.id, "research", 0, "default")
+        fetched = run_svc.get_step_run(sr.id)
+        assert fetched is not None
+        assert fetched.step_name == "research"
 
-    def test_increment_recovery_count_nonexistent(self, test_db, test_project):
-        run_svc = RunService(test_db)
-        assert run_svc.increment_recovery_count("nope") is None
-
-
-class TestDaemonRecovery:
-    def _make_daemon(self, auto_recover=True, max_recovery=3, timeout=60):
-        from llmflows.services.daemon import Daemon
-        daemon = Daemon.__new__(Daemon)
-        daemon.run_timeout_minutes = timeout
-        daemon.auto_recover = auto_recover
-        daemon.max_recovery_attempts = max_recovery
-        return daemon
-
-    def test_agent_stopped_flow_incomplete_triggers_recovery(self, test_db, test_project):
-        """When agent stops mid-flow, daemon should call _recover_run."""
+    def test_step_run_to_dict(self, test_db, test_project):
         task_svc = TaskService(test_db)
         run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Recover me")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-        run_svc.update_step(task.id, "research")
-
-        daemon = self._make_daemon()
-
-        with patch.object(AgentService, "is_agent_running", return_value=False), \
-             patch.object(type(daemon), "_recover_run") as mock_recover:
-            daemon._process_project(test_project, task_svc, run_svc)
-            mock_recover.assert_called_once()
-            call_args = mock_recover.call_args
-            assert call_args[0][0].id == run.id
-            assert call_args[0][1].id == task.id
-
-    def test_agent_stopped_flow_complete_marks_completed(self, test_db, test_project):
-        """When agent reaches the complete step, daemon should mark it completed."""
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Done task")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-        run_svc.update_step(task.id, "complete")
-
-        daemon = self._make_daemon()
-
-        with patch.object(AgentService, "is_agent_running", return_value=False):
-            daemon._process_project(test_project, task_svc, run_svc)
-
-        test_db.refresh(run)
-        assert run.completed_at is not None
-        assert run.outcome == "completed"
-
-    def test_agent_stopped_outcome_completed_marks_completed(self, test_db, test_project):
-        """When agent set outcome=completed (via set_summary), daemon should honor it."""
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Summary task")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-        run_svc.update_step(task.id, "research")
-        run.outcome = "completed"
-        test_db.commit()
-
-        daemon = self._make_daemon()
-
-        with patch.object(AgentService, "is_agent_running", return_value=False):
-            daemon._process_project(test_project, task_svc, run_svc)
-
-        test_db.refresh(run)
-        assert run.completed_at is not None
-        assert run.outcome == "completed"
-
-    def test_recovery_exhausted_marks_interrupted(self, test_db, test_project):
-        """When recovery_count >= max, daemon should mark as interrupted."""
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Exhausted")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-        run_svc.update_step(task.id, "research")
-        run.recovery_count = 3
-        test_db.commit()
-
-        daemon = self._make_daemon(max_recovery=3)
-
-        with patch.object(AgentService, "is_agent_running", return_value=False):
-            daemon._process_project(test_project, task_svc, run_svc)
-
-        test_db.refresh(run)
-        assert run.completed_at is not None
-        assert run.outcome == "interrupted"
-
-    def test_auto_recover_disabled_marks_interrupted(self, test_db, test_project):
-        """When auto_recover is False, daemon should mark incomplete runs as interrupted."""
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "No recover")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-        run_svc.update_step(task.id, "research")
-
-        daemon = self._make_daemon(auto_recover=False)
-
-        with patch.object(AgentService, "is_agent_running", return_value=False):
-            daemon._process_project(test_project, task_svc, run_svc)
-
-        test_db.refresh(run)
-        assert run.completed_at is not None
-        assert run.outcome == "interrupted"
-
-    def test_agent_stopped_no_current_step_triggers_recovery(self, test_db, test_project):
-        """Agent died before even calling mode next (no current_step)."""
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Early stop")
-        task_svc.update(task.id, worktree_branch="task-branch")
+        task = task_svc.create(test_project.id, "to_dict test")
         run = run_svc.enqueue(test_project.id, task.id)
         run_svc.mark_started(run.id)
 
-        daemon = self._make_daemon()
-
-        with patch.object(AgentService, "is_agent_running", return_value=False), \
-             patch.object(type(daemon), "_recover_run") as mock_recover:
-            daemon._process_project(test_project, task_svc, run_svc)
-            mock_recover.assert_called_once()
-
-
-class TestDaemonTimeout:
-    def test_timeout_kills_expired_run(self, test_db, test_project):
-        """Daemon should mark a run as 'timeout' when it exceeds run_timeout_minutes."""
-        from llmflows.services.daemon import Daemon
-
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Long task")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-
-        run.started_at = datetime.now(timezone.utc) - timedelta(minutes=45)
-        test_db.commit()
-
-        daemon = Daemon.__new__(Daemon)
-        daemon.run_timeout_minutes = 30
-
-        with patch.object(AgentService, "is_agent_running", return_value=True), \
-             patch.object(AgentService, "kill_agent", return_value=True) as mock_kill:
-            daemon._process_project(test_project, task_svc, run_svc)
-            mock_kill.assert_called_once_with(test_project.path, "task-branch")
-
-        test_db.refresh(run)
-        assert run.completed_at is not None
-        assert run.outcome == "timeout"
-
-    def test_no_timeout_when_within_limit(self, test_db, test_project):
-        """Daemon should not kill a run that is still within the timeout."""
-        from llmflows.services.daemon import Daemon
-
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Short task")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-
-        run.started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
-        test_db.commit()
-
-        daemon = Daemon.__new__(Daemon)
-        daemon.run_timeout_minutes = 30
-
-        with patch.object(AgentService, "is_agent_running", return_value=True), \
-             patch.object(AgentService, "kill_agent") as mock_kill:
-            daemon._process_project(test_project, task_svc, run_svc)
-            mock_kill.assert_not_called()
-
-        test_db.refresh(run)
-        assert run.completed_at is None
-
-    def test_timeout_disabled_when_zero(self, test_db, test_project):
-        """Setting run_timeout_minutes to 0 disables the timeout."""
-        from llmflows.services.daemon import Daemon
-
-        task_svc = TaskService(test_db)
-        run_svc = RunService(test_db)
-        task = task_svc.create(test_project.id, "Forever task")
-        task_svc.update(task.id, worktree_branch="task-branch")
-        run = run_svc.enqueue(test_project.id, task.id)
-        run_svc.mark_started(run.id)
-
-        run.started_at = datetime.now(timezone.utc) - timedelta(hours=5)
-        test_db.commit()
-
-        daemon = Daemon.__new__(Daemon)
-        daemon.run_timeout_minutes = 0
-
-        with patch.object(AgentService, "is_agent_running", return_value=True), \
-             patch.object(AgentService, "kill_agent") as mock_kill:
-            daemon._process_project(test_project, task_svc, run_svc)
-            mock_kill.assert_not_called()
-
-        test_db.refresh(run)
-        assert run.completed_at is None
+        sr = run_svc.create_step_run(run.id, "research", 0, "default", "cursor", "auto")
+        d = sr.to_dict()
+        assert d["step_name"] == "research"
+        assert d["agent"] == "cursor"
+        assert d["model"] == "auto"
+        assert d["status"] == "running"
