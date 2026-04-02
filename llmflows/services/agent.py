@@ -233,6 +233,14 @@ class AgentService:
             return False
         try:
             pid = int(pid_file.read_text().strip())
+            # Try to reap zombie child first
+            try:
+                result = os.waitpid(pid, os.WNOHANG)
+                if result[0] != 0:
+                    pid_file.unlink(missing_ok=True)
+                    return False
+            except ChildProcessError:
+                pass
             os.kill(pid, 0)
             return True
         except (ValueError, ProcessLookupError, PermissionError):

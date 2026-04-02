@@ -548,6 +548,12 @@ async def get_run_steps(run_id: str):
             chain = [run.flow_name]
 
         result = []
+        max_started_position = -1
+        for sr in step_runs:
+            if sr.started_at and sr.step_position > max_started_position:
+                max_started_position = sr.step_position
+
+        position = 0
         for flow_name in chain:
             steps = flow_svc.get_flow_steps(flow_name)
             for step_name in steps:
@@ -558,7 +564,10 @@ async def get_run_steps(run_id: str):
                     status = sr.status
                     step_data = sr.to_dict()
                 else:
-                    status = "pending"
+                    if has_ifs and position < max_started_position:
+                        status = "skipped"
+                    else:
+                        status = "pending"
                     step_data = None
                 result.append({
                     "name": step_name,
@@ -567,6 +576,7 @@ async def get_run_steps(run_id: str):
                     "has_ifs": has_ifs,
                     "step_run": step_data,
                 })
+                position += 1
 
         summary_sr = step_run_map.get((run.flow_name, "__summary__"))
         if summary_sr:
