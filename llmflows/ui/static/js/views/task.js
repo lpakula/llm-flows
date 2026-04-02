@@ -24,6 +24,8 @@ function taskView() {
     logsCopied: false,
     logAtBottom: true,
     runSteps: {},
+    editingDescription: false,
+    editDescText: '',
 
     async init() {
       const tid = Alpine.store('router').params.taskId;
@@ -477,10 +479,15 @@ function taskView() {
 
     async submitRunModal() {
       if (!this.task || this.runModalChain.length === 0 || !this.runModalModel || !this.runModalAgent) return;
+      let prompt = this.runModalPrompt;
+      if (this.runModalIsFirstRun && this.runModalPrompt.trim()) {
+        const desc = (this.task.description || '').trim();
+        prompt = desc ? desc + '\n\n' + this.runModalPrompt.trim() : this.runModalPrompt.trim();
+      }
       await API.post(`/api/tasks/${this.task.id}/start`, {
         flow: this.runModalChain[0],
         flow_chain: this.runModalChain,
-        user_prompt: this.runModalPrompt,
+        user_prompt: prompt,
         model: this.runModalModel,
         agent: this.runModalAgent,
       });
@@ -520,6 +527,25 @@ function taskView() {
         skipped: 'bg-gray-800',
         pending: 'bg-gray-800',
       }[status] || 'bg-gray-800';
+    },
+
+    startEditDescription() {
+      this.editDescText = this.task?.description || '';
+      this.editingDescription = true;
+    },
+
+    async saveDescription() {
+      if (!this.task) return;
+      try {
+        this.task = await API.patch(`/api/tasks/${this.task.id}`, { description: this.editDescText });
+        this.editingDescription = false;
+      } catch (e) {
+        console.error('Failed to save description:', e);
+      }
+    },
+
+    cancelEditDescription() {
+      this.editingDescription = false;
     },
 
     back() {

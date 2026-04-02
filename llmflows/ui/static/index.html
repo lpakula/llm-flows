@@ -561,11 +561,18 @@
                 </div>
               </div>
 
-              <div x-show="!isFirstRun">
+              <!-- Prompt section -->
+              <div>
                 <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                <!-- First run: show task description as base prompt -->
+                <div x-show="isFirstRun && startTaskDescription.trim()" class="mb-2">
+                  <div class="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Task description (included automatically)</div>
+                  <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 max-h-32 overflow-y-auto whitespace-pre-wrap"
+                       x-text="startTaskDescription"></div>
+                </div>
                 <textarea x-model="startPrompt" rows="4"
-                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-none"
-                          placeholder="What should the agent do?"></textarea>
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
+                          :placeholder="isFirstRun ? 'Additional instructions (optional)' : 'What should the agent do?'"></textarea>
               </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
@@ -603,29 +610,47 @@
                 </div>
                 <p class="text-gray-500 text-xs font-mono mb-1" x-text="task.id"></p>
                 <div x-data="{ descExpanded: false }">
-                  <div class="relative">
-                    <div class="prose prose-invert max-w-none text-gray-400 text-sm leading-relaxed
-                                [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-3 [&_h1]:mb-1.5
-                                [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-2 [&_h2]:mb-1
-                                [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2 [&_h3]:mb-1
-                                [&_p]:my-1 [&_p]:text-gray-400
-                                [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:space-y-0.5
-                                [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:space-y-0.5
-                                [&_li]:text-gray-400
-                                [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
-                                [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
-                                [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
-                                [&_strong]:text-gray-200 [&_strong]:font-semibold
-                                [&_a]:text-blue-400 [&_a]:underline"
-                         :class="!descExpanded && 'line-clamp-3'"
-                         x-html="marked.parse(task.description || 'No description')"></div>
-                    <div x-show="!descExpanded && (task.description || '').length > 150"
-                         class="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none"></div>
+                  <!-- Read-only description display -->
+                  <div x-show="!editingDescription">
+                    <div class="relative">
+                      <div class="prose prose-invert max-w-none text-gray-400 text-sm leading-relaxed
+                                  [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-3 [&_h1]:mb-1.5
+                                  [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-2 [&_h2]:mb-1
+                                  [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2 [&_h3]:mb-1
+                                  [&_p]:my-1 [&_p]:text-gray-400
+                                  [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                                  [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                                  [&_li]:text-gray-400
+                                  [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                                  [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                                  [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                                  [&_strong]:text-gray-200 [&_strong]:font-semibold
+                                  [&_a]:text-blue-400 [&_a]:underline"
+                           :class="!descExpanded && 'line-clamp-3'"
+                           x-html="marked.parse(task.description || 'No description')"></div>
+                      <div x-show="!descExpanded && (task.description || '').length > 150"
+                           class="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-gray-950 to-transparent pointer-events-none"></div>
+                    </div>
+                    <div class="flex items-center gap-3 mt-1">
+                      <button x-show="(task.description || '').length > 150"
+                              @click="descExpanded = !descExpanded"
+                              class="text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                              x-text="descExpanded ? 'Show less' : 'Show more'"></button>
+                      <button @click="startEditDescription()"
+                              class="text-xs text-gray-500 hover:text-gray-300 hover:underline">Edit</button>
+                    </div>
                   </div>
-                  <button x-show="(task.description || '').length > 150"
-                          @click="descExpanded = !descExpanded"
-                          class="text-xs text-blue-400 hover:text-blue-300 mt-1 hover:underline"
-                          x-text="descExpanded ? 'Show less' : 'Show more'"></button>
+                  <!-- Description editor -->
+                  <div x-show="editingDescription" class="space-y-2">
+                    <textarea x-model="editDescText" rows="6"
+                              class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
+                    <div class="flex items-center gap-2">
+                      <button @click="saveDescription()"
+                              class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition">Save</button>
+                      <button @click="cancelEditDescription()"
+                              class="text-xs px-3 py-1.5 text-gray-400 hover:text-gray-200 transition">Cancel</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -958,11 +983,18 @@
                 </div>
               </div>
 
-              <div x-show="!runModalIsFirstRun">
+              <!-- Prompt section -->
+              <div>
                 <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                <!-- First run: show task description as base prompt -->
+                <div x-show="runModalIsFirstRun && (task?.description || '').trim()" class="mb-2">
+                  <div class="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Task description (included automatically)</div>
+                  <div class="bg-gray-800/60 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 max-h-32 overflow-y-auto whitespace-pre-wrap"
+                       x-text="task?.description || ''"></div>
+                </div>
                 <textarea x-model="runModalPrompt" rows="4"
                           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
-                          placeholder="What should the agent do?"></textarea>
+                          :placeholder="runModalIsFirstRun ? 'Additional instructions (optional)' : 'What should the agent do?'"></textarea>
               </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">

@@ -13,6 +13,7 @@ function projectView() {
     editName: '',
     newTask: { title: '', description: '', type: 'feature' },
     startingTask: null,
+    startTaskDescription: '',
     startChain: ['default'],
     addFlowSelect: '',
     startPrompt: '',
@@ -127,6 +128,7 @@ function projectView() {
     async openStartDialog(task) {
       const da = this._defaultAlias();
       this.startingTask = task.id;
+      this.startTaskDescription = task.description || '';
       this.startChain = [...(da.flow_chain || ['default'])];
       this.addFlowSelect = '';
       this.startPrompt = '';
@@ -142,10 +144,15 @@ function projectView() {
 
     async confirmStart() {
       if (!this.startingTask || this.startChain.length === 0 || !this.startModel || !this.startAgent) return;
+      let prompt = this.startPrompt;
+      if (this.isFirstRun && this.startPrompt.trim()) {
+        const desc = this.startTaskDescription.trim();
+        prompt = desc ? desc + '\n\n' + this.startPrompt.trim() : this.startPrompt.trim();
+      }
       await API.post(`/api/tasks/${this.startingTask}/start`, {
         flow: this.startChain[0],
         flow_chain: this.startChain,
-        user_prompt: this.startPrompt,
+        user_prompt: prompt,
         model: this.startModel,
         agent: this.startAgent,
       });
