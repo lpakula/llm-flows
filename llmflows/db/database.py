@@ -58,6 +58,10 @@ def init_db() -> Path:
             with engine.connect() as conn:
                 conn.execute(text("ALTER TABLE task_runs ADD COLUMN step_overrides TEXT DEFAULT '{}'"))
                 conn.commit()
+        if "one_shot" not in existing:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE task_runs ADD COLUMN one_shot BOOLEAN DEFAULT 0"))
+                conn.commit()
 
     session = sessionmaker(bind=engine)()
     try:

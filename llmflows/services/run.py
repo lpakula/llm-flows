@@ -16,7 +16,8 @@ class RunService:
     def enqueue(self, project_id: str, task_id: str, flow_name: str = "default",
                 user_prompt: str = "", flow_chain: Optional[list[str]] = None,
                 model: str = "", agent: str = "cursor",
-                step_overrides: Optional[dict] = None) -> TaskRun:
+                step_overrides: Optional[dict] = None,
+                one_shot: bool = False) -> TaskRun:
         """Create a TaskRun in the queue.
 
         flow_chain is an ordered list of flows to execute in sequence within a single run.
@@ -40,6 +41,7 @@ class RunService:
             agent=agent,
             user_prompt=user_prompt or task.description or "",
             step_overrides=json.dumps(step_overrides or {}),
+            one_shot=one_shot,
         )
         self.session.add(run)
         self.session.commit()

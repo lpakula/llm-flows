@@ -18,6 +18,27 @@ Run `cd {{ worktree_path }}` before any other commands.
 
 > {{ user_prompt }}
 {%- endif %}
+{%- if execution_history %}
+
+---
+
+## Previous Runs
+{%- if worktree_path %}
+
+> The worktree at `{{ worktree_path }}` contains changes from previous runs.
+{%- endif %}
+{%- for run in execution_history %}
+
+### Run {{ loop.index }} — {{ run.flow_name }} ({{ run.outcome }})
+{%- if run.user_prompt %}
+**Prompt:** {{ run.user_prompt }}
+{%- endif %}
+{%- if run.summary %}
+
+{{ run.summary | trim }}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
 {%- if artifacts %}
 
 ---

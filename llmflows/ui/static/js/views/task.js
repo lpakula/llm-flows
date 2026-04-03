@@ -18,6 +18,7 @@ function taskView() {
     runModalModel: '',
     runModalAgent: '',
     runModalIsFirstRun: false,
+    runModalOneShot: false,
     runModalProject: null,
     logsCopied: false,
     logAtBottom: true,
@@ -466,6 +467,7 @@ function taskView() {
       this.runModalChain = [];
       this.runModalModel = '';
       this.runModalAgent = '';
+      this.runModalOneShot = false;
       try {
         const project = this.task ? await API.get(`/api/projects/${this.task.project_id}`) : null;
         this.runModalProject = project;
@@ -494,6 +496,7 @@ function taskView() {
         model: cfg.model || '',
         agent: cfg.agent || 'cursor',
         step_overrides: cfg.step_overrides || {},
+        one_shot: this.runModalOneShot,
       });
       this.runModal = false;
       this.runs = await API.get(`/api/tasks/${this.task.id}/runs`);
@@ -520,14 +523,18 @@ function taskView() {
 
       if (this.viewingStepId === sr.id) return;
 
+      const scrollY = window.scrollY;
+
       this.viewingStepId = sr.id;
-      this.viewingStepName = step.name === '__summary__' ? 'summary' : step.name;
+      this.viewingStepName = step.name === '__summary__' ? 'summary' : step.name === '__one_shot__' ? 'one-shot' : step.name;
       this.viewingStepPrompt = sr.prompt || null;
 
       this.stopLogStream();
       this.streamingRunId = runId;
       this.logEntries = [];
       this.logAtBottom = true;
+
+      this.$nextTick(() => window.scrollTo(0, scrollY));
 
       if (sr.log_path === 'inline') {
         this.logStreaming = false;

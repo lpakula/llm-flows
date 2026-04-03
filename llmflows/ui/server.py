@@ -81,6 +81,7 @@ class TaskStartBody(BaseModel):
     model: str = ""
     agent: str = "cursor"
     step_overrides: dict = {}
+    one_shot: bool = False
 
 
 class DaemonConfigBody(BaseModel):
@@ -446,7 +447,8 @@ async def start_task(task_id: str, body: TaskStartBody):
                         flow_chain=chain,
                         model=body.model,
                         agent=body.agent,
-                        step_overrides=body.step_overrides)
+                        step_overrides=body.step_overrides,
+                        one_shot=body.one_shot)
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)
@@ -540,6 +542,22 @@ async def get_run_steps(run_id: str):
                 step_run_map[key] = sr
 
         import json
+
+        one_shot_sr = next(
+            (sr for sr in step_runs if sr.step_name == "__one_shot__"), None
+        )
+        if one_shot_sr or bool(run.one_shot):
+            result = []
+            if one_shot_sr:
+                result.append({
+                    "name": "__one_shot__",
+                    "flow": one_shot_sr.flow_name,
+                    "status": one_shot_sr.status,
+                    "has_ifs": False,
+                    "step_run": one_shot_sr.to_dict(),
+                })
+            return {"steps": result}
+
         try:
             chain = json.loads(run.flow_chain or "[]")
         except (json.JSONDecodeError, TypeError):
@@ -577,16 +595,6 @@ async def get_run_steps(run_id: str):
                     "step_run": step_data,
                 })
                 position += 1
-
-        summary_sr = step_run_map.get((run.flow_name, "__summary__"))
-        if summary_sr:
-            result.append({
-                "name": "__summary__",
-                "flow": run.flow_name,
-                "status": summary_sr.status,
-                "has_ifs": False,
-                "step_run": summary_sr.to_dict(),
-            })
 
         return {"steps": result}
     finally:

@@ -48,6 +48,7 @@ class AgentService:
         artifacts_dir: Optional[Path] = None,
         gate_failures: Optional[list[dict]] = None,
         use_task_subdir: bool = False,
+        execution_history: Optional[list[dict]] = None,
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -84,6 +85,7 @@ class AgentService:
             "artifacts": previous_artifacts,
             "artifacts_output_dir": str(step_output_dir) if step_output_dir else "",
             "gate_failures": gate_failures,
+            "execution_history": execution_history,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
 

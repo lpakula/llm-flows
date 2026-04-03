@@ -86,6 +86,21 @@ class Daemon:
 
         return _Defaults()
 
+    @staticmethod
+    def _build_execution_history(run_svc: RunService, task_id: str, current_run_id: str) -> list[dict]:
+        """Build execution history from previous completed runs for the same task."""
+        history = run_svc.get_history(task_id)
+        return [
+            {
+                "flow_name": r.flow_name,
+                "outcome": r.outcome or "unknown",
+                "user_prompt": r.user_prompt or "",
+                "summary": r.summary or "",
+            }
+            for r in history
+            if r.outcome != "cancelled" and r.id != current_run_id
+        ] or None
+
     # ── Core orchestration ────────────────────────────────────────────────────
 
     def _process_project(
@@ -184,6 +199,13 @@ class Daemon:
 
         prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
         prompt_file.unlink(missing_ok=True)
+
+        if step_run.step_name == "__one_shot__":
+            artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
+            summary = ContextService.read_summary_artifact(artifacts_dir)
+            logger.info("Task %s run %s one-shot completed", task.id, run.id)
+            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            return
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = {
@@ -329,6 +351,13 @@ class Daemon:
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Launch the first step of a run that has been started but has no steps yet."""
+        if run.one_shot:
+            self._launch_one_shot(
+                run, task, working_path, use_task_subdir,
+                run_svc, flow_svc,
+            )
+            return
+
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
 
@@ -366,6 +395,116 @@ class Daemon:
             first_step, position, run.flow_name,
             run_svc, flow_svc,
         )
+
+    def _launch_one_shot(
+        self, run, task, working_path: Path, use_task_subdir: bool,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Assemble all steps into a single prompt and launch one agent."""
+        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+
+        try:
+            chain = json.loads(run.flow_chain or "[]")
+        except (json.JSONDecodeError, TypeError):
+            chain = [run.flow_name]
+
+        collected_steps = []
+        for flow_name in chain:
+            step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": flow_name}
+            step_names = flow_svc.get_flow_steps(flow_name)
+            for sname in step_names:
+                step_obj = flow_svc.get_step_obj(flow_name, sname)
+                if not step_obj:
+                    continue
+                ifs = step_obj.get_ifs()
+                if ifs and not evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
+                    continue
+                content = (step_obj.content or "").rstrip()
+                if content:
+                    content = _interpolate(content, step_vars)
+                gates = list(step_obj.get_gates())
+                collected_steps.append({
+                    "name": sname,
+                    "content": content,
+                    "gates": gates,
+                })
+
+        if not collected_steps:
+            logger.error("One-shot run %s has no steps after IF filtering", run.id)
+            run_svc.mark_completed(run.id, outcome="error")
+            return
+
+        project_root = Path(task.project.path)
+        artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
+        ctx = ContextService(working_path / ".llmflows")
+        summary_content = ctx.render_summary_step({
+            "artifacts_output_dir": str(artifacts_dir),
+        })
+        collected_steps.append({
+            "name": "summary",
+            "content": summary_content,
+            "gates": [],
+        })
+
+        first_flow = chain[0] if chain else run.flow_name
+        resolved_agent = run.agent or "cursor"
+        resolved_model = run.model or ""
+
+        step_run = run_svc.create_step_run(
+            run_id=run.id,
+            step_name="__one_shot__",
+            step_position=0,
+            flow_name=first_flow,
+            agent=resolved_agent,
+            model=resolved_model,
+        )
+        run_svc.update_run_step(run.id, "__one_shot__", first_flow)
+
+        wt_display = str(working_path) if working_path != project_root else None
+        execution_history = self._build_execution_history(run_svc, task.id, run.id)
+        prompt_content = ctx.render_one_shot({
+            "task_id": task.id,
+            "task_description": task.description or "",
+            "user_prompt": run.user_prompt or task.description or "",
+            "worktree_path": wt_display,
+            "steps": collected_steps,
+            "artifacts_output_dir": str(artifacts_dir),
+            "execution_history": execution_history,
+        })
+
+        project_dir = Path(task.project.path) / ".llmflows"
+        agent_svc = AgentService(project_dir, working_path)
+
+        if use_task_subdir:
+            wt_llmflows = working_path / ".llmflows" / task.id
+        else:
+            wt_llmflows = working_path / ".llmflows"
+        wt_llmflows.mkdir(parents=True, exist_ok=True)
+
+        prompts_dir = Path.home() / ".llmflows" / "prompts"
+        prompts_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = prompts_dir / f"{task.id}-{run.id}-00-__one_shot__.md"
+        prompt_file.write_text(prompt_content)
+
+        log_file = wt_llmflows / f"agent-{run.id}-00-__one_shot__.log"
+        pid_file = wt_llmflows / "agent.pid"
+
+        launched = agent_svc._launch_agent(
+            working_path, prompt_file, log_file, pid_file,
+            model=resolved_model, agent=resolved_agent,
+        )
+
+        if launched:
+            run_svc.set_step_prompt(step_run.id, prompt_content)
+            run_svc.set_step_log_path(step_run.id, str(log_file))
+            logger.info(
+                "Launched one-shot run for task %s run %s (agent=%s, model=%s, steps=%d)",
+                task.id, run.id, resolved_agent, resolved_model, len(collected_steps),
+            )
+        else:
+            logger.error("Failed to launch one-shot agent for task %s run %s", task.id, run.id)
+            run_svc.mark_step_completed(step_run.id, outcome="error")
+            run_svc.mark_completed(run.id, outcome="error")
 
     def _launch_step(
         self, run, task, working_path: Path, use_task_subdir: bool,
@@ -405,6 +544,8 @@ class Daemon:
         project_dir = Path(task.project.path) / ".llmflows"
         agent_svc = AgentService(project_dir, working_path)
 
+        execution_history = self._build_execution_history(run_svc, task.id, run.id)
+
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
             task_id=task.id,
@@ -418,6 +559,7 @@ class Daemon:
             agent=resolved_agent,
             gate_failures=gate_failures,
             use_task_subdir=use_task_subdir,
+            execution_history=execution_history,
         )
 
         if launched:

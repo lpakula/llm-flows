@@ -239,13 +239,23 @@ function projectView() {
     },
 
     removeFlowFromChain(index) {
+      const removedFlow = this.aliasForm.flow_chain[index];
       this.aliasForm.flow_chain.splice(index, 1);
+      if (removedFlow) {
+        const prefix = removedFlow + '/';
+        for (const key of Object.keys(this.aliasForm.step_overrides)) {
+          if (key.startsWith(prefix)) {
+            delete this.aliasForm.step_overrides[key];
+          }
+        }
+      }
       this._loadAliasFormSteps();
       this.aliasEditingStep = null;
     },
 
     addFlowToChain() {
       if (!this.aliasAddFlow) return;
+      if (this.aliasForm.flow_chain.includes(this.aliasAddFlow)) return;
       this.aliasForm.flow_chain.push(this.aliasAddFlow);
       this.aliasAddFlow = '';
       this._loadAliasFormSteps();
