@@ -517,6 +517,9 @@ function taskView() {
     viewStepLogs(runId, step) {
       const sr = step.step_run;
       if (!sr || !sr.id) return;
+
+      if (this.viewingStepId === sr.id) return;
+
       this.viewingStepId = sr.id;
       this.viewingStepName = step.name === '__summary__' ? 'summary' : step.name;
       this.viewingStepPrompt = sr.prompt || null;

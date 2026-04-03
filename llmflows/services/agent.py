@@ -89,7 +89,7 @@ class AgentService:
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
-        prompt_md = prompts_dir / f"{task_id}-{step_position:02d}-{step_name}.md"
+        prompt_md = prompts_dir / f"{task_id}-{run_id}-{step_position:02d}-{step_name}.md"
         prompt_md.write_text(prompt_content)
 
         log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}.log"

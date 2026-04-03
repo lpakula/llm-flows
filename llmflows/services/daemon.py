@@ -182,6 +182,9 @@ class Daemon:
             task.id, run.id, step_run.step_name,
         )
 
+        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
+        prompt_file.unlink(missing_ok=True)
+
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = {
             "run.id": run.id,

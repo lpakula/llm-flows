@@ -803,7 +803,7 @@
                                       </template>
                                       <span :class="step.status === 'skipped' ? 'line-through' : ''" x-text="step.name === '__summary__' ? 'summary' : step.name"></span>
                                       <span x-show="step.has_ifs" class="text-[8px] text-purple-400 font-medium">IF</span>
-                                      <template x-if="step.step_run && step.step_run.agent">
+                                      <template x-if="step.step_run && step.step_run.agent && step.status !== 'completed'">
                                         <span class="text-[8px] text-gray-600 ml-0.5" x-text="step.step_run.agent"></span>
                                       </template>
                                     </div>
