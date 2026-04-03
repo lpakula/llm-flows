@@ -1,16 +1,16 @@
-# Analyse → Execute as a separate runs
+# Example: Research → Execute across separate runs
 
-You can split a complex task across runs — the agent carries full context from the previous run.
+You can split a complex task across multiple runs and keep the context between them.
 
-This example uses the GitHub integration. You can create a flow where comments on a GitHub issue trigger runs and the agent posts results back as comments.
+This example uses the GitHub integration. A comment on an issue triggers one run to research the task, then a second run to execute it.
 
 > Refactor the payment service to support multiple currencies
 
 ```bash
-@llmflows --alias analyse
+@llmflows --alias research
 ```
 
-The agent analyses the codebase and posts a detailed implementation plan as a GitHub comment. You review it, then trigger the next run:
+The first run researches the codebase and posts a clear implementation plan back to the GitHub issue. After review, trigger the next run:
 
 > I approve the plan
 
@@ -18,4 +18,4 @@ The agent analyses the codebase and posts a detailed implementation plan as a Gi
 @llmflows --alias execute
 ```
 
-The `execute` alias can be configured to use a cheaper model — writing code burns a lot of output tokens, so this is where model choice has the biggest cost impact. You stay in control of the direction, the agent handles the work.
+The `execute` alias can be configured to use a different model from `research`. This is useful when you want a stronger model for planning and a cheaper or more targeted model for the execution phase.

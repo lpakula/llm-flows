@@ -56,27 +56,12 @@ llmflows task start --id <task-id> --flow ripper-5 --flow submit-pr --prompt "Sh
 # Specify model and agent
 llmflows task start --id <task-id> --flow default --model gemini-3-flash
 llmflows task start --id <task-id> --flow default --model sonnet-4.6 --agent claude-code
+
+# Run the entire flow in a single agent prompt
+llmflows task start --id <task-id> --flow default --one-shot
 ```
 
-### Start a run (inline mode)
-
-No daemon needed. The protocol is printed to stdout for the calling agent.
-
-```bash
-# Create task and start run in one command (primary path for cloud VMs)
-llmflows task create -t "Title" -d "Description" --inline --flow default
-llmflows task create -t "Title" -d "Description" --inline --flow default --no-git
-
-# With model and agent
-llmflows task create -t "Title" -d "Description" --inline --model gemini-3-flash --agent cursor
-
-# Re-run an existing task inline (local only — requires persistent DB)
-llmflows task start --id <task-id> --inline
-```
-
-`--inline` on `task create` both creates the task and immediately starts the run.
-
-Use `--no-git` on cloud VMs or non-git projects to skip worktree creation.
+`--one-shot` assembles the whole flow into one agent prompt instead of running one separate agent process per step. Use it when a strong model can handle the whole workflow in one pass and you want fewer restarts, but remember that the default step-per-run mode gives you better isolation between steps.
 
 Options for model/agent:
 - `--model` / `-m` — model name (e.g. `gemini-3-flash`, `sonnet-4.6`, `sonnet-4.6-thinking`)
@@ -212,12 +197,6 @@ llmflows run list --task <task-id>
 llmflows run logs <run-id> --follow
 ```
 
-For inline (no daemon):
-
-```bash
-llmflows task create -t "Fix bug" -d "Description" --inline --flow default --no-git
-```
-
 ## Quick Reference
 
 | Action | Command |
@@ -227,7 +206,6 @@ llmflows task create -t "Fix bug" -d "Description" --inline --flow default --no-
 | Create task | `llmflows task create -t "..." -d "..."` |
 | List tasks | `llmflows task list` |
 | Start run (daemon) | `llmflows task start --id <id> --flow default` |
-| Start run (inline) | `llmflows task start --id <id> --inline` |
 | List runs | `llmflows run list` |
 | Show run details | `llmflows run show <run-id>` |
 | Follow logs | `llmflows run logs <run-id> --follow` |

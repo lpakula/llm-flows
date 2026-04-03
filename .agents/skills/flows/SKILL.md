@@ -5,7 +5,7 @@ description: Create and edit llmflows flow definitions. Use when the user wants 
 
 # llmflows Flows
 
-A flow is an ordered list of steps (markdown prompts) that an agent executes sequentially. The agent receives one step at a time, follows the instructions, then calls `llmflows mode next` to advance. Each step can have gates (must-pass checks) and IFs (conditional inclusion).
+A flow is an ordered list of steps (markdown prompts) that `llm-flows` executes sequentially. Each step runs as a separate agent run orchestrated by the daemon. Each step can have gates (must-pass checks) and IFs (conditional inclusion).
 
 ## Creating Flows via CLI
 
@@ -148,7 +148,7 @@ Each gate has:
 
 ## IF Conditions
 
-IFs are optional shell commands that control whether a step is included. When `llmflows mode next` is about to enter a step, it evaluates all `ifs`. If **any** command exits non-zero, the step is **skipped**.
+IFs are optional shell commands that control whether a step is included. Before entering a step, `llm-flows` evaluates all `ifs`. If **any** command exits non-zero, the step is **skipped**.
 
 ```json
 {
