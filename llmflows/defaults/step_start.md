@@ -47,6 +47,14 @@ Run `cd {{ worktree_path }}` before any other commands.
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
+{%- if art.result %}
+
+#### Result
+
+```
+{{ art.result }}
+```
+{%- endif %}
 {%- for file in art.files %}
 
 #### {{ file.name }}
@@ -56,6 +64,18 @@ Run `cd {{ worktree_path }}` before any other commands.
 ```
 {%- endfor %}
 {%- endfor %}
+{%- endif %}
+{%- if previous_step_log %}
+
+---
+
+## Previous Step Agent Log
+
+The following is the tail of the previous step's agent output. Use it to understand what was done, what decisions were made, and what issues were encountered.
+
+```
+{{ previous_step_log }}
+```
 {%- endif %}
 {%- if gate_failures %}
 
@@ -88,8 +108,15 @@ This step was attempted before but the following gate checks failed. Fix these i
 
 ## Output Artifacts
 
-Save any important outputs, findings, or state to: `{{ artifacts_output_dir }}/`
-Create the directory if needed. Files you write here will be available to subsequent steps.
+You **must** write a `_result.md` file to: `{{ artifacts_output_dir }}/_result.md`
+
+This file is the primary way context is passed to subsequent steps. Include:
+- **What was done** — brief description of the work completed in this step
+- **Key decisions** — any choices made, trade-offs, or alternatives considered
+- **Files changed** — list of files created or modified with brief descriptions
+- **State / context for next steps** — anything the next step needs to know
+
+You may also save additional files (data, configs, test output) to `{{ artifacts_output_dir }}/`.
 {%- endif %}
 
 **When you have completed the instructions above, stop. Do not continue or run additional commands.**

@@ -219,16 +219,6 @@ function taskView() {
       this.logEntries = [];
       this.logAtBottom = true;
 
-      const run = this.runs.find(r => r.id === runId);
-      if (run && run.log_path === 'inline') {
-        this.logStreaming = false;
-        this.logEntries.push({
-          text: 'This run was started inline (e.g. from Cursor). Logs are managed by the calling agent.',
-          cls: 'text-gray-500',
-        });
-        return;
-      }
-
       this.logStreaming = true;
       const source = new EventSource(`/api/runs/${runId}/logs`);
       this._logEventSource = source;
@@ -535,15 +525,6 @@ function taskView() {
       this.logAtBottom = true;
 
       this.$nextTick(() => window.scrollTo(0, scrollY));
-
-      if (sr.log_path === 'inline') {
-        this.logStreaming = false;
-        this.logEntries.push({
-          text: 'This step was started inline. Logs are managed by the calling agent.',
-          cls: 'text-gray-500',
-        });
-        return;
-      }
 
       this.logStreaming = true;
       const source = new EventSource(`/api/step-runs/${sr.id}/logs`);

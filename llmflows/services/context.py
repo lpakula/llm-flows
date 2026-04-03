@@ -1,6 +1,5 @@
 """Context service -- renders step prompts and collects artifacts."""
 
-import os
 from pathlib import Path
 
 from jinja2 import Environment, TemplateError
@@ -8,6 +7,15 @@ from jinja2 import Environment, TemplateError
 from ..defaults import get_defaults_dir
 
 DEFAULTS_DIR = get_defaults_dir()
+
+RESULT_FILE = "_result.md"
+
+RESULT_FILE_LIMIT = 50_000
+ARTIFACT_FILE_LIMIT = 20_000
+TOTAL_ARTIFACTS_BUDGET = 120_000
+
+LOG_TAIL_LINES = 200
+LOG_TAIL_MAX_CHARS = 30_000
 
 
 class ContextService:
@@ -55,15 +63,16 @@ class ContextService:
     def collect_artifacts(artifacts_dir: Path) -> list[dict]:
         """Collect artifacts from completed steps.
 
-        Returns a list of dicts, each with:
+        Prioritises ``_result.md`` per step (higher char limit) and includes
+        remaining files up to a total budget.  Returns a list of dicts:
           - position: int
           - step_name: str
+          - result: str | None  (contents of _result.md if present)
           - files: list of {name, content}
         """
         if not artifacts_dir.exists():
             return []
 
-        artifacts = []
         try:
             step_dirs = sorted(
                 d for d in artifacts_dir.iterdir()
@@ -71,6 +80,9 @@ class ContextService:
             )
         except (PermissionError, OSError):
             return []
+
+        artifacts: list[dict] = []
+        budget_remaining = TOTAL_ARTIFACTS_BUDGET
 
         for step_dir in step_dirs:
             parts = step_dir.name.split("-", 1)
@@ -80,29 +92,71 @@ class ContextService:
                 continue
             step_name = parts[1] if len(parts) > 1 else step_dir.name
 
-            files = []
+            result_text: str | None = None
+            result_path = step_dir / RESULT_FILE
+            if result_path.exists():
+                try:
+                    raw = result_path.read_text(errors="replace")
+                    if len(raw) > RESULT_FILE_LIMIT:
+                        raw = raw[:RESULT_FILE_LIMIT] + "\n... (truncated)"
+                    result_text = raw
+                    budget_remaining -= len(result_text)
+                except (PermissionError, OSError):
+                    pass
+
+            files: list[dict] = []
             try:
                 for f in sorted(step_dir.iterdir()):
-                    if not f.is_file():
+                    if not f.is_file() or f.name == RESULT_FILE:
+                        continue
+                    if budget_remaining <= 0:
+                        files.append({"name": f.name, "content": "(budget exceeded, skipped)"})
                         continue
                     try:
                         content = f.read_text(errors="replace")
-                        if len(content) > 10000:
-                            content = content[:10000] + "\n... (truncated)"
+                        limit = min(ARTIFACT_FILE_LIMIT, budget_remaining)
+                        if len(content) > limit:
+                            content = content[:limit] + "\n... (truncated)"
                         files.append({"name": f.name, "content": content})
+                        budget_remaining -= len(content)
                     except (PermissionError, OSError):
                         continue
             except (PermissionError, OSError):
-                continue
+                pass
 
-            if files:
+            if result_text or files:
                 artifacts.append({
                     "position": position,
                     "step_name": step_name,
+                    "result": result_text,
                     "files": files,
                 })
 
         return artifacts
+
+    @staticmethod
+    def read_step_log_tail(log_path: str, max_lines: int = LOG_TAIL_LINES) -> str:
+        """Read the tail of an agent log file.
+
+        Returns the last *max_lines* lines, capped at LOG_TAIL_MAX_CHARS.
+        """
+        if not log_path or log_path == "inline":
+            return ""
+        p = Path(log_path)
+        if not p.exists():
+            return ""
+        try:
+            raw = p.read_text(errors="replace")
+        except (PermissionError, OSError):
+            return ""
+        lines = raw.splitlines()
+        tail = "\n".join(lines[-max_lines:])
+        if len(tail) > LOG_TAIL_MAX_CHARS:
+            tail = tail[-LOG_TAIL_MAX_CHARS:]
+            nl = tail.find("\n")
+            if nl != -1:
+                tail = tail[nl + 1:]
+        return tail.strip()
 
     @staticmethod
     def read_summary_artifact(artifacts_dir: Path) -> str:

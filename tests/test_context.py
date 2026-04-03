@@ -41,6 +41,7 @@ class TestContextService:
             "artifacts": [{
                 "position": 0,
                 "step_name": "research",
+                "result": None,
                 "files": [{"name": "findings.md", "content": "Found the answer."}],
             }],
             "artifacts_output_dir": "/tmp/artifacts/01-implement",
@@ -98,12 +99,42 @@ class TestContextService:
         assert len(result) == 1
         assert result[0]["position"] == 0
         assert result[0]["step_name"] == "research"
+        assert result[0]["result"] is None
         assert result[0]["files"][0]["name"] == "findings.md"
         assert "Important stuff" in result[0]["files"][0]["content"]
+
+    def test_collect_artifacts_with_result(self, temp_dir):
+        artifacts_dir = temp_dir / "artifacts"
+        step_dir = artifacts_dir / "00-research"
+        step_dir.mkdir(parents=True)
+        (step_dir / "_result.md").write_text("## What was done\nResearched the problem.")
+        (step_dir / "data.json").write_text('{"key": "value"}')
+
+        result = ContextService.collect_artifacts(artifacts_dir)
+        assert len(result) == 1
+        assert result[0]["result"] is not None
+        assert "Researched the problem" in result[0]["result"]
+        assert len(result[0]["files"]) == 1
+        assert result[0]["files"][0]["name"] == "data.json"
 
     def test_collect_artifacts_empty(self, temp_dir):
         result = ContextService.collect_artifacts(temp_dir / "nonexistent")
         assert result == []
+
+    def test_read_step_log_tail(self, temp_dir):
+        log_file = temp_dir / "agent.log"
+        lines = [f"line {i}" for i in range(300)]
+        log_file.write_text("\n".join(lines))
+
+        tail = ContextService.read_step_log_tail(str(log_file), max_lines=200)
+        assert "line 100" in tail
+        assert "line 299" in tail
+        assert "line 0\n" not in tail
+
+    def test_read_step_log_tail_missing(self, temp_dir):
+        assert ContextService.read_step_log_tail("") == ""
+        assert ContextService.read_step_log_tail("inline") == ""
+        assert ContextService.read_step_log_tail(str(temp_dir / "nope.log")) == ""
 
     def test_read_summary_artifact(self, temp_dir):
         artifacts_dir = temp_dir / "artifacts"

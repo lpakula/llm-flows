@@ -34,8 +34,6 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
     type: str = "feature"
-    inline: bool = False
-    flow: str = "default"
 
 
 class TaskUpdate(BaseModel):
@@ -387,10 +385,6 @@ async def create_task(project_id: str, body: TaskCreate):
             task_type=task_type,
         )
 
-        if body.inline:
-            run_svc = RunService(session)
-            run_svc.enqueue(project_id, task.id, body.flow)
-
         ps = _get_project_settings(project_id, session)
         return _enrich_task(task.to_dict(), project.path, session, ps)
     finally:
@@ -612,11 +606,6 @@ async def stream_step_run_logs(step_run_id: str):
             raise HTTPException(status_code=404, detail="StepRun not found")
         if not sr.log_path:
             raise HTTPException(status_code=404, detail="No log path set for this step run")
-        if sr.log_path == "inline":
-            raise HTTPException(
-                status_code=404,
-                detail="This step was started inline. Logs are managed by the calling agent.",
-            )
         log_path = Path(sr.log_path)
     finally:
         session.close()
@@ -673,11 +662,6 @@ async def stream_run_logs(run_id: str):
             raise HTTPException(status_code=404, detail="Run not found")
         if not run.log_path:
             raise HTTPException(status_code=404, detail="No log path set for this run")
-        if run.log_path == "inline":
-            raise HTTPException(
-                status_code=404,
-                detail="This run was started inline (--inline). Logs are managed by the calling agent.",
-            )
         log_path = Path(run.log_path)
     finally:
         session.close()

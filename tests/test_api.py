@@ -96,16 +96,6 @@ class TestTasksAPI:
         assert response.status_code == 200
         assert response.json()["type"] == "fix"
 
-    def test_create_task_with_start(self, client, api_db):
-        pid = api_db["project_id"]
-        response = client.post(
-            f"/api/projects/{pid}/tasks",
-            json={"title": "Start immediately", "inline": True, "flow": "default"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_count"] == 1
-
     def test_list_tasks(self, client, api_db):
         pid = api_db["project_id"]
         client.post(f"/api/projects/{pid}/tasks", json={"title": "Task 1"})

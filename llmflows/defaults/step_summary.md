@@ -6,7 +6,7 @@ Review all work done across previous steps and produce a final summary.
 
 ## WORKFLOW
 
-1. Review the artifacts from previous steps provided above
+1. Review the `_result.md` files and other artifacts from previous steps provided above
 2. Write a summary to `{{ artifacts_output_dir }}/summary.md` containing:
    - **What was done** — brief description of the overall goal accomplished
    - **Changes** — list of files changed with `path/to/file` and what changed

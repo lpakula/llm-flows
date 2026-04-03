@@ -85,10 +85,6 @@ def stream_task_logs(task_id: str, follow: bool = True, raw: bool = False) -> No
             click.echo("The agent may not have started yet.")
             raise SystemExit(1)
 
-        if run.log_path == "inline":
-            click.echo("This run was started inline (--inline). Logs are managed by the calling agent.")
-            return
-
         log_path = Path(run.log_path)
 
         proj = project_svc.get(t.project_id)
@@ -115,10 +111,6 @@ def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None
         if not run or not run.log_path:
             click.echo(f"No log found for run {run_id}.")
             raise SystemExit(1)
-
-        if run.log_path == "inline":
-            click.echo("This run was started inline (--inline). Logs are managed by the calling agent.")
-            return
 
         log_path = Path(run.log_path)
 

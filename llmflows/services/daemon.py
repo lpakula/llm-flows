@@ -506,6 +506,18 @@ class Daemon:
             run_svc.mark_step_completed(step_run.id, outcome="error")
             run_svc.mark_completed(run.id, outcome="error")
 
+    @staticmethod
+    def _get_previous_step_log(run_svc: RunService, run_id: str) -> str:
+        """Read the tail of the most recently completed step's agent log."""
+        completed = [
+            sr for sr in run_svc.list_step_runs(run_id)
+            if sr.completed_at and sr.log_path
+        ]
+        if not completed:
+            return ""
+        last = completed[-1]
+        return ContextService.read_step_log_tail(last.log_path)
+
     def _launch_step(
         self, run, task, working_path: Path, use_task_subdir: bool,
         step_name: str, step_position: int, flow_name: str,
@@ -545,6 +557,7 @@ class Daemon:
         agent_svc = AgentService(project_dir, working_path)
 
         execution_history = self._build_execution_history(run_svc, task.id, run.id)
+        previous_step_log = self._get_previous_step_log(run_svc, run.id)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
@@ -560,6 +573,7 @@ class Daemon:
             gate_failures=gate_failures,
             use_task_subdir=use_task_subdir,
             execution_history=execution_history,
+            previous_step_log=previous_step_log,
         )
 
         if launched:
@@ -606,6 +620,8 @@ class Daemon:
         project_dir = Path(task.project.path) / ".llmflows"
         agent_svc = AgentService(project_dir, working_path)
 
+        previous_step_log = self._get_previous_step_log(run_svc, run.id)
+
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
             task_id=task.id,
@@ -618,6 +634,7 @@ class Daemon:
             model=run.model or "",
             agent=run.agent or "cursor",
             use_task_subdir=use_task_subdir,
+            previous_step_log=previous_step_log,
         )
 
         if launched:

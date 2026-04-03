@@ -1,7 +1,5 @@
 """Task CLI commands -- CRUD for tasks from the project directory."""
 
-from pathlib import Path
-
 import click
 
 from ..db.database import get_session, init_db
@@ -21,129 +19,9 @@ def _resolve_project(session):
     return project
 
 
-def _resolve_or_register(session):
-    """Resolve the current project, auto-registering if needed."""
-    from ..config import get_repo_root
-    project_svc = ProjectService(session)
-    project = project_svc.resolve_current()
-    if project:
-        return project
-
-    repo_root = get_repo_root()
-    project_root = repo_root or Path.cwd()
-    git_repo = repo_root is not None
-
-    project = project_svc.register(
-        name=project_root.name,
-        path=str(project_root),
-        git_repo=git_repo,
-    )
-
-    project_dir = project_root / ".llmflows"
-    project_dir.mkdir(parents=True, exist_ok=True)
-
-    if git_repo:
-        from .admin import _update_gitignore
-        _update_gitignore(project_root)
-
-    return project
-
-
 def _get_session():
     init_db()
     return get_session()
-
-
-def _start_inline(session, project, task, flow_name, no_git,
-                  flow_chain=None, user_prompt="",
-                  model="", agent="cursor"):
-    """Bootstrap an inline run — renders the first step prompt to stdout.
-
-    Creates the run, sets up the working directory, and outputs the
-    first step's prompt for the calling agent. The daemon handles
-    subsequent steps.
-    """
-    from ..services.agent import AgentService
-    from ..services.context import ContextService
-    from ..services.flow import FlowService
-    from ..services.worktree import WorktreeService
-
-    run_svc = RunService(session)
-    task_svc = TaskService(session)
-    flow_svc = FlowService(session)
-
-    alias_cfg = project.get_alias("default") or {}
-    step_overrides = alias_cfg.get("step_overrides", {})
-
-    run = run_svc.enqueue(project.id, task.id, flow_name,
-                          user_prompt=user_prompt, flow_chain=flow_chain,
-                          model=model, agent=agent,
-                          step_overrides=step_overrides)
-    run_svc.mark_started(run.id)
-
-    worktree_path = None
-    if no_git:
-        work_dir = Path(project.path)
-    else:
-        branch = f"task-{task.id}"
-        task_svc.update(task.id, worktree_branch=branch)
-        wt_svc = WorktreeService(project.path)
-        ok, msg = wt_svc.create(branch)
-        if not ok:
-            click.echo(f"Failed to create worktree: {msg}", err=True)
-            raise SystemExit(1)
-        work_dir = wt_svc.get_worktree_path(branch) or Path(project.path)
-        worktree_path = str(work_dir)
-
-    llmflows_dir = work_dir / ".llmflows"
-    llmflows_dir.mkdir(parents=True, exist_ok=True)
-    AgentService._ensure_gitignore(llmflows_dir)
-
-    steps = flow_svc.get_flow_steps(flow_name)
-    if not steps:
-        click.echo(f"Flow '{flow_name}' has no steps.", err=True)
-        raise SystemExit(1)
-
-    first_step = steps[0]
-    step_obj = flow_svc.get_step_obj(flow_name, first_step)
-    step_content = (step_obj.content or "").rstrip() if step_obj else ""
-
-    artifacts_dir = ContextService.get_artifacts_dir(Path(project.path), task.id, run.id)
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-    step_output_dir = artifacts_dir / f"00-{first_step}"
-
-    context_svc = ContextService(llmflows_dir)
-    prompt = context_svc.render_step_instructions({
-        "worktree_path": worktree_path,
-        "task_id": task.id,
-        "task_description": task.description,
-        "user_prompt": user_prompt or task.description,
-        "step_name": first_step,
-        "step_content": step_content,
-        "flow_name": flow_name,
-        "artifacts": [],
-        "artifacts_output_dir": str(step_output_dir),
-        "gate_failures": None,
-    })
-
-    override_key = f"{flow_name}/{first_step}"
-    step_cfg = step_overrides.get(override_key, {})
-    resolved_agent = step_cfg.get("agent") or agent
-    resolved_model = step_cfg.get("model") or model
-
-    step_run = run_svc.create_step_run(
-        run_id=run.id,
-        step_name=first_step,
-        step_position=0,
-        flow_name=flow_name,
-        agent=resolved_agent,
-        model=resolved_model,
-    )
-    run_svc.update_run_step(run.id, first_step, flow_name)
-    run_svc.set_step_prompt(step_run.id, prompt)
-    run_svc.set_step_log_path(step_run.id, "inline")
-
-    click.echo(prompt)
 
 
 @click.group()
@@ -157,25 +35,16 @@ def task():
 @click.option("-d", "--description", required=True, help="Task description — used as the prompt for the first run")
 @click.option("--type", "task_type", default="feature",
               type=click.Choice(["feature", "fix", "refactor", "chore"]))
-@click.option("--inline", "inline_now", is_flag=True,
-              help="Start the run immediately (inline, no daemon)")
-@click.option("--flow", "flow_name", default="default", help="Flow to use (default: default)")
-@click.option("--no-git", "no_git", is_flag=True,
-              help="Run in the current directory instead of creating a git worktree")
-@click.option("--model", "-m", default="", help="Model to use for this run (inline only)")
-@click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex (inline only)")
-def task_create(title, description, task_type, inline_now, flow_name, no_git, model, agent):
+def task_create(title, description, task_type):
     """Create a new task.
 
     Examples:
       llmflows task create -t "Fix login flow" -d "Safari shows blank page on submit"
-      llmflows task create -t "Add pagination" --inline --flow default
-      llmflows task create -t "Refactor API" --inline --no-git
-      llmflows task create -t "Fix bug" --inline --model gemini-3-flash --agent cursor
+      llmflows task create -t "Add pagination" -d "Add pagination to the list view"
     """
     session = _get_session()
     try:
-        project = _resolve_or_register(session) if inline_now else _resolve_project(session)
+        project = _resolve_project(session)
         task_svc = TaskService(session)
         t = task_svc.create(
             project_id=project.id,
@@ -183,11 +52,6 @@ def task_create(title, description, task_type, inline_now, flow_name, no_git, mo
             description=description,
             task_type=TaskType(task_type),
         )
-
-        if inline_now:
-            _start_inline(session, project, t, flow_name, no_git,
-                          model=model, agent=agent)
-            return
 
         click.echo(f"Created {click.style(t.id, fg='cyan')} — {click.style(title, fg='green', bold=True)}")
         click.echo(f"   Type:  {t.type.value}")
@@ -386,15 +250,11 @@ def task_show(task_id):
 @click.option("--id", "task_id", required=True, help="Task ID")
 @click.option("--flow", "flows", multiple=True, help="Flow to run (repeat to chain, e.g. --flow default --flow submit-pr)")
 @click.option("--prompt", "-p", default="", help="User prompt for this run")
-@click.option("--inline", "inline_now", is_flag=True,
-              help="Start the run immediately (inline, no daemon)")
-@click.option("--no-git", "no_git", is_flag=True,
-              help="Run in the current directory instead of creating a git worktree")
 @click.option("--model", "-m", default="", help="Model to use for this run")
 @click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex")
 @click.option("--one-shot", "one_shot", is_flag=True,
               help="Run all steps in a single prompt (for capable models)")
-def task_start(task_id, flows, prompt, inline_now, no_git, model, agent, one_shot):
+def task_start(task_id, flows, prompt, model, agent, one_shot):
     """Enqueue a new run for a task.
 
     Pass --flow once for a single flow, or repeat it to chain multiple flows
@@ -402,11 +262,6 @@ def task_start(task_id, flows, prompt, inline_now, no_git, model, agent, one_sho
 
       llmflows task start --id abc123 --flow default
       llmflows task start --id abc123 --flow ripper-5 --flow submit-pr
-
-    Use --inline to run inline without the daemon:
-
-      llmflows task start --id abc123 --inline
-      llmflows task start --id abc123 --inline --no-git
 
     Specify model and agent:
 
@@ -420,17 +275,6 @@ def task_start(task_id, flows, prompt, inline_now, no_git, model, agent, one_sho
         if not t:
             click.echo(f"Task {task_id} not found.")
             raise SystemExit(1)
-
-        if inline_now:
-            project_svc = ProjectService(session)
-            project = project_svc.get(t.project_id)
-            if not project:
-                click.echo(f"Project {t.project_id} not found.", err=True)
-                raise SystemExit(1)
-            _start_inline(session, project, t, chain[0], no_git,
-                          flow_chain=chain, user_prompt=prompt,
-                          model=model, agent=agent)
-            return
 
         run_svc = RunService(session)
         project_svc = ProjectService(session)
