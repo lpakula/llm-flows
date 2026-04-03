@@ -81,14 +81,14 @@ class GitHubService:
 
         Returns None if no @llmflows found.
         Returns {"model": str|None, "flow_chain": list[str]|None, "agent": str|None,
-                 "alias": str|None}.
+                 "alias": str|None, "one_shot": bool}.
         """
         match = re.search(r"@llmflows\b(.*?)(?:\n|$)", body)
         if not match:
             return None
 
         args_str = match.group(1).strip()
-        result: dict = {"model": None, "flow_chain": None, "agent": None, "alias": None}
+        result: dict = {"model": None, "flow_chain": None, "agent": None, "alias": None, "one_shot": False}
         if not args_str:
             return result
 
@@ -107,6 +107,9 @@ class GitHubService:
             elif parts[i] == "--alias" and i + 1 < len(parts):
                 result["alias"] = parts[i + 1]
                 i += 2
+            elif parts[i] == "--one-shot":
+                result["one_shot"] = True
+                i += 1
             else:
                 i += 1
 
@@ -316,6 +319,7 @@ class GitHubService:
                 model=model,
                 agent=agent,
                 user_prompt=user_prompt,
+                one_shot=mr_cmd.get("one_shot", False),
             )
 
             self.add_reaction(repo, comment_id, "eyes")

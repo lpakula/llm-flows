@@ -392,7 +392,9 @@ def task_show(task_id):
               help="Run in the current directory instead of creating a git worktree")
 @click.option("--model", "-m", default="", help="Model to use for this run")
 @click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex")
-def task_start(task_id, flows, prompt, inline_now, no_git, model, agent):
+@click.option("--one-shot", "one_shot", is_flag=True,
+              help="Run all steps in a single prompt (for capable models)")
+def task_start(task_id, flows, prompt, inline_now, no_git, model, agent, one_shot):
     """Enqueue a new run for a task.
 
     Pass --flow once for a single flow, or repeat it to chain multiple flows
@@ -438,7 +440,8 @@ def task_start(task_id, flows, prompt, inline_now, no_git, model, agent):
         run = run_svc.enqueue(t.project_id, task_id, chain[0],
                               user_prompt=prompt, flow_chain=chain,
                               model=model, agent=agent,
-                              step_overrides=step_overrides)
+                              step_overrides=step_overrides,
+                              one_shot=one_shot)
         chain_str = " → ".join(click.style(f, fg="bright_green") for f in chain)
         click.echo(
             f"Queued run {click.style(run.id[:8], fg='cyan')} "
