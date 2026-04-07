@@ -62,4 +62,8 @@ include = [
     "llmflows/**/*.toml",
     "llmflows/**/*.json",
     "llmflows/**/*.js",
+    "llmflows/**/*.css",
+    "llmflows/**/*.svg",
+    "llmflows/**/*.tsx",
+    "llmflows/**/*.ts",
 ]

@@ -1177,3 +1177,9 @@ async def list_models(agent: Optional[str] = None):
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/{path:path}")
+async def spa_fallback(path: str):
+    """Serve index.html for any non-API path (SPA client-side routing)."""
+    return FileResponse(STATIC_DIR / "index.html")
