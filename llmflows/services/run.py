@@ -1,7 +1,9 @@
 """Run service -- manages TaskRun and StepRun lifecycle."""
 
 import json
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -13,34 +15,24 @@ class RunService:
     def __init__(self, session: Session):
         self.session = session
 
-    def enqueue(self, project_id: str, task_id: str, flow_name: str = "default",
-                user_prompt: str = "", flow_chain: Optional[list[str]] = None,
-                model: str = "", agent: str = "cursor",
-                step_overrides: Optional[dict] = None,
+    def enqueue(self, project_id: str, task_id: str,
+                flow_name: Optional[str] = None,
+                user_prompt: str = "",
                 one_shot: bool = False) -> TaskRun:
         """Create a TaskRun in the queue.
 
-        flow_chain is an ordered list of flows to execute in sequence within a single run.
-        flow_name is set to the first flow in the chain (or flow_name if chain is empty).
+        flow_name is the flow to use (None = prompt-only run).
         user_prompt falls back to task.description when not provided.
-        step_overrides is a dict keyed by "flow/step" with {"agent": ..., "model": ...}.
         """
         task = self.session.query(Task).filter_by(id=task_id).first()
         if not task:
             raise ValueError(f"Task '{task_id}' not found")
 
-        chain = flow_chain or [flow_name]
-        active_flow = chain[0] if chain else flow_name
-
         run = TaskRun(
             project_id=project_id,
             task_id=task_id,
-            flow_name=active_flow,
-            flow_chain=json.dumps(chain),
-            model=model,
-            agent=agent,
+            flow_name=flow_name,
             user_prompt=user_prompt or task.description or "",
-            step_overrides=json.dumps(step_overrides or {}),
             one_shot=one_shot,
         )
         self.session.add(run)
@@ -83,6 +75,70 @@ class RunService:
 
         self.session.commit()
         return run
+
+    def pause(self, run_id: str) -> Optional[TaskRun]:
+        """Pause an active run."""
+        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        if not run or run.completed_at:
+            return None
+        run.paused_at = datetime.now(timezone.utc)
+        self.session.commit()
+        return run
+
+    def resume(self, run_id: str, prompt: str = "") -> Optional[TaskRun]:
+        """Resume a paused run, optionally with an additional prompt."""
+        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        if not run or not run.paused_at:
+            return None
+        run.paused_at = None
+        if prompt:
+            run.resume_prompt = prompt
+        self.session.commit()
+        return run
+
+    def retry_step(self, run_id: str, step_name: str, prompt: str = "") -> Optional[TaskRun]:
+        """Re-activate an interrupted run and re-launch a step from scratch.
+
+        Deletes all previous step_runs for the step and cleans up the
+        corresponding artifact directory so the daemon starts clean.
+        """
+        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        if not run:
+            return None
+
+        old_steps = self.session.query(StepRun).filter_by(
+            run_id=run_id, step_name=step_name,
+        ).all()
+        if old_steps and run.task and run.task.project:
+            from .context import ContextService
+            artifacts_dir = ContextService.get_artifacts_dir(
+                Path(run.task.project.path), run.task_id, run_id,
+            )
+            for sr in old_steps:
+                step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{step_name}"
+                if step_artifact_dir.exists():
+                    shutil.rmtree(step_artifact_dir, ignore_errors=True)
+
+        self.session.query(StepRun).filter_by(
+            run_id=run_id, step_name=step_name,
+        ).delete()
+        run.completed_at = None
+        run.outcome = None
+        run.current_step = step_name
+        if prompt:
+            run.resume_prompt = prompt
+        self.session.commit()
+        return run
+
+    def complete_step_manually(self, step_run_id: str) -> Optional[StepRun]:
+        """Manually mark a step as completed (e.g. after a manual fix)."""
+        sr = self.session.query(StepRun).filter_by(id=step_run_id).first()
+        if not sr:
+            return None
+        sr.completed_at = datetime.now(timezone.utc)
+        sr.outcome = "manual"
+        self.session.commit()
+        return sr
 
     def update_run_step(self, run_id: str, step_name: str, flow_name: str = "") -> Optional[TaskRun]:
         """Update current_step/flow_name on a run (called by daemon during orchestration)."""

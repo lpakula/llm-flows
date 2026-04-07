@@ -1,7 +1,11 @@
+function asUTC(iso: string): string {
+  return iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+}
+
 export function duration(startedAt: string | null, completedAt: string | null): string {
   if (!startedAt) return "-";
-  const start = new Date(startedAt);
-  const end = completedAt ? new Date(completedAt) : new Date();
+  const start = new Date(asUTC(startedAt));
+  const end = completedAt ? new Date(asUTC(completedAt)) : new Date();
   const ms = end.getTime() - start.getTime();
   if (ms < 1000) return "<1s";
   const s = Math.floor(ms / 1000);
@@ -18,6 +22,7 @@ export function statusBadge(status: string): string {
     ({
       queued: "bg-blue-900/50 text-blue-300",
       running: "bg-yellow-900/50 text-yellow-300",
+      paused: "bg-purple-900/50 text-purple-300",
       completed: "bg-green-900/50 text-green-300",
       cancelled: "bg-red-900/50 text-red-400",
       failed: "bg-red-900/50 text-red-300",
@@ -31,6 +36,7 @@ export function statusBadge(status: string): string {
 
 export function statusDot(status: string, outcome?: string | null): string {
   if (status === "running") return "bg-yellow-400 animate-pulse";
+  if (status === "paused") return "bg-purple-400";
   if (status === "queued") return "bg-blue-400";
   if (status === "interrupted" || status === "error") return "bg-red-500";
   if (status === "timeout") return "bg-orange-400";
@@ -66,6 +72,8 @@ export function stepBoxClass(status: string): string {
       completed: "bg-green-900/40 border-green-700 text-green-400",
       running: "bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold",
       current: "bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold",
+      paused: "bg-purple-900/40 border-purple-700 text-purple-400",
+      manual: "bg-blue-900/40 border-blue-700 text-blue-400",
       skipped: "bg-gray-900/30 border-gray-800 text-gray-600",
       pending: "bg-gray-900/50 border-gray-700 text-gray-500",
       failed: "bg-red-900/40 border-red-700 text-red-400",

@@ -64,17 +64,7 @@ export function LogViewer({ entries, streaming }: Props) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          {streaming && (
-            <span className="flex items-center gap-1 text-xs text-yellow-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
-              Streaming
-            </span>
-          )}
-          {!streaming && entries.length > 0 && (
-            <span className="text-xs text-gray-500">{entries.length} entries</span>
-          )}
-        </div>
+        <span className="text-[10px] uppercase tracking-wide text-gray-600">Agent log</span>
         {entries.length > 0 && (
           <button onClick={copyLogs} className="text-[11px] text-gray-500 hover:text-gray-300 transition">
             Copy

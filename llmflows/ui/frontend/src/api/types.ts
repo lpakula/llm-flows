@@ -2,19 +2,21 @@ export interface Project {
   id: string;
   name: string;
   path: string;
-  aliases: Record<string, AliasConfig>;
   created_at: string;
-}
-
-export interface AliasConfig {
-  agent: string;
-  model: string;
-  flow_chain: string[];
-  step_overrides?: Record<string, { agent?: string; model?: string }>;
 }
 
 export interface ProjectSettings {
   is_git_repo: boolean;
+}
+
+export interface AgentAlias {
+  id: string;
+  name: string;
+  agent: string;
+  model: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Task {
@@ -23,6 +25,7 @@ export interface Task {
   name: string;
   description: string;
   type: string;
+  default_flow_name: string | null;
   status: string;
   worktree_branch: string;
   worktree_path: string | null;
@@ -38,23 +41,28 @@ export interface TaskRun {
   id: string;
   task_id: string;
   project_id: string;
-  flow_name: string;
+  flow_name: string | null;
+  run_flow_id: string | null;
   current_step: string | null;
   status: string;
   outcome: string | null;
   summary: string | null;
+  user_prompt: string;
+  prompt: string;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
   log_path: string | null;
   one_shot: boolean;
-  flow_chain: string;
+  paused_at: string | null;
+  resume_prompt: string;
   task_name?: string;
   project_name?: string;
 }
 
 export interface Flow {
   id: string;
+  project_id: string;
   name: string;
   description: string;
   step_count: number;
@@ -70,6 +78,9 @@ export interface FlowStep {
   position: number;
   gates: Gate[];
   ifs: Gate[];
+  agent_alias: string;
+  allow_max: boolean;
+  max_gate_retries: number;
 }
 
 export interface Gate {
@@ -97,18 +108,34 @@ export interface DashboardEntry {
   recent_completions: TaskRun[];
 }
 
+export interface GateFailure {
+  command: string;
+  message: string;
+  output?: string;
+}
+
+export interface StepRunDetail {
+  id: string;
+  status: string;
+  prompt: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  attempt: number;
+  agent: string;
+  model: string;
+  gate_failures?: GateFailure[];
+}
+
 export interface StepRunInfo {
   name: string;
   flow: string;
   status: string;
   has_ifs: boolean;
-  step_run: {
-    id: string;
-    status: string;
-    prompt: string | null;
-    started_at: string | null;
-    completed_at: string | null;
-  } | null;
+  step_run: StepRunDetail | null;
+  attempts?: StepRunDetail[];
+  agent_alias?: string;
+  allow_max?: boolean;
+  max_gate_retries?: number;
 }
 
 export interface AgentInfo {
@@ -119,13 +146,11 @@ export interface AgentInfo {
   command: string;
 }
 
-export interface Integration {
+export interface AgentConfigEntry {
   id: string;
-  project_id: string;
-  provider: string;
-  enabled: boolean;
-  config: Record<string, string>;
-  last_polled_at: string | null;
+  agent: string;
+  key: string;
+  value: string;
 }
 
 export interface LogEntry {

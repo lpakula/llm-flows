@@ -136,6 +136,15 @@ class AgentService:
             env = os.environ.copy()
             env["IS_SANDBOX"] = "1"
 
+            from ..db.database import get_session
+            from ..db.models import AgentConfig
+            session = get_session()
+            try:
+                for cfg in session.query(AgentConfig).filter_by(agent=agent).all():
+                    env[cfg.key] = cfg.value
+            finally:
+                session.close()
+
             fh = open(log_file, "w")
             proc = subprocess.Popen(
                 cmd,

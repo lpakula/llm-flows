@@ -248,26 +248,19 @@ def task_show(task_id):
 
 @task.command("start")
 @click.option("--id", "task_id", required=True, help="Task ID")
-@click.option("--flow", "flows", multiple=True, help="Flow to run (repeat to chain, e.g. --flow default --flow submit-pr)")
+@click.option("--flow", "flow_name", default=None, help="Flow to run (omit for prompt-only)")
 @click.option("--prompt", "-p", default="", help="User prompt for this run")
-@click.option("--model", "-m", default="", help="Model to use for this run")
-@click.option("--agent", "-a", default="cursor", help="Agent backend: cursor, claude-code, codex")
 @click.option("--one-shot", "one_shot", is_flag=True,
               help="Run all steps in a single prompt (for capable models)")
-def task_start(task_id, flows, prompt, model, agent, one_shot):
+def task_start(task_id, flow_name, prompt, one_shot):
     """Enqueue a new run for a task.
 
-    Pass --flow once for a single flow, or repeat it to chain multiple flows
-    executed in order:
+    Examples:
 
       llmflows task start --id abc123 --flow default
-      llmflows task start --id abc123 --flow ripper-5 --flow submit-pr
-
-    Specify model and agent:
-
-      llmflows task start --id abc123 --model gemini-3-flash --agent cursor
+      llmflows task start --id abc123 --prompt "Fix the bug"
+      llmflows task start --id abc123 --flow default --one-shot
     """
-    chain = list(flows) or ["default"]
     session = _get_session()
     try:
         task_svc = TaskService(session)
@@ -277,20 +270,16 @@ def task_start(task_id, flows, prompt, model, agent, one_shot):
             raise SystemExit(1)
 
         run_svc = RunService(session)
-        project_svc = ProjectService(session)
-        project = project_svc.get(t.project_id)
-        alias_cfg = (project.get_alias("default") or {}) if project else {}
-        step_overrides = alias_cfg.get("step_overrides", {})
-        run = run_svc.enqueue(t.project_id, task_id, chain[0],
-                              user_prompt=prompt, flow_chain=chain,
-                              model=model, agent=agent,
-                              step_overrides=step_overrides,
+        effective_flow = flow_name or t.default_flow_name
+        run = run_svc.enqueue(t.project_id, task_id,
+                              flow_name=effective_flow,
+                              user_prompt=prompt,
                               one_shot=one_shot)
-        chain_str = " → ".join(click.style(f, fg="bright_green") for f in chain)
+        flow_label = click.style(effective_flow or "prompt-only", fg="bright_green")
         click.echo(
             f"Queued run {click.style(run.id[:8], fg='cyan')} "
             f"for task {click.style(task_id, fg='cyan')} "
-            f"({chain_str}) — daemon will pick up shortly"
+            f"({flow_label}) — daemon will pick up shortly"
         )
     finally:
         session.close()

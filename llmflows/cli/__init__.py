@@ -5,7 +5,6 @@ import click
 from .. import __version__
 from .admin import register_cmd, db, project
 from .agent import agent
-from .alias import alias
 from .daemon import daemon
 from .flow import flow
 from .run import run
@@ -24,7 +23,6 @@ cli.add_command(register_cmd)
 cli.add_command(db)
 cli.add_command(project)
 cli.add_command(agent)
-cli.add_command(alias)
 cli.add_command(daemon)
 cli.add_command(flow)
 cli.add_command(run)

@@ -1,5 +1,6 @@
 """Context service -- renders step prompts and collects artifacts."""
 
+import json
 from pathlib import Path
 
 from jinja2 import Environment, TemplateError
@@ -14,8 +15,110 @@ RESULT_FILE_LIMIT = 50_000
 ARTIFACT_FILE_LIMIT = 20_000
 TOTAL_ARTIFACTS_BUDGET = 120_000
 
+BINARY_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg",
+    ".mp4", ".webm", ".mov", ".avi", ".mp3", ".wav", ".ogg",
+    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
+    ".pdf", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe",
+})
+
 LOG_TAIL_LINES = 200
 LOG_TAIL_MAX_CHARS = 30_000
+
+
+def _parse_jsonl_log(raw: str, max_chars: int = LOG_TAIL_MAX_CHARS) -> str:
+    """Extract human-readable text from a JSONL agent log."""
+    parts: list[str] = []
+    budget = max_chars
+
+    for line in raw.splitlines():
+        if budget <= 0:
+            break
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        t = ev.get("type")
+
+        if t == "assistant":
+            for c in ev.get("message", {}).get("content", []):
+                if c.get("type") == "text" and c.get("text", "").strip():
+                    parts.append(c["text"].strip())
+
+        elif t == "tool_call" and ev.get("subtype") == "started":
+            tc = ev.get("tool_call", {})
+            desc = _describe_tool_start(tc)
+            if desc:
+                parts.append(f"> {desc}")
+
+        elif t == "tool_call" and ev.get("subtype") == "completed":
+            tc = ev.get("tool_call", {})
+            desc, output = _describe_tool_done(tc)
+            if desc:
+                parts.append(f"> {desc}")
+            if output:
+                trimmed = output[:2000] + "\n..." if len(output) > 2000 else output
+                parts.append(trimmed)
+
+        elif t == "result":
+            dur = ev.get("duration_ms", 0)
+            parts.append(f"--- Done ({dur / 1000:.1f}s) ---")
+
+        budget -= sum(len(p) for p in parts[-3:])
+
+    return "\n".join(parts).strip()
+
+
+def _extract_tool(tc: dict) -> tuple[str, dict]:
+    """Find the tool-specific sub-dict in a tool_call envelope."""
+    for key in ("shellToolCall", "readToolCall", "writeToolCall", "editToolCall",
+                "grepToolCall", "globToolCall", "listToolCall", "deleteToolCall"):
+        if key in tc:
+            return key, tc[key]
+    for key, val in tc.items():
+        if isinstance(val, dict):
+            return key, val
+    return "unknown", {}
+
+
+def _describe_tool_start(tc: dict) -> str:
+    name, data = _extract_tool(tc)
+    args = data.get("args", {})
+    if name == "shellToolCall":
+        return f"Shell: {(args.get('command') or '?')[:120]}"
+    if name == "readToolCall":
+        return f"Read {args.get('path', '?')}"
+    if name in ("writeToolCall", "editToolCall"):
+        label = "Write" if name == "writeToolCall" else "Edit"
+        return f"{label} {args.get('path', '?')}"
+    if name == "grepToolCall":
+        return f"Grep: {args.get('pattern', '?')}"
+    if name == "globToolCall":
+        return f"Glob: {args.get('pattern') or args.get('glob', '?')}"
+    return data.get("description", "")
+
+
+def _describe_tool_done(tc: dict) -> tuple[str, str]:
+    """Return (description, output) for a completed tool call."""
+    name, data = _extract_tool(tc)
+    result = data.get("result", {})
+    success = result.get("success", {})
+
+    if name == "shellToolCall":
+        exit_code = success.get("exitCode", success.get("exit_code"))
+        stdout = (success.get("stdout") or success.get("output") or "").strip()
+        header = f"Shell exit={exit_code}" if exit_code is not None else "Shell completed"
+        return header, stdout
+    if name == "editToolCall" and success:
+        return f"Edited {data.get('args', {}).get('path', '?')}", ""
+    if name == "writeToolCall" and success:
+        return f"Wrote {success.get('path', '?')}", ""
+    return "", ""
 
 
 class ContextService:
@@ -109,6 +212,9 @@ class ContextService:
                 for f in sorted(step_dir.iterdir()):
                     if not f.is_file() or f.name == RESULT_FILE:
                         continue
+                    if f.suffix.lower() in BINARY_EXTENSIONS:
+                        files.append({"name": f.name, "content": "(binary file, not shown)"})
+                        continue
                     if budget_remaining <= 0:
                         files.append({"name": f.name, "content": "(budget exceeded, skipped)"})
                         continue
@@ -138,7 +244,9 @@ class ContextService:
     def read_step_log_tail(log_path: str, max_lines: int = LOG_TAIL_LINES) -> str:
         """Read the tail of an agent log file.
 
-        Returns the last *max_lines* lines, capped at LOG_TAIL_MAX_CHARS.
+        If the log is JSONL (Cursor agent format), extracts only assistant
+        messages, tool descriptions, and shell output as readable text.
+        Otherwise returns the raw tail capped at LOG_TAIL_MAX_CHARS.
         """
         if not log_path or log_path == "inline":
             return ""
@@ -149,6 +257,11 @@ class ContextService:
             raw = p.read_text(errors="replace")
         except (PermissionError, OSError):
             return ""
+
+        first_line = raw.lstrip()[:1]
+        if first_line == "{":
+            return _parse_jsonl_log(raw, max_chars=LOG_TAIL_MAX_CHARS)
+
         lines = raw.splitlines()
         tail = "\n".join(lines[-max_lines:])
         if len(tail) > LOG_TAIL_MAX_CHARS:

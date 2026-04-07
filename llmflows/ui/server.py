@@ -12,12 +12,11 @@ from pydantic import BaseModel
 
 import os
 
-from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, get_github_token, load_system_config, save_system_config
+from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
-from ..db.models import Integration, ProjectSettings, TaskType
+from ..db.models import ProjectSettings, TaskType
 from ..services.agent import AgentService
 from ..services.flow import FlowService
-from ..services.github import GitHubService
 from ..services.project import ProjectService
 from ..services.run import RunService
 from ..services.task import TaskService
@@ -34,11 +33,13 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
     type: str = "feature"
+    default_flow_name: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    default_flow_name: Optional[str] = None
 
 
 class FlowCreate(BaseModel):
@@ -58,6 +59,9 @@ class StepCreate(BaseModel):
     position: Optional[int] = None
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
+    agent_alias: str = "standard"
+    allow_max: bool = False
+    max_gate_retries: int = 3
 
 
 class StepUpdate(BaseModel):
@@ -66,6 +70,9 @@ class StepUpdate(BaseModel):
     position: Optional[int] = None
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
+    agent_alias: Optional[str] = None
+    allow_max: Optional[bool] = None
+    max_gate_retries: Optional[int] = None
 
 
 class ReorderSteps(BaseModel):
@@ -73,12 +80,8 @@ class ReorderSteps(BaseModel):
 
 
 class TaskStartBody(BaseModel):
-    flow: str = "default"
-    flow_chain: list[str] = []
+    flow: Optional[str] = None
     user_prompt: str = ""
-    model: str = ""
-    agent: str = "cursor"
-    step_overrides: dict = {}
     one_shot: bool = False
 
 
@@ -276,7 +279,6 @@ async def get_project(project_id: str):
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
-    aliases: Optional[dict] = None
 
 
 @app.patch("/api/projects/{project_id}")
@@ -289,13 +291,6 @@ async def update_project(project_id: str, body: ProjectUpdate):
         updates = {}
         if body.name is not None:
             updates["name"] = body.name
-        if body.aliases is not None:
-            aliases = body.aliases
-            if "default" not in aliases:
-                aliases["default"] = project.get_aliases().get("default", {
-                    "agent": "cursor", "model": "auto", "flow_chain": ["default"],
-                })
-            updates["aliases"] = json.dumps(aliases)
         if updates:
             project = project_svc.update(project_id, **updates)
         return project.to_dict()
@@ -383,6 +378,7 @@ async def create_task(project_id: str, body: TaskCreate):
             name=body.title,
             description=body.description,
             task_type=task_type,
+            default_flow_name=body.default_flow_name or None,
         )
 
         ps = _get_project_settings(project_id, session)
@@ -404,6 +400,8 @@ async def update_task(task_id: str, body: TaskUpdate):
             updates["name"] = body.title
         if body.description is not None:
             updates["description"] = body.description
+        if body.default_flow_name is not None:
+            updates["default_flow_name"] = body.default_flow_name or None
         if updates:
             task = task_svc.update(task_id, **updates)
 
@@ -435,14 +433,12 @@ async def start_task(task_id: str, body: TaskStartBody):
             raise HTTPException(status_code=404, detail="Task not found")
 
         run_svc = RunService(session)
-        chain = body.flow_chain if body.flow_chain else [body.flow]
-        run_svc.enqueue(task.project_id, task_id, flow_name=chain[0],
-                        user_prompt=body.user_prompt or task.description or "",
-                        flow_chain=chain,
-                        model=body.model,
-                        agent=body.agent,
-                        step_overrides=body.step_overrides,
-                        one_shot=body.one_shot)
+        run_svc.enqueue(
+            task.project_id, task_id,
+            flow_name=body.flow or None,
+            user_prompt=body.user_prompt or task.description or "",
+            one_shot=body.one_shot,
+        )
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)
@@ -463,6 +459,89 @@ async def list_task_runs(task_id: str):
         run_svc = RunService(session)
         runs = run_svc.list_by_task(task_id)
         return [r.to_dict() for r in runs]
+    finally:
+        session.close()
+
+
+class ResumeBody(BaseModel):
+    prompt: str = ""
+
+
+@app.post("/api/runs/{run_id}/pause")
+async def pause_run(run_id: str):
+    """Pause an active run -- kills agent, marks as paused (not completed)."""
+    session, project_svc, task_svc = _get_services()
+    try:
+        run_svc = RunService(session)
+        run = run_svc.get(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if run.completed_at:
+            raise HTTPException(status_code=400, detail="Run is already completed")
+
+        task = task_svc.get(run.task_id)
+        project = project_svc.get(run.project_id) if run.project_id else None
+        if task and project:
+            ps = _get_project_settings(project.id, session)
+            is_git = ps.get("is_git_repo", True)
+            AgentService.kill_agent(
+                project.path,
+                task.worktree_branch if is_git else "",
+                task_id="" if is_git else task.id,
+            )
+
+        run_svc.pause(run_id)
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.post("/api/runs/{run_id}/resume")
+async def resume_run(run_id: str, body: ResumeBody):
+    """Resume a paused run, optionally with an additional prompt."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        run = run_svc.get(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if not run.paused_at:
+            raise HTTPException(status_code=400, detail="Run is not paused")
+        run_svc.resume(run_id, body.prompt)
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+class RetryStepBody(BaseModel):
+    step_name: str
+    prompt: str = ""
+
+
+@app.post("/api/runs/{run_id}/retry-step")
+async def retry_step(run_id: str, body: RetryStepBody):
+    """Re-activate an interrupted run and re-run from a specific step."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        run = run_svc.retry_step(run_id, body.step_name, prompt=body.prompt)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.post("/api/step-runs/{step_run_id}/complete")
+async def complete_step_manually(step_run_id: str):
+    """Manually mark a step as completed so the flow can advance."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        sr = run_svc.complete_step_manually(step_run_id)
+        if not sr:
+            raise HTTPException(status_code=404, detail="StepRun not found")
+        return {"ok": True}
     finally:
         session.close()
 
@@ -517,7 +596,7 @@ async def delete_run(run_id: str):
 
 @app.get("/api/runs/{run_id}/steps")
 async def get_run_steps(run_id: str):
-    """Return step progress for a run using StepRun records."""
+    """Return step progress for a run, including all retry attempts."""
     session, _, _ = _get_services()
     try:
         from ..db.models import TaskRun
@@ -528,14 +607,6 @@ async def get_run_steps(run_id: str):
         run_svc = RunService(session)
         flow_svc = FlowService(session)
         step_runs = run_svc.list_step_runs(run_id)
-
-        step_run_map = {}
-        for sr in step_runs:
-            key = (sr.flow_name, sr.step_name)
-            if key not in step_run_map or (sr.started_at and (not step_run_map[key].started_at or sr.started_at > step_run_map[key].started_at)):
-                step_run_map[key] = sr
-
-        import json
 
         one_shot_sr = next(
             (sr for sr in step_runs if sr.step_name == "__one_shot__"), None
@@ -549,37 +620,42 @@ async def get_run_steps(run_id: str):
                     "status": one_shot_sr.status,
                     "has_ifs": False,
                     "step_run": one_shot_sr.to_dict(),
+                    "attempts": [one_shot_sr.to_dict()],
                 })
             return {"steps": result}
 
-        try:
-            chain = json.loads(run.flow_chain or "[]")
-        except (json.JSONDecodeError, TypeError):
-            chain = []
-        if not chain:
-            chain = [run.flow_name]
+        # Group all step runs by step_name for retry history
+        step_runs_by_name: dict[str, list] = {}
+        for sr in step_runs:
+            step_runs_by_name.setdefault(sr.step_name, []).append(sr)
 
-        result = []
+        # Latest step run per step (most recent attempt)
+        step_run_map = {}
+        for name, srs in step_runs_by_name.items():
+            step_run_map[name] = max(srs, key=lambda s: s.started_at or s.created_at if hasattr(s, 'created_at') else s.started_at)
+
         max_started_position = -1
         for sr in step_runs:
             if sr.started_at and sr.step_position > max_started_position:
                 max_started_position = sr.step_position
 
-        position = 0
-        for flow_name in chain:
-            steps = flow_svc.get_flow_steps(flow_name)
-            for step_name in steps:
-                step_obj = flow_svc.get_step_obj(flow_name, step_name)
-                has_ifs = bool(step_obj and step_obj.get_ifs())
-                sr = step_run_map.get((flow_name, step_name))
+        result = []
+
+        if run.run_flow_id:
+            # Use snapshot steps
+            step_names = flow_svc.get_run_flow_steps(run.run_flow_id)
+            flow_name = run.flow_name or ""
+            position = 0
+            for step_name in step_names:
+                rfs = flow_svc.get_run_flow_step(run.run_flow_id, step_name)
+                has_ifs = bool(rfs and rfs.get_ifs())
+                sr = step_run_map.get(step_name)
+                attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
                 if sr:
                     status = sr.status
                     step_data = sr.to_dict()
                 else:
-                    if has_ifs and position < max_started_position:
-                        status = "skipped"
-                    else:
-                        status = "pending"
+                    status = "skipped" if has_ifs and position < max_started_position else "pending"
                     step_data = None
                 result.append({
                     "name": step_name,
@@ -587,8 +663,48 @@ async def get_run_steps(run_id: str):
                     "status": status,
                     "has_ifs": has_ifs,
                     "step_run": step_data,
+                    "attempts": attempts,
+                    "agent_alias": rfs.agent_alias if rfs else "standard",
+                    "allow_max": bool(rfs.allow_max) if rfs else False,
+                    "max_gate_retries": rfs.max_gate_retries if rfs else 3,
                 })
                 position += 1
+        elif run.flow_name:
+            # Fallback to template (legacy runs without snapshot)
+            steps = flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id)
+            position = 0
+            for step_name in steps:
+                step_obj = flow_svc.get_step_obj(run.flow_name, step_name, project_id=run.project_id)
+                has_ifs = bool(step_obj and step_obj.get_ifs())
+                sr = step_run_map.get(step_name)
+                attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
+                if sr:
+                    status = sr.status
+                    step_data = sr.to_dict()
+                else:
+                    status = "skipped" if has_ifs and position < max_started_position else "pending"
+                    step_data = None
+                result.append({
+                    "name": step_name,
+                    "flow": run.flow_name,
+                    "status": status,
+                    "has_ifs": has_ifs,
+                    "step_run": step_data,
+                    "attempts": attempts,
+                })
+                position += 1
+
+        # Add summary step if present
+        summary_sr = step_run_map.get("__summary__")
+        if summary_sr and not any(s["name"] == "__summary__" for s in result):
+            result.append({
+                "name": "__summary__",
+                "flow": run.flow_name or "",
+                "status": summary_sr.status,
+                "has_ifs": False,
+                "step_run": summary_sr.to_dict(),
+                "attempts": [summary_sr.to_dict()],
+            })
 
         return {"steps": result}
     finally:
@@ -607,6 +723,7 @@ async def stream_step_run_logs(step_run_id: str):
         if not sr.log_path:
             raise HTTPException(status_code=404, detail="No log path set for this step run")
         log_path = Path(sr.log_path)
+        is_completed = sr.completed_at is not None
     finally:
         session.close()
 
@@ -616,7 +733,7 @@ async def stream_step_run_logs(step_run_id: str):
     async def tail_log():
         pos = 0
         idle_count = 0
-        max_idle = 120
+        max_idle = 5 if is_completed else 120
         while idle_count < max_idle:
             try:
                 size = log_path.stat().st_size
@@ -707,6 +824,92 @@ async def stream_run_logs(run_id: str):
     )
 
 
+# --- Agent Alias endpoints ---
+
+class AgentAliasCreate(BaseModel):
+    name: str
+    agent: str = "cursor"
+    model: str
+
+
+class AgentAliasUpdate(BaseModel):
+    name: Optional[str] = None
+    agent: Optional[str] = None
+    model: Optional[str] = None
+    position: Optional[int] = None
+
+
+@app.get("/api/agent-aliases")
+async def list_agent_aliases():
+    from ..db.models import AgentAlias
+    session, _, _ = _get_services()
+    try:
+        aliases = session.query(AgentAlias).order_by(AgentAlias.position, AgentAlias.name).all()
+        return [a.to_dict() for a in aliases]
+    finally:
+        session.close()
+
+
+@app.post("/api/agent-aliases")
+async def create_agent_alias(body: AgentAliasCreate):
+    from ..db.models import AgentAlias
+    session, _, _ = _get_services()
+    try:
+        existing = session.query(AgentAlias).filter_by(name=body.name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Alias '{body.name}' already exists")
+        max_pos = session.query(AgentAlias).count()
+        alias = AgentAlias(
+            name=body.name, agent=body.agent, model=body.model,
+            position=max_pos,
+        )
+        session.add(alias)
+        session.commit()
+        return alias.to_dict()
+    finally:
+        session.close()
+
+
+@app.patch("/api/agent-aliases/{alias_id}")
+async def update_agent_alias(alias_id: str, body: AgentAliasUpdate):
+    from ..db.models import AgentAlias
+    session, _, _ = _get_services()
+    try:
+        alias = session.query(AgentAlias).filter_by(id=alias_id).first()
+        if not alias:
+            raise HTTPException(status_code=404, detail="Alias not found")
+        if body.name is not None:
+            dup = session.query(AgentAlias).filter_by(name=body.name).first()
+            if dup and dup.id != alias_id:
+                raise HTTPException(status_code=400, detail=f"Alias '{body.name}' already exists")
+            alias.name = body.name
+        if body.agent is not None:
+            alias.agent = body.agent
+        if body.model is not None:
+            alias.model = body.model
+        if body.position is not None:
+            alias.position = body.position
+        session.commit()
+        return alias.to_dict()
+    finally:
+        session.close()
+
+
+@app.delete("/api/agent-aliases/{alias_id}")
+async def delete_agent_alias(alias_id: str):
+    from ..db.models import AgentAlias
+    session, _, _ = _get_services()
+    try:
+        alias = session.query(AgentAlias).filter_by(id=alias_id).first()
+        if not alias:
+            raise HTTPException(status_code=404, detail="Alias not found")
+        session.delete(alias)
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()
+
+
 # --- Queue + dashboard ---
 
 @app.get("/api/queue")
@@ -725,31 +928,6 @@ async def global_queue():
             d["project_name"] = project.name if project else None
             result.append(d)
         return result
-    finally:
-        session.close()
-
-
-@app.get("/api/history")
-async def global_history(limit: int = 100, offset: int = 0):
-    """All TaskRuns globally, newest first. Includes completed, running, and queued."""
-    session, project_svc, task_svc = _get_services()
-    try:
-        from ..db.models import TaskRun
-        query = (
-            session.query(TaskRun)
-            .order_by(TaskRun.created_at.desc())
-        )
-        total = query.count()
-        runs = query.offset(offset).limit(limit).all()
-        result = []
-        for r in runs:
-            d = r.to_dict()
-            task = task_svc.get(r.task_id)
-            project = project_svc.get(r.project_id) if r.project_id else None
-            d["task_name"] = task.name if task else None
-            d["project_name"] = project.name if project else None
-            result.append(d)
-        return {"runs": result, "total": total}
     finally:
         session.close()
 
@@ -822,17 +1000,21 @@ async def dashboard():
         session.close()
 
 
-# --- Flow endpoints ---
+# --- Flow endpoints (project-scoped) ---
 
-@app.get("/api/flows")
-async def list_flows():
-    session, _, _ = _get_services()
+@app.get("/api/projects/{project_id}/flows")
+async def list_project_flows(project_id: str):
+    session, project_svc, _ = _get_services()
     try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         flow_svc = FlowService(session)
-        flows = flow_svc.list_all()
+        flows = flow_svc.list_by_project(project_id)
         return [
             {
                 "id": f.id,
+                "project_id": f.project_id,
                 "name": f.name,
                 "description": f.description,
                 "step_count": len(f.steps),
@@ -845,6 +1027,38 @@ async def list_flows():
             }
             for f in flows
         ]
+    finally:
+        session.close()
+
+
+@app.post("/api/projects/{project_id}/flows/export")
+async def export_project_flows(project_id: str):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        flow_svc = FlowService(session)
+        data = flow_svc.export_flows(project_id)
+        return JSONResponse(content=data)
+    finally:
+        session.close()
+
+
+@app.post("/api/projects/{project_id}/flows/import")
+async def import_project_flows(project_id: str, file: UploadFile = File(...)):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        content = await file.read()
+        data = json.loads(content)
+        flow_svc = FlowService(session)
+        count = flow_svc._import_flows_data(data, project_id=project_id, skip_existing=False)
+        return {"imported": count}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     finally:
         session.close()
 
@@ -862,13 +1076,16 @@ async def get_flow(flow_id: str):
         session.close()
 
 
-@app.post("/api/flows")
-async def create_flow(body: FlowCreate):
-    session, _, _ = _get_services()
+@app.post("/api/projects/{project_id}/flows")
+async def create_project_flow(project_id: str, body: FlowCreate):
+    session, project_svc, _ = _get_services()
     try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         flow_svc = FlowService(session)
         if body.copy_from:
-            flow = flow_svc.duplicate(body.copy_from, body.name)
+            flow = flow_svc.duplicate(body.copy_from, body.name, project_id=project_id)
             if not flow:
                 raise HTTPException(status_code=404, detail=f"Source flow '{body.copy_from}' not found")
             if body.description:
@@ -876,6 +1093,7 @@ async def create_flow(body: FlowCreate):
         else:
             flow = flow_svc.create(
                 name=body.name,
+                project_id=project_id,
                 description=body.description,
             )
         return flow.to_dict()
@@ -924,6 +1142,8 @@ async def add_flow_step(flow_id: str, body: StepCreate):
         step = flow_svc.add_step(
             flow_id, body.name, body.content, body.position,
             gates=body.gates, ifs=body.ifs,
+            agent_alias=body.agent_alias, allow_max=body.allow_max,
+            max_gate_retries=body.max_gate_retries,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -945,11 +1165,15 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
         if body.position is not None:
             updates["position"] = body.position
         if body.gates is not None:
-            import json
             updates["gates"] = json.dumps(body.gates)
         if body.ifs is not None:
-            import json
             updates["ifs"] = json.dumps(body.ifs)
+        if body.agent_alias is not None:
+            updates["agent_alias"] = body.agent_alias
+        if body.allow_max is not None:
+            updates["allow_max"] = body.allow_max
+        if body.max_gate_retries is not None:
+            updates["max_gate_retries"] = body.max_gate_retries
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
@@ -983,166 +1207,6 @@ async def reorder_flow_steps(flow_id: str, body: ReorderSteps):
         session.close()
 
 
-@app.post("/api/flows/export")
-async def export_flows():
-    session, _, _ = _get_services()
-    try:
-        flow_svc = FlowService(session)
-        data = flow_svc.export_flows()
-        return JSONResponse(content=data)
-    finally:
-        session.close()
-
-
-@app.post("/api/flows/import")
-async def import_flows(file: UploadFile = File(...)):
-    session, _, _ = _get_services()
-    try:
-        content = await file.read()
-        data = json.loads(content)
-        flow_svc = FlowService(session)
-        count = flow_svc._import_flows_data(data, skip_existing=False)
-        return {"imported": count}
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    finally:
-        session.close()
-
-
-# --- Integration endpoints ---
-
-class IntegrationCreate(BaseModel):
-    provider: str
-    config: dict = {}
-
-
-class IntegrationUpdate(BaseModel):
-    enabled: Optional[bool] = None
-    config: Optional[dict] = None
-
-
-@app.get("/api/projects/{project_id}/integrations")
-async def list_integrations(project_id: str):
-    session, project_svc, _ = _get_services()
-    try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        integrations = (
-            session.query(Integration)
-            .filter_by(project_id=project_id)
-            .all()
-        )
-        return [i.to_dict() for i in integrations]
-    finally:
-        session.close()
-
-
-@app.post("/api/projects/{project_id}/integrations")
-async def create_integration(project_id: str, body: IntegrationCreate):
-    session, project_svc, _ = _get_services()
-    try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        integration = Integration(
-            project_id=project_id,
-            provider=body.provider,
-            config=json.dumps(body.config),
-        )
-        session.add(integration)
-        session.commit()
-        return integration.to_dict()
-    finally:
-        session.close()
-
-
-@app.patch("/api/integrations/{integration_id}")
-async def update_integration(integration_id: str, body: IntegrationUpdate):
-    session, _, _ = _get_services()
-    try:
-        integration = session.query(Integration).filter_by(id=integration_id).first()
-        if not integration:
-            raise HTTPException(status_code=404, detail="Integration not found")
-        if body.enabled is not None:
-            integration.enabled = body.enabled
-        if body.config is not None:
-            integration.config = json.dumps(body.config)
-        session.commit()
-        return integration.to_dict()
-    finally:
-        session.close()
-
-
-@app.delete("/api/integrations/{integration_id}")
-async def delete_integration(integration_id: str):
-    session, _, _ = _get_services()
-    try:
-        integration = session.query(Integration).filter_by(id=integration_id).first()
-        if not integration:
-            raise HTTPException(status_code=404, detail="Integration not found")
-        session.delete(integration)
-        session.commit()
-        return {"ok": True}
-    finally:
-        session.close()
-
-
-@app.post("/api/integrations/{integration_id}/detect-repo")
-async def detect_repo(integration_id: str):
-    session, project_svc, _ = _get_services()
-    try:
-        integration = session.query(Integration).filter_by(id=integration_id).first()
-        if not integration:
-            raise HTTPException(status_code=404, detail="Integration not found")
-        project = project_svc.get(integration.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        repo = GitHubService.get_repo_from_remote(project.path)
-        if not repo:
-            raise HTTPException(status_code=400, detail="Could not detect GitHub repo from git remote")
-        config = integration.get_config()
-        config["repo"] = repo
-        integration.config = json.dumps(config)
-        session.commit()
-        return {"repo": repo, "integration": integration.to_dict()}
-    finally:
-        session.close()
-
-
-# --- GitHub config ---
-
-@app.get("/api/github/status")
-async def github_status():
-    token = get_github_token()
-    return {"available": token is not None}
-
-
-class GitHubTokenBody(BaseModel):
-    token: str
-
-
-@app.patch("/api/config/github")
-async def update_github_config(body: GitHubTokenBody):
-    if os.environ.get("GITHUB_TOKEN"):
-        return {"ok": False, "error": "Token is set via GITHUB_TOKEN environment variable and cannot be overridden here."}
-    config = load_system_config()
-    if "github" not in config:
-        config["github"] = {}
-    config["github"]["token"] = body.token
-    save_system_config(config)
-    return {"ok": True}
-
-
-@app.get("/api/config/github")
-async def get_github_config():
-    from_env = bool(os.environ.get("GITHUB_TOKEN"))
-    token = get_github_token() or ""
-    has_token = bool(token)
-    masked = token[:4] + "..." + token[-4:] if len(token) > 8 else ("****" if token else "")
-    return {"has_token": has_token, "masked_token": masked, "from_env": from_env}
-
-
 @app.get("/api/agents")
 async def list_agents():
     """Return only agents whose binary is found in PATH (ready to use)."""
@@ -1166,6 +1230,54 @@ async def agents_status():
         }
     return result
 
+
+
+@app.get("/api/agents/{agent_name}/config")
+async def get_agent_config(agent_name: str):
+    from ..db.models import AgentConfig
+    session, _, _ = _get_services()
+    try:
+        configs = session.query(AgentConfig).filter_by(agent=agent_name).all()
+        return [c.to_dict() for c in configs]
+    finally:
+        session.close()
+
+
+class AgentConfigBody(BaseModel):
+    key: str
+    value: str
+
+
+@app.post("/api/agents/{agent_name}/config")
+async def set_agent_config(agent_name: str, body: AgentConfigBody):
+    from ..db.models import AgentConfig
+    session, _, _ = _get_services()
+    try:
+        existing = session.query(AgentConfig).filter_by(agent=agent_name, key=body.key).first()
+        if existing:
+            existing.value = body.value
+        else:
+            session.add(AgentConfig(agent=agent_name, key=body.key, value=body.value))
+        session.commit()
+        configs = session.query(AgentConfig).filter_by(agent=agent_name).all()
+        return [c.to_dict() for c in configs]
+    finally:
+        session.close()
+
+
+@app.delete("/api/agents/{agent_name}/config/{config_id}")
+async def delete_agent_config(agent_name: str, config_id: str):
+    from ..db.models import AgentConfig
+    session, _, _ = _get_services()
+    try:
+        config = session.query(AgentConfig).filter_by(id=config_id, agent=agent_name).first()
+        if not config:
+            raise HTTPException(status_code=404, detail="Config not found")
+        session.delete(config)
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()
 
 
 @app.get("/api/models")

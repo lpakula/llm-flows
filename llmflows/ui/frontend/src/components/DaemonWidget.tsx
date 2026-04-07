@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { NavLink } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 
@@ -85,15 +84,6 @@ export function DaemonWidget() {
         <button onClick={toggleLogs} className="text-[11px] text-gray-500 hover:text-gray-300 transition">
           {showLogs ? "Hide logs" : "Logs"}
         </button>
-        <span className="text-gray-700">&middot;</span>
-        <NavLink
-          to="/settings"
-          className={({ isActive }) =>
-            `text-[11px] transition ${isActive ? "text-white" : "text-gray-500 hover:text-gray-300"}`
-          }
-        >
-          Settings
-        </NavLink>
         <span className="text-gray-700">&middot;</span>
         {running ? (
           <button

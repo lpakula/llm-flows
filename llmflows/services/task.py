@@ -17,6 +17,7 @@ class TaskService:
         name: str,
         description: str = "",
         task_type: TaskType = TaskType.FEATURE,
+        default_flow_name: str | None = None,
     ) -> Task:
         """Create a new task with a required title."""
         task = Task(
@@ -24,6 +25,7 @@ class TaskService:
             name=name,
             description=description,
             type=task_type,
+            default_flow_name=default_flow_name,
         )
         self.session.add(task)
         self.session.commit()

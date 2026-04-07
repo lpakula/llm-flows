@@ -1,32 +1,38 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Flow } from "@/api/types";
+import type { Flow, Project } from "@/api/types";
 
-export function FlowsView() {
+export function ProjectFlowsView() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const [project, setProject] = useState<Project | null>(null);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newFlow, setNewFlow] = useState({ name: "", description: "", copy_from: "" });
   const navigate = useNavigate();
   const { reload } = useApp();
 
-  const load = async () => {
-    setFlows(await api.listFlows());
-  };
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    const [p, f] = await Promise.all([api.getProject(projectId), api.listFlows(projectId)]);
+    setProject(p);
+    setFlows(f);
+  }, [projectId]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const createFlow = async () => {
+    if (!projectId) return;
     const body: { name: string; description?: string; copy_from?: string } = {
       name: newFlow.name,
       description: newFlow.description,
     };
     if (newFlow.copy_from) body.copy_from = newFlow.copy_from;
     try {
-      await api.createFlow(body);
+      await api.createFlow(projectId, body);
       setNewFlow({ name: "", description: "", copy_from: "" });
       setShowCreate(false);
       load();
@@ -48,20 +54,22 @@ export function FlowsView() {
   };
 
   const exportFlows = async () => {
-    const data = await api.exportFlows();
+    if (!projectId) return;
+    const data = await api.exportFlows(projectId);
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "flows.json";
+    a.download = `${project?.name || "flows"}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const importFlows = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!projectId) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await api.importFlows(file);
+    const result = await api.importFlows(projectId, file);
     alert(`Imported ${result.imported} flow(s)`);
     load();
     reload();
@@ -71,7 +79,12 @@ export function FlowsView() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold">Flows</h2>
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate(`/project/${projectId}`)} className="text-xs text-gray-500 hover:text-gray-300">
+            &larr; {project?.name}
+          </button>
+          <h2 className="text-xl font-semibold">Flows</h2>
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={exportFlows} className="text-xs text-gray-500 hover:text-gray-300 transition">
             Export
@@ -89,7 +102,6 @@ export function FlowsView() {
         </div>
       </div>
 
-      {/* Create Form */}
       {showCreate && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4 space-y-3">
           <input
@@ -128,7 +140,6 @@ export function FlowsView() {
         </div>
       )}
 
-      {/* Flow List */}
       <div className="space-y-2">
         {flows.map((flow) => (
           <div

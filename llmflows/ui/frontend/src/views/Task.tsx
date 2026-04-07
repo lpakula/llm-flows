@@ -5,11 +5,12 @@ import { useInterval } from "@/hooks/useInterval";
 import { useLogStream } from "@/hooks/useEventSource";
 import { useApp } from "@/App";
 import { LogViewer } from "@/components/LogViewer";
-import type { Task, TaskRun, StepRunInfo, Project } from "@/api/types";
+import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
 import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass } from "@/lib/format";
+import { marked } from "marked";
 
 export function TaskView() {
-  const { taskId } = useParams<{ taskId: string }>();
+  const { projectId, taskId } = useParams<{ projectId: string; taskId: string }>();
   const navigate = useNavigate();
   const { projects } = useApp();
 
@@ -22,10 +23,19 @@ export function TaskView() {
 
   // Run modal state
   const [runModal, setRunModal] = useState(false);
-  const [runModalProject, setRunModalProject] = useState<Project | null>(null);
-  const [runModalAlias, setRunModalAlias] = useState("");
+  const [runModalFlow, setRunModalFlow] = useState<string>("");
   const [runModalPrompt, setRunModalPrompt] = useState("");
   const [runModalOneShot, setRunModalOneShot] = useState(false);
+  const [flows, setFlows] = useState<Flow[]>([]);
+
+  // Retry modal
+  const [retryModal, setRetryModal] = useState<{ runId: string; stepName: string } | null>(null);
+  const [retryPrompt, setRetryPrompt] = useState("");
+
+  // Selected attempt for viewing logs
+  const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
+  const [viewingStepPrompt, setViewingStepPrompt] = useState<string | null>(null);
+  const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
 
   // Description editing
   const [editingDesc, setEditingDesc] = useState(false);
@@ -99,8 +109,16 @@ export function TaskView() {
       setExpandedRun(null);
       setLogUrl(null);
       setViewingStepName(null);
+      setSelectedAttempt(null);
+      setViewingStepPrompt(null);
+      setViewingGateFailures([]);
     } else {
       setExpandedRun(runId);
+      setLogUrl(null);
+      setViewingStepName(null);
+      setSelectedAttempt(null);
+      setViewingStepPrompt(null);
+      setViewingGateFailures([]);
       loadRunSteps(runId);
       const run = runs.find((r) => r.id === runId);
       if (run && isRunActive(run)) {
@@ -118,6 +136,8 @@ export function TaskView() {
     setLogUrl(`/api/step-runs/${step.step_run.id}/logs`);
     const name = step.name === "__summary__" ? "summary" : step.name === "__one_shot__" ? "one-shot" : step.name;
     setViewingStepName(name);
+    setViewingStepPrompt(step.step_run.prompt || null);
+    setViewingGateFailures(step.step_run.gate_failures || []);
   };
 
   const forceStopRun = async (runId: string) => {
@@ -127,6 +147,31 @@ export function TaskView() {
     if (taskId) {
       setRuns(await api.listTaskRuns(taskId));
     }
+  };
+
+  const completeStep = async (stepRunId: string) => {
+    if (!confirm("Mark this step as manually completed?")) return;
+    await api.completeStep(stepRunId);
+    if (expandedRun) loadRunSteps(expandedRun);
+  };
+
+  const openRetryModal = (runId: string, stepName: string) => {
+    setRetryPrompt("");
+    setRetryModal({ runId, stepName });
+  };
+
+  const submitRetry = async () => {
+    if (!retryModal) return;
+    const { runId, stepName } = retryModal;
+    setRetryModal(null);
+    setLogUrl(null);
+    setViewingStepName(null);
+    setViewingStepPrompt(null);
+    setSelectedAttempt(null);
+    setViewingGateFailures([]);
+    await api.retryStep(runId, stepName, retryPrompt);
+    if (taskId) setRuns(await api.listTaskRuns(taskId));
+    await loadRunSteps(runId);
   };
 
   const deleteRun = async (runId: string) => {
@@ -142,48 +187,29 @@ export function TaskView() {
   };
 
   const openRunModal = async () => {
+    if (!task) return;
     setRunModalPrompt("");
-    setRunModalAlias("");
     setRunModalOneShot(false);
-    try {
-      const project = task ? await api.getProject(task.project_id) : null;
-      setRunModalProject(project);
-      if (project?.aliases?.["default"]) {
-        setRunModalAlias("default");
-      }
-    } catch {
-      setRunModalProject(null);
-    }
+    const fl = await api.listFlows(task.project_id);
+    setFlows(fl);
+    setRunModalFlow(task.default_flow_name || "");
     setRunModal(true);
   };
 
   const submitRunModal = async () => {
-    if (!task || !runModalAlias || !runModalProject) return;
-    const cfg = runModalProject.aliases?.[runModalAlias];
-    if (!cfg) return;
+    if (!task) return;
     let prompt = runModalPrompt;
     if (runs.length === 0 && runModalPrompt.trim()) {
       const desc = (task.description || "").trim();
       prompt = desc ? desc + "\n\n" + runModalPrompt.trim() : runModalPrompt.trim();
     }
     await api.startTask(task.id, {
-      flow: cfg.flow_chain?.[0] || "default",
-      flow_chain: cfg.flow_chain || ["default"],
+      flow: runModalFlow || null,
       user_prompt: prompt,
-      model: cfg.model || "",
-      agent: cfg.agent || "cursor",
-      step_overrides: cfg.step_overrides || {},
       one_shot: runModalOneShot,
     });
     setRunModal(false);
     setRuns(await api.listTaskRuns(task.id));
-  };
-
-  const sortedAliases = () => {
-    const aliases = runModalProject?.aliases || {};
-    return Object.keys(aliases)
-      .sort((a, b) => (a === "default" ? -1 : b === "default" ? 1 : a.localeCompare(b)))
-      .map((k) => ({ name: k, ...aliases[k] }));
   };
 
   const saveDescription = async () => {
@@ -264,7 +290,8 @@ export function TaskView() {
                   <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(displayStatus(run))}`}>
                     {displayStatus(run)}
                   </span>
-                  <span className="text-xs text-cyan-400">{run.flow_name}</span>
+                  {run.flow_name && <span className="text-xs text-cyan-400">{run.flow_name}</span>}
+                  {!run.flow_name && <span className="text-xs text-gray-500 italic">prompt-only</span>}
                   <span className="text-xs text-gray-500">{duration(run.started_at, run.completed_at)}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -273,7 +300,7 @@ export function TaskView() {
                       onClick={(e) => { e.stopPropagation(); forceStopRun(run.id); }}
                       className="text-xs text-red-400 hover:text-red-300"
                     >
-                      Stop
+                      Force Stop
                     </button>
                   )}
                   {run.completed_at && (
@@ -290,37 +317,166 @@ export function TaskView() {
 
               {expandedRun === run.id && (
                 <div className="border-t border-gray-800">
+                  {/* Run summary */}
+                  {run.summary && (
+                    <div className="px-5 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
+                      <div
+                        className="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed
+                          [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
+                          [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5
+                          [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
+                          [&_p]:my-1.5 [&_p]:text-gray-300
+                          [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+                          [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+                          [&_li]:text-gray-300
+                          [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
+                          [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                          [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
+                          [&_strong]:text-gray-100 [&_strong]:font-semibold
+                          [&_a]:text-blue-400 [&_a]:underline
+                          [&_table]:w-full [&_table]:my-2 [&_table]:text-[11px] [&_table]:border-collapse
+                          [&_th]:text-left [&_th]:text-gray-300 [&_th]:font-semibold [&_th]:border-b [&_th]:border-gray-700 [&_th]:px-2 [&_th]:py-1.5
+                          [&_td]:text-gray-400 [&_td]:border-b [&_td]:border-gray-800 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top
+                          [&_tr:last-child_td]:border-b-0"
+                        dangerouslySetInnerHTML={{ __html: marked.parse(run.summary) as string }}
+                      />
+                    </div>
+                  )}
+
                   {/* Step pipeline */}
                   {(runSteps[run.id] || []).length > 0 && (
-                    <div className="px-5 py-3 flex items-center gap-1 overflow-x-auto">
-                      {(runSteps[run.id] || []).map((step, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          {i > 0 && <div className={`w-4 h-0.5 ${stepConnectorClass(step.status)}`} />}
-                          <button
-                            onClick={() => step.step_run && viewStepLogs(step)}
-                            className={`px-2 py-1 rounded border text-[11px] whitespace-nowrap ${stepBoxClass(step.status)} ${
-                              step.step_run ? "cursor-pointer hover:opacity-80" : "cursor-default"
-                            }`}
-                          >
-                            {step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name}
-                            {step.has_ifs && " ⓘ"}
-                          </button>
-                        </div>
-                      ))}
+                    <div className="px-5 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-2">Steps</div>
+                      <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                        {(runSteps[run.id] || []).map((step, i) => {
+                          const attempts = step.attempts || [];
+                          const stepLabel = step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name;
+                          return (
+                            <div key={i} className="flex items-center gap-1">
+                              {i > 0 && <div className={`w-4 h-0.5 ${stepConnectorClass(step.status)}`} />}
+                              <div className="relative">
+                                <button
+                                  onClick={() => {
+                                    if (!step.step_run) return;
+                                    viewStepLogs(step);
+                                    setSelectedAttempt(null);
+                                  }}
+                                  className={`px-2 py-1 rounded text-[11px] whitespace-nowrap ${stepBoxClass(step.status)} ${
+                                    viewingStepName === stepLabel && !selectedAttempt
+                                      ? "border-2"
+                                      : "border"
+                                  } ${step.step_run ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                                >
+                                  {stepLabel}
+                                  {step.has_ifs && " \u24d8"}
+                                </button>
+                                {step.step_run && step.status !== "completed" && step.status !== "running" && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); completeStep(step.step_run!.id); }}
+                                    className="absolute -bottom-2 -right-2 bg-green-700 text-white text-[8px] px-1 rounded hover:bg-green-600"
+                                    title="Mark as completed"
+                                  >
+                                    ✓
+                                  </button>
+                                )}
+                              </div>
+                              {/* Stop button next to running step (not on summary) */}
+                              {step.status === "running" && isRunActive(run) && step.name !== "__summary__" && (
+                                <button
+                                  onClick={() => forceStopRun(run.id)}
+                                  className="ml-1 px-1.5 py-1 rounded border border-red-700 bg-red-900/40 text-red-400 text-[10px] whitespace-nowrap cursor-pointer hover:bg-red-800/60"
+                                  title="Stop run"
+                                >
+                                  ■
+                                </button>
+                              )}
+                              {/* Play button to retry/resume from this step */}
+                              {run.completed_at && step.status !== "completed" && step.step_run && (
+                                <button
+                                  onClick={() => openRetryModal(run.id, step.name)}
+                                  className="ml-1 px-1.5 py-1 rounded border border-green-700 bg-green-900/40 text-green-400 text-[10px] whitespace-nowrap cursor-pointer hover:bg-green-800/60"
+                                  title="Retry from this step"
+                                >
+                                  ▶
+                                </button>
+                              )}
+                              {/* Gate retry blocks */}
+                              {attempts.length > 1 && attempts.slice(0, -1).map((att, j) => (
+                                <div key={att.id} className="flex items-center gap-1">
+                                  <div className="w-3 h-0.5 bg-orange-800" />
+                                  <button
+                                    onClick={() => {
+                                      setLogUrl(`/api/step-runs/${att.id}/logs`);
+                                      setViewingStepName(`${stepLabel} #${j + 1}`);
+                                      setSelectedAttempt({ stepName: step.name, attemptId: att.id });
+                                      setViewingStepPrompt(att.prompt || null);
+                                      setViewingGateFailures(att.gate_failures || []);
+                                    }}
+                                    className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
+                                      selectedAttempt?.attemptId === att.id
+                                        ? "border-2 bg-orange-900/50 border-orange-500 text-orange-300"
+                                        : "border bg-orange-900/30 border-orange-800 text-orange-500"
+                                    }`}
+                                    title={`Retry #${j + 1}`}
+                                  >
+                                    ↻
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
-                  {/* Viewing step indicator */}
+                  {/* Log viewer - only when a step is selected */}
                   {viewingStepName && (
-                    <div className="px-5 py-1 text-xs text-gray-500 border-t border-gray-800">
-                      Viewing: <span className="text-cyan-400">{viewingStepName}</span>
+                    <div className="border-t border-gray-800">
+                      <div className="px-5 py-1.5 flex items-center justify-end">
+                        <button
+                          onClick={() => { setLogUrl(null); setViewingStepName(null); setViewingStepPrompt(null); setSelectedAttempt(null); setViewingGateFailures([]); }}
+                          className="text-xs text-gray-500 hover:text-gray-300 transition"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      {/* Initial prompt (when not viewing a step's injected context) */}
+                      {run.prompt && !viewingStepPrompt && (
+                        <CollapsiblePrompt label="Initial prompt (start.md)" text={run.prompt} />
+                      )}
+                      {/* Step injected context */}
+                      {viewingStepPrompt && (
+                        <CollapsiblePrompt label="Injected context" text={viewingStepPrompt} />
+                      )}
+                      {/* Gate failures that triggered this retry */}
+                      {viewingGateFailures.length > 0 && (
+                        <div className="px-5 mb-2">
+                          <details className="group" open>
+                            <summary className="text-[10px] uppercase tracking-wide text-orange-600 cursor-pointer select-none hover:text-orange-400 list-none flex items-center gap-1">
+                              <span className="text-orange-700 group-open:rotate-90 transition-transform inline-block">▶</span>
+                              Gate failures ({viewingGateFailures.length})
+                            </summary>
+                            <div className="mt-1 space-y-1.5">
+                              {viewingGateFailures.map((gf, i) => (
+                                <div key={i} className="bg-red-900/20 border border-red-900/50 rounded-lg p-2 text-[11px]">
+                                  <div className="font-mono text-red-400">{gf.command}</div>
+                                  <div className="text-gray-400 mt-0.5">{gf.message}</div>
+                                  {gf.output && (
+                                    <pre className="text-gray-500 mt-1 text-[10px] whitespace-pre-wrap">{gf.output}</pre>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        </div>
+                      )}
+                      <div className="h-80">
+                        <LogViewer entries={logEntries} streaming={streaming} />
+                      </div>
                     </div>
                   )}
-
-                  {/* Log viewer */}
-                  <div className="h-80">
-                    <LogViewer entries={logEntries} streaming={streaming} />
-                  </div>
                 </div>
               )}
             </div>
@@ -335,16 +491,16 @@ export function TaskView() {
             <h2 className="text-sm font-semibold mb-4">Start Run</h2>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Alias</label>
+                <label className="text-xs text-gray-500 block mb-1">Flow</label>
                 <select
-                  value={runModalAlias}
-                  onChange={(e) => setRunModalAlias(e.target.value)}
+                  value={runModalFlow}
+                  onChange={(e) => setRunModalFlow(e.target.value)}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
                 >
-                  <option value="">Select alias...</option>
-                  {sortedAliases().map((a) => (
-                    <option key={a.name} value={a.name}>
-                      {a.name} ({a.agent}, {a.flow_chain.join(" → ")})
+                  <option value="">No flow (prompt only)</option>
+                  {flows.map((f) => (
+                    <option key={f.id} value={f.name}>
+                      {f.name} ({f.step_count} steps)
                     </option>
                   ))}
                 </select>
@@ -358,15 +514,17 @@ export function TaskView() {
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none"
                 />
               </div>
-              <label className="flex items-center gap-2 text-sm text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={runModalOneShot}
-                  onChange={(e) => setRunModalOneShot(e.target.checked)}
-                  className="rounded"
-                />
-                One-shot mode
-              </label>
+              {runModalFlow && (
+                <label className="flex items-center gap-2 text-sm text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={runModalOneShot}
+                    onChange={(e) => setRunModalOneShot(e.target.checked)}
+                    className="rounded"
+                  />
+                  One-shot mode (skip flow steps, use prompt only)
+                </label>
+              )}
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setRunModal(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200">
@@ -374,8 +532,7 @@ export function TaskView() {
               </button>
               <button
                 onClick={submitRunModal}
-                disabled={!runModalAlias}
-                className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-40"
+                className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500"
               >
                 Start
               </button>
@@ -383,6 +540,51 @@ export function TaskView() {
           </div>
         </div>
       )}
+
+      {/* Retry Step Modal */}
+      {retryModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setRetryModal(null)}>
+          <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-sm font-semibold mb-1">Retry step: <span className="text-cyan-400">{retryModal.stepName}</span></h2>
+            <p className="text-xs text-gray-500 mb-4">Previous attempts for this step will be cleared.</p>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Additional prompt (optional)</label>
+              <textarea
+                value={retryPrompt}
+                onChange={(e) => setRetryPrompt(e.target.value)}
+                rows={3}
+                placeholder="e.g. Try a different approach..."
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setRetryModal(null)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200">
+                Cancel
+              </button>
+              <button onClick={submitRetry} className="px-4 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-500">
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CollapsiblePrompt({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="px-5 mb-2">
+      <details className="group">
+        <summary className="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none hover:text-gray-400 list-none flex items-center gap-1">
+          <span className="text-gray-700 group-open:rotate-90 transition-transform inline-block">▶</span>
+          {label}
+        </summary>
+        <pre className="mt-1 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto">
+          {text}
+        </pre>
+      </details>
     </div>
   );
 }

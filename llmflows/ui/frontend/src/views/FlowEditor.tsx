@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Flow, FlowStep, Gate } from "@/api/types";
+import type { Flow, FlowStep, Gate, AgentAlias } from "@/api/types";
 
 function GateEditor({
   label,
@@ -55,21 +55,30 @@ function GateEditor({
 export function FlowEditorView() {
   const { flowId } = useParams<{ flowId: string }>();
   const navigate = useNavigate();
-  const { reload } = useApp();
+  const { reload, setSelectedProjectId } = useApp();
 
   const [flow, setFlow] = useState<Flow | null>(null);
   const [editingMeta, setEditingMeta] = useState(false);
   const [metaForm, setMetaForm] = useState({ name: "", description: "" });
   const [editingStep, setEditingStep] = useState<string | null>(null);
-  const [stepForm, setStepForm] = useState({ name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[] });
+  const [stepForm, setStepForm] = useState({
+    name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
+    agent_alias: "standard", allow_max: false, max_gate_retries: 3,
+  });
   const [showAddStep, setShowAddStep] = useState(false);
-  const [newStep, setNewStep] = useState({ name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[] });
+  const [newStep, setNewStep] = useState({
+    name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
+    agent_alias: "standard", allow_max: false, max_gate_retries: 3,
+  });
+  const [aliases, setAliases] = useState<AgentAlias[]>([]);
 
   const load = useCallback(async () => {
     if (!flowId) return;
-    const f = await api.getFlow(flowId);
+    const [f, al] = await Promise.all([api.getFlow(flowId), api.listAgentAliases()]);
     setFlow(f);
+    setSelectedProjectId(f.project_id);
     setMetaForm({ name: f.name, description: f.description || "" });
+    setAliases(al);
   }, [flowId]);
 
   useEffect(() => {
@@ -91,6 +100,9 @@ export function FlowEditorView() {
       content: step.content || "",
       gates: (step.gates || []).map((g) => ({ ...g })),
       ifs: (step.ifs || []).map((g) => ({ ...g })),
+      agent_alias: step.agent_alias || "standard",
+      allow_max: step.allow_max || false,
+      max_gate_retries: step.max_gate_retries ?? 3,
     });
   };
 
@@ -101,6 +113,9 @@ export function FlowEditorView() {
       content: stepForm.content,
       gates: stepForm.gates.filter((g) => g.command.trim()),
       ifs: stepForm.ifs.filter((g) => g.command.trim()),
+      agent_alias: stepForm.agent_alias,
+      allow_max: stepForm.allow_max,
+      max_gate_retries: stepForm.max_gate_retries,
     });
     setEditingStep(null);
     load();
@@ -108,14 +123,20 @@ export function FlowEditorView() {
 
   const addStep = async () => {
     if (!flow) return;
-    const body: Record<string, unknown> = { name: newStep.name, content: newStep.content };
+    const body: Record<string, unknown> = {
+      name: newStep.name,
+      content: newStep.content,
+      agent_alias: newStep.agent_alias,
+      allow_max: newStep.allow_max,
+      max_gate_retries: newStep.max_gate_retries,
+    };
     const gates = newStep.gates.filter((g) => g.command.trim());
     const ifs = newStep.ifs.filter((g) => g.command.trim());
     if (gates.length) body.gates = gates;
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
-    await api.addStep(flow.id, body as { name: string; content: string });
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [] });
+    await api.addStep(flow.id, body);
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "standard", allow_max: false, max_gate_retries: 3 });
     setShowAddStep(false);
     load();
   };
@@ -160,7 +181,7 @@ export function FlowEditorView() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/flows")} className="text-xs text-gray-500 hover:text-gray-300">
+          <button onClick={() => flow ? navigate(`/project/${flow.project_id}/flows`) : navigate("/")} className="text-xs text-gray-500 hover:text-gray-300">
             &larr; Flows
           </button>
           {!editingMeta ? (
@@ -227,6 +248,38 @@ export function FlowEditorView() {
             type="number"
             className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm w-48"
           />
+          <div className="flex items-center gap-4">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Agent Alias</label>
+              <select
+                value={newStep.agent_alias}
+                onChange={(e) => setNewStep({ ...newStep, agent_alias: e.target.value })}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
+              >
+                {aliases.map((a) => (
+                  <option key={a.name} value={a.name}>{a.name} ({a.agent}/{a.model})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Max Retries</label>
+              <input
+                type="number"
+                value={newStep.max_gate_retries}
+                onChange={(e) => setNewStep({ ...newStep, max_gate_retries: parseInt(e.target.value) || 0 })}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-400 mt-4">
+              <input
+                type="checkbox"
+                checked={newStep.allow_max}
+                onChange={(e) => setNewStep({ ...newStep, allow_max: e.target.checked })}
+                className="rounded"
+              />
+              Allow max
+            </label>
+          </div>
           <GateEditor label="Gates" items={newStep.gates} onChange={(gates) => setNewStep({ ...newStep, gates })} />
           <GateEditor label="If conditions" items={newStep.ifs} onChange={(ifs) => setNewStep({ ...newStep, ifs })} />
           <div className="flex gap-2">
@@ -257,6 +310,38 @@ export function FlowEditorView() {
                   rows={10}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
                 />
+                <div className="flex items-center gap-4">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Agent Alias</label>
+                    <select
+                      value={stepForm.agent_alias}
+                      onChange={(e) => setStepForm({ ...stepForm, agent_alias: e.target.value })}
+                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
+                    >
+                      {aliases.map((a) => (
+                        <option key={a.name} value={a.name}>{a.name} ({a.agent}/{a.model})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Max Retries</label>
+                    <input
+                      type="number"
+                      value={stepForm.max_gate_retries}
+                      onChange={(e) => setStepForm({ ...stepForm, max_gate_retries: parseInt(e.target.value) || 0 })}
+                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-gray-400 mt-4">
+                    <input
+                      type="checkbox"
+                      checked={stepForm.allow_max}
+                      onChange={(e) => setStepForm({ ...stepForm, allow_max: e.target.checked })}
+                      className="rounded"
+                    />
+                    Allow max
+                  </label>
+                </div>
                 <GateEditor label="Gates" items={stepForm.gates} onChange={(gates) => setStepForm({ ...stepForm, gates })} />
                 <GateEditor label="If conditions" items={stepForm.ifs} onChange={(ifs) => setStepForm({ ...stepForm, ifs })} />
                 <div className="flex gap-2">
@@ -274,6 +359,13 @@ export function FlowEditorView() {
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-gray-600 font-mono w-6">{i + 1}</span>
                     <h4 className="text-sm font-medium text-white">{step.name}</h4>
+                    {step.agent_alias && step.agent_alias !== "standard" && (
+                      <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>
+                    )}
+                    {step.allow_max && <span className="text-[10px] text-yellow-400">max</span>}
+                    {step.max_gate_retries !== 3 && (
+                      <span className="text-[10px] text-gray-500">retries:{step.max_gate_retries}</span>
+                    )}
                     {(step.gates?.length > 0) && <span className="text-[10px] text-orange-400">gates</span>}
                     {(step.ifs?.length > 0) && <span className="text-[10px] text-purple-400">if</span>}
                   </div>

@@ -1,4 +1,4 @@
-"""Flow service -- CRUD for flows and steps, seed defaults, export/import."""
+"""Flow service -- CRUD for flows and steps, seed defaults, export/import, snapshots."""
 
 import json
 from datetime import datetime, timezone
@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
-from ..db.models import Flow, FlowStep
+from ..db.models import Flow, FlowStep, RunFlow, RunFlowStep
 from ..defaults import get_defaults_dir
 
 
@@ -32,14 +32,15 @@ class FlowService:
     def create(
         self,
         name: str,
+        project_id: str,
         description: str = "",
         steps: Optional[list[dict]] = None,
     ) -> Flow:
-        existing = self.get_by_name(name)
+        existing = self.get_by_name(name, project_id)
         if existing:
-            raise ValueError(f"Flow '{name}' already exists")
+            raise ValueError(f"Flow '{name}' already exists in this project")
 
-        flow = Flow(name=name, description=description)
+        flow = Flow(name=name, project_id=project_id, description=description)
         self.session.add(flow)
         self.session.flush()
 
@@ -52,6 +53,9 @@ class FlowService:
                     content=step_data.get("content", ""),
                     gates=_serialize_gates(step_data.get("gates")),
                     ifs=_serialize_json_list(step_data.get("ifs")),
+                    agent_alias=step_data.get("agent_alias", "standard"),
+                    allow_max=step_data.get("allow_max", False),
+                    max_gate_retries=step_data.get("max_gate_retries", 3),
                 )
                 self.session.add(step)
 
@@ -61,11 +65,14 @@ class FlowService:
     def get(self, flow_id: str) -> Optional[Flow]:
         return self.session.query(Flow).filter_by(id=flow_id).first()
 
-    def get_by_name(self, name: str) -> Optional[Flow]:
-        return self.session.query(Flow).filter_by(name=name).first()
+    def get_by_name(self, name: str, project_id: Optional[str] = None) -> Optional[Flow]:
+        q = self.session.query(Flow).filter_by(name=name)
+        if project_id:
+            q = q.filter_by(project_id=project_id)
+        return q.first()
 
-    def list_all(self) -> list[Flow]:
-        return self.session.query(Flow).order_by(
+    def list_by_project(self, project_id: str) -> list[Flow]:
+        return self.session.query(Flow).filter_by(project_id=project_id).order_by(
             case((Flow.name == "default", 0), else_=1),
             Flow.name,
         ).all()
@@ -95,6 +102,8 @@ class FlowService:
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
         ifs: Optional[list] = None,
+        agent_alias: str = "standard", allow_max: bool = False,
+        max_gate_retries: int = 3,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -108,6 +117,8 @@ class FlowService:
             flow_id=flow_id, name=name, position=position,
             content=content, gates=_serialize_gates(gates),
             ifs=_serialize_json_list(ifs),
+            agent_alias=agent_alias, allow_max=allow_max,
+            max_gate_retries=max_gate_retries,
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -151,8 +162,8 @@ class FlowService:
         self.session.commit()
         return True
 
-    def get_step_obj(self, flow_name: str, step_name: str) -> Optional[FlowStep]:
-        flow = self.get_by_name(flow_name)
+    def get_step_obj(self, flow_name: str, step_name: str, project_id: Optional[str] = None) -> Optional[FlowStep]:
+        flow = self.get_by_name(flow_name, project_id)
         if not flow:
             return None
         for step in flow.steps:
@@ -160,47 +171,110 @@ class FlowService:
                 return step
         return None
 
-    def get_flow_steps(self, flow_name: str) -> list[str]:
-        flow = self.get_by_name(flow_name)
+    def get_flow_steps(self, flow_name: str, project_id: Optional[str] = None) -> list[str]:
+        flow = self.get_by_name(flow_name, project_id)
         if not flow:
             return []
         return [s.name for s in sorted(flow.steps, key=lambda s: s.position)]
 
-    def get_next_step(self, flow_name: str, current: str) -> Optional[str]:
-        steps = self.get_flow_steps(flow_name)
+    def get_next_step(self, flow_name: str, current: str, project_id: Optional[str] = None) -> Optional[str]:
+        steps = self.get_flow_steps(flow_name, project_id)
         try:
             idx = steps.index(current)
             return steps[idx + 1] if idx + 1 < len(steps) else None
         except ValueError:
             return None
 
-    def duplicate(self, source_name: str, new_name: str) -> Optional[Flow]:
-        source = self.get_by_name(source_name)
+    def duplicate(self, source_name: str, new_name: str, project_id: Optional[str] = None) -> Optional[Flow]:
+        source = self.get_by_name(source_name, project_id)
         if not source:
             return None
 
         steps_data = [
             {"name": s.name, "position": s.position, "content": s.content,
-             "gates": s.get_gates(), "ifs": s.get_ifs()}
+             "gates": s.get_gates(), "ifs": s.get_ifs(),
+             "agent_alias": s.agent_alias or "standard",
+             "allow_max": bool(s.allow_max),
+             "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 3}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
             name=new_name,
+            project_id=source.project_id,
             description=source.description,
             steps=steps_data,
         )
 
-    def seed_defaults(self) -> None:
-        """Seed default flows from defaults/flows.json. Idempotent -- skips existing."""
+    def snapshot_flow(self, flow_name: str, run_id: str, project_id: Optional[str] = None) -> Optional[RunFlow]:
+        """Create an immutable copy of a flow template for a specific run."""
+        source = self.get_by_name(flow_name, project_id)
+        if not source:
+            return None
+
+        run_flow = RunFlow(
+            run_id=run_id,
+            source_flow_id=source.id,
+            name=source.name,
+            description=source.description or "",
+        )
+        self.session.add(run_flow)
+        self.session.flush()
+
+        for step in sorted(source.steps, key=lambda s: s.position):
+            run_step = RunFlowStep(
+                run_flow_id=run_flow.id,
+                name=step.name,
+                position=step.position,
+                content=step.content or "",
+                gates=step.gates or "[]",
+                ifs=step.ifs or "[]",
+                agent_alias=step.agent_alias or "standard",
+                allow_max=bool(step.allow_max),
+                max_gate_retries=step.max_gate_retries if step.max_gate_retries is not None else 3,
+            )
+            self.session.add(run_step)
+
+        self.session.commit()
+        return run_flow
+
+    def get_run_flow(self, run_flow_id: str) -> Optional[RunFlow]:
+        return self.session.query(RunFlow).filter_by(id=run_flow_id).first()
+
+    def get_run_flow_step(self, run_flow_id: str, step_name: str) -> Optional[RunFlowStep]:
+        return (
+            self.session.query(RunFlowStep)
+            .filter_by(run_flow_id=run_flow_id, name=step_name)
+            .first()
+        )
+
+    def get_run_flow_steps(self, run_flow_id: str) -> list[str]:
+        steps = (
+            self.session.query(RunFlowStep)
+            .filter_by(run_flow_id=run_flow_id)
+            .order_by(RunFlowStep.position)
+            .all()
+        )
+        return [s.name for s in steps]
+
+    def get_run_flow_next_step(self, run_flow_id: str, current: str) -> Optional[str]:
+        steps = self.get_run_flow_steps(run_flow_id)
+        try:
+            idx = steps.index(current)
+            return steps[idx + 1] if idx + 1 < len(steps) else None
+        except ValueError:
+            return None
+
+    def seed_defaults(self, project_id: str) -> None:
+        """Seed default flows from defaults/flows.json for a project. Idempotent."""
         flows_file = get_defaults_dir() / "flows.json"
         if not flows_file.exists():
             return
         data = json.loads(flows_file.read_text())
-        self._import_flows_data(data, skip_existing=True)
+        self._import_flows_data(data, project_id=project_id, skip_existing=True)
 
-    def export_flows(self, path: Optional[Path] = None) -> dict:
-        """Export all flows to a dict (optionally write to file)."""
-        flows = self.list_all()
+    def export_flows(self, project_id: str, path: Optional[Path] = None) -> dict:
+        """Export all flows for a project to a dict (optionally write to file)."""
+        flows = self.list_by_project(project_id)
         data = {
             "version": 1,
             "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -220,6 +294,12 @@ class FlowService:
                 ifs = s.get_ifs()
                 if ifs:
                     step_data["ifs"] = ifs
+                if s.agent_alias and s.agent_alias != "standard":
+                    step_data["agent_alias"] = s.agent_alias
+                if s.allow_max:
+                    step_data["allow_max"] = True
+                if s.max_gate_retries is not None and s.max_gate_retries != 3:
+                    step_data["max_gate_retries"] = s.max_gate_retries
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -229,17 +309,17 @@ class FlowService:
 
         return data
 
-    def import_flows(self, path: Path) -> int:
+    def import_flows(self, path: Path, project_id: str) -> int:
         """Import flows from a JSON file. Upserts by name. Returns count imported."""
         data = json.loads(Path(path).read_text())
-        return self._import_flows_data(data, skip_existing=False)
+        return self._import_flows_data(data, project_id=project_id, skip_existing=False)
 
-    def _import_flows_data(self, data: dict, skip_existing: bool = False) -> int:
+    def _import_flows_data(self, data: dict, project_id: str, skip_existing: bool = False) -> int:
         """Import flows from parsed JSON data."""
         count = 0
         for flow_data in data.get("flows", []):
             name = flow_data["name"]
-            existing = self.get_by_name(name)
+            existing = self.get_by_name(name, project_id)
 
             if existing and skip_existing:
                 continue
@@ -259,11 +339,15 @@ class FlowService:
                         content=step_data.get("content", ""),
                         gates=_serialize_gates(step_data.get("gates")),
                         ifs=_serialize_json_list(step_data.get("ifs")),
+                        agent_alias=step_data.get("agent_alias", "standard"),
+                        allow_max=step_data.get("allow_max", False),
+                        max_gate_retries=step_data.get("max_gate_retries", 3),
                     )
                     self.session.add(step)
             else:
                 self.create(
                     name=name,
+                    project_id=project_id,
                     description=flow_data.get("description", ""),
                     steps=flow_data.get("steps", []),
                 )

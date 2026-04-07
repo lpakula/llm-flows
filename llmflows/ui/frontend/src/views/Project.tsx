@@ -9,14 +9,13 @@ import { typeColor } from "@/lib/format";
 export function ProjectView() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { reload: reloadApp, flows: globalFlows } = useApp();
+  const { reload: reloadApp } = useApp();
 
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [agents, setAgents] = useState<string[]>([]);
-  const [models, setModels] = useState<string[]>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", type: "feature" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", type: "feature", default_flow_name: "" });
+  const [flows, setFlows] = useState<Flow[]>([]);
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState("");
   const [settings, setSettings] = useState<PS>({ is_git_repo: true });
@@ -25,21 +24,14 @@ export function ProjectView() {
   const load = useCallback(async () => {
     if (!projectId) return;
     try {
-      const [p, t, a, s] = await Promise.all([
+      const [p, t, s] = await Promise.all([
         api.getProject(projectId),
         api.listTasks(projectId),
-        api.listAgents(),
         api.getProjectSettings(projectId),
       ]);
       setProject(p);
       setTasks(t);
-      setAgents(a);
       setSettings(s);
-      const da = p.aliases?.["default"];
-      if (da?.agent) {
-        const m = await api.listModels(da.agent);
-        setModels(m);
-      }
     } catch (e) {
       console.error("Project load error:", e);
     }
@@ -50,10 +42,23 @@ export function ProjectView() {
   }, [load]);
   useInterval(load, 5000);
 
+  const openCreateModal = async () => {
+    setShowCreate(true);
+    if (projectId) {
+      try {
+        setFlows(await api.listFlows(projectId));
+      } catch { setFlows([]); }
+    }
+  };
+
   const createTask = async () => {
     if (!projectId) return;
-    await api.createTask(projectId, newTask);
-    setNewTask({ title: "", description: "", type: "feature" });
+    const body = {
+      ...newTask,
+      default_flow_name: newTask.default_flow_name || undefined,
+    };
+    await api.createTask(projectId, body);
+    setNewTask({ title: "", description: "", type: "feature", default_flow_name: "" });
     setShowCreate(false);
     load();
   };
@@ -146,7 +151,7 @@ export function ProjectView() {
               Configure
             </button>
             <button
-              onClick={() => setShowCreate(true)}
+              onClick={openCreateModal}
               className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition"
             >
               + New Task
@@ -200,7 +205,7 @@ export function ProjectView() {
               <textarea
                 value={newTask.description}
                 onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-                placeholder="Description (optional)"
+                placeholder="Task description"
                 rows={3}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               />
@@ -214,6 +219,16 @@ export function ProjectView() {
                 <option value="refactor">Refactor</option>
                 <option value="chore">Chore</option>
               </select>
+              <select
+                value={newTask.default_flow_name}
+                onChange={(e) => setNewTask({ ...newTask, default_flow_name: e.target.value })}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">No default flow</option>
+                {flows.map((f) => (
+                  <option key={f.id} value={f.name}>{f.name}</option>
+                ))}
+              </select>
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200">
@@ -221,7 +236,7 @@ export function ProjectView() {
               </button>
               <button
                 onClick={createTask}
-                disabled={!newTask.title.trim()}
+                disabled={!newTask.title.trim() || !newTask.description.trim()}
                 className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-40"
               >
                 Create
@@ -241,7 +256,7 @@ export function ProjectView() {
             <div
               key={task.id}
               className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 flex items-center justify-between hover:border-gray-600 transition cursor-pointer"
-              onClick={() => navigate(`/task/${task.id}`)}
+              onClick={() => navigate(`/project/${projectId}/task/${task.id}`)}
             >
               <div className="flex items-center gap-3 min-w-0">
                 <span className={`text-[10px] uppercase font-medium ${typeColor(task.type)}`}>

@@ -13,6 +13,8 @@ class ProjectService:
 
     def register(self, name: str, path: str, git_repo: bool = True) -> Project:
         """Register a project in the central database."""
+        from ..services.flow import FlowService
+
         existing = self.session.query(Project).filter_by(path=path).first()
         if existing:
             settings = self.session.query(ProjectSettings).filter_by(
@@ -25,6 +27,8 @@ class ProjectService:
                 )
                 self.session.add(settings)
                 self.session.commit()
+            flow_svc = FlowService(self.session)
+            flow_svc.seed_defaults(existing.id)
             return existing
 
         project = Project(name=name, path=path)
@@ -37,6 +41,10 @@ class ProjectService:
         )
         self.session.add(settings)
         self.session.commit()
+
+        flow_svc = FlowService(self.session)
+        flow_svc.seed_defaults(project.id)
+
         return project
 
     def unregister(self, project_id: str) -> bool:

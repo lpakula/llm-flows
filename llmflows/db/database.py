@@ -18,56 +18,83 @@ def get_db_path() -> Path:
     return SYSTEM_DB
 
 
+def _add_column_if_missing(engine, inspector, table: str, column: str, column_def: str):
+    """Add a column to a table if it doesn't exist yet."""
+    if table not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns(table)}
+    if column not in existing:
+        with engine.connect() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}"))
+            conn.commit()
+
+
+def _seed_agent_aliases(session):
+    """Seed default agent aliases if the table is empty."""
+    from .models import AgentAlias
+    if session.query(AgentAlias).count() > 0:
+        return
+    defaults = [
+        ("max", "cursor", "claude-4.6-opus-max-thinking", 0),
+        ("high", "cursor", "claude-4.6-sonnet-medium-thinking", 1),
+        ("standard", "cursor", "composer-2", 2),
+        ("fast", "cursor", "composer-2-fast", 3),
+        ("low", "cursor", "gemini-3-flash", 4),
+    ]
+    for name, agent, model, pos in defaults:
+        session.add(AgentAlias(name=name, agent=agent, model=model, position=pos))
+    session.commit()
+
+
 def init_db() -> Path:
-    """Initialize the central database schema and seed default flows."""
+    """Initialize the central database schema and seed defaults."""
     ensure_system_dir()
     engine = create_engine(f"sqlite:///{SYSTEM_DB}", echo=False)
     Base.metadata.create_all(engine)
 
     inspector = inspect(engine)
-    tables = inspector.get_table_names()
 
-    if "projects" in tables:
-        existing = {c["name"] for c in inspector.get_columns("projects")}
-        if "aliases" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN aliases TEXT DEFAULT '{}'"))
-                conn.commit()
+    # Legacy project columns (kept for old DBs but no longer used in code)
+    _add_column_if_missing(engine, inspector, "projects", "aliases", "TEXT DEFAULT '{}'")
 
-    if "project_settings" in tables:
-        existing = {c["name"] for c in inspector.get_columns("project_settings")}
-        if "is_git_repo" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE project_settings ADD COLUMN is_git_repo BOOLEAN DEFAULT 1"))
-                conn.commit()
+    _add_column_if_missing(engine, inspector, "project_settings", "is_git_repo", "BOOLEAN DEFAULT 1")
 
-    if "flow_steps" in tables:
-        existing = {c["name"] for c in inspector.get_columns("flow_steps")}
-        if "ifs" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE flow_steps ADD COLUMN ifs TEXT DEFAULT '[]'"))
-                conn.commit()
+    # FlowStep migrations
+    _add_column_if_missing(engine, inspector, "flow_steps", "ifs", "TEXT DEFAULT '[]'")
+    _add_column_if_missing(engine, inspector, "flow_steps", "agent_alias", "VARCHAR(50) DEFAULT 'standard'")
+    _add_column_if_missing(engine, inspector, "flow_steps", "allow_max", "BOOLEAN DEFAULT 0")
+    _add_column_if_missing(engine, inspector, "flow_steps", "max_gate_retries", "INTEGER DEFAULT 3")
 
-    if "task_runs" in tables:
-        existing = {c["name"] for c in inspector.get_columns("task_runs")}
-        if "recovery_count" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE task_runs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"))
-                conn.commit()
-        if "step_overrides" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE task_runs ADD COLUMN step_overrides TEXT DEFAULT '{}'"))
-                conn.commit()
-        if "one_shot" not in existing:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE task_runs ADD COLUMN one_shot BOOLEAN DEFAULT 0"))
-                conn.commit()
+    # Drop legacy columns no longer in the ORM
+    if "task_runs" in inspector.get_table_names():
+        existing_cols = {c["name"] for c in inspector.get_columns("task_runs")}
+        for legacy_col in ("model", "agent"):
+            if legacy_col in existing_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE task_runs DROP COLUMN {legacy_col}"))
+                    conn.commit()
+
+    # TaskRun migrations
+    _add_column_if_missing(engine, inspector, "task_runs", "recovery_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(engine, inspector, "task_runs", "step_overrides", "TEXT DEFAULT '{}'")
+    _add_column_if_missing(engine, inspector, "task_runs", "one_shot", "BOOLEAN DEFAULT 0")
+    _add_column_if_missing(engine, inspector, "task_runs", "run_flow_id", "VARCHAR(6)")
+    _add_column_if_missing(engine, inspector, "task_runs", "paused_at", "DATETIME")
+    _add_column_if_missing(engine, inspector, "task_runs", "resume_prompt", "TEXT DEFAULT ''")
+
+    # Task migrations
+    _add_column_if_missing(engine, inspector, "tasks", "default_flow_name", "VARCHAR(255)")
+
+    # StepRun migrations
+    _add_column_if_missing(engine, inspector, "step_runs", "attempt", "INTEGER NOT NULL DEFAULT 1")
+    _add_column_if_missing(engine, inspector, "step_runs", "gate_failures", "TEXT DEFAULT ''")
+
+    # Flow.project_id migration
+    _add_column_if_missing(engine, inspector, "flows", "project_id", "VARCHAR(6)")
 
     session = sessionmaker(bind=engine)()
     try:
-        from ..services.flow import FlowService
-        flow_svc = FlowService(session)
-        flow_svc.seed_defaults()
+        _seed_agent_aliases(session)
     finally:
         session.close()
 

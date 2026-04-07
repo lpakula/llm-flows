@@ -9,9 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..config import get_github_token, load_system_config
+from ..config import load_system_config, resolve_alias
 from ..db.database import get_session, reset_engine
-from ..db.models import Integration
 from .agent import AgentService
 from .context import ContextService
 from .flow import FlowService
@@ -68,8 +67,6 @@ class Daemon:
 
             for project in project_svc.list_all():
                 self._process_project(project, task_svc, run_svc, flow_svc)
-
-            self._poll_integrations(session)
         finally:
             session.close()
 
@@ -116,6 +113,9 @@ class Daemon:
         active_runs = run_svc.get_active_by_project(project.id)
 
         for run in active_runs:
+            if run.paused_at:
+                continue
+
             task = task_svc.get(run.task_id)
             if not task:
                 continue
@@ -139,10 +139,37 @@ class Daemon:
                         run, task, project, working_path,
                         is_git, use_task_subdir, run_svc, flow_svc,
                     )
+                else:
+                    self._relaunch_current_step(
+                        run, task, working_path, use_task_subdir,
+                        run_svc, flow_svc,
+                    )
 
         pending = run_svc.get_pending(project.id)
         if pending:
             self._start_run(pending, task_svc, run_svc, flow_svc, project, settings)
+
+    def _relaunch_current_step(
+        self, run, task, working_path: Path, use_task_subdir: bool,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Re-launch a step that has no active step_run (e.g. after retry_step)."""
+        step_name = run.current_step
+        flow_name = run.flow_name or ""
+        position = 0
+        if run.run_flow_id:
+            steps = flow_svc.get_run_flow_steps(run.run_flow_id)
+            if step_name in steps:
+                position = steps.index(step_name)
+        else:
+            steps = flow_svc.get_flow_steps(flow_name, project_id=run.project_id)
+            if step_name in steps:
+                position = steps.index(step_name)
+        self._launch_step(
+            run, task, working_path, use_task_subdir,
+            step_name, position, flow_name,
+            run_svc, flow_svc,
+        )
 
     def _resolve_working_path(
         self, project, task, is_git: bool,
@@ -208,19 +235,31 @@ class Daemon:
             return
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        project_root = Path(task.project.path)
+        artifact_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
+        step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
         step_vars = {
             "run.id": run.id,
             "task.id": run.task_id,
             "flow.name": step_run.flow_name,
+            "artifacts_output_dir": str(step_artifact_dir),
         }
 
-        step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name)
+        # Resolve step definition from snapshot or template
+        step_obj = None
+        max_retries = self.max_step_retries
+        step_allow_max = False
+        if run.run_flow_id:
+            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, step_run.step_name)
+        if not step_obj:
+            step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, project_id=run.project_id)
+        if step_obj:
+            max_retries = getattr(step_obj, 'max_gate_retries', self.max_step_retries) or self.max_step_retries
+            step_allow_max = bool(getattr(step_obj, 'allow_max', False))
+
         gates = list(step_obj.get_gates()) if step_obj else []
 
         if step_run.step_name != "__summary__":
-            project_root = Path(task.project.path)
-            artifact_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
-            step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
             gates.insert(0, {
                 "command": f'test -d "{step_artifact_dir}" && test "$(ls -A "{step_artifact_dir}")"',
                 "message": f"Step '{step_run.step_name}' must produce output artifacts in {step_artifact_dir}",
@@ -229,15 +268,19 @@ class Daemon:
         if gates:
             failures = evaluate_gates(gates, working_path, timeout=gate_timeout, variables=step_vars)
             if failures:
-                retry_count = len([
+                total_completed = len([
                     sr for sr in run_svc.list_step_runs(run.id)
                     if sr.step_name == step_run.step_name and sr.completed_at
                 ])
-                if retry_count < self.max_step_retries:
+                retry_count = max(0, total_completed - 1)
+                if retry_count < max_retries:
+                    is_last_retry = (retry_count + 1 >= max_retries)
+                    use_max = step_allow_max and is_last_retry
                     logger.warning(
-                        "Task %s run %s step '%s' gate failed (attempt %d/%d), retrying",
+                        "Task %s run %s step '%s' gate failed (retry %d/%d%s), retrying",
                         task.id, run.id, step_run.step_name,
-                        retry_count + 1, self.max_step_retries,
+                        retry_count + 1, max_retries,
+                        " [escalating to max]" if use_max else "",
                     )
                     gate_failure_info = [
                         {
@@ -252,11 +295,12 @@ class Daemon:
                         step_run.step_name, step_run.step_position,
                         step_run.flow_name, run_svc, flow_svc,
                         gate_failures=gate_failure_info,
+                        force_alias="max" if use_max else None,
                     )
                     return
                 else:
                     logger.error(
-                        "Task %s run %s step '%s' gate failed after %d attempts, marking interrupted",
+                        "Task %s run %s step '%s' gate failed after %d retries, marking interrupted",
                         task.id, run.id, step_run.step_name, retry_count,
                     )
                     run_svc.mark_completed(run.id, outcome="interrupted")
@@ -286,26 +330,16 @@ class Daemon:
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Task %s run %s completed", task.id, run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
-            if task.github_issue_number and task.integration:
-                self._post_github_result(task, run, task.project)
             return
 
-        next_step_name = flow_svc.get_next_step(current_flow, current_step_name)
         next_flow = current_flow
         next_position = current_position + 1
 
-        if not next_step_name:
-            try:
-                chain = json.loads(run.flow_chain or "[]")
-            except (json.JSONDecodeError, TypeError):
-                chain = []
-            if next_flow in chain:
-                idx = chain.index(next_flow)
-                if idx + 1 < len(chain):
-                    next_flow = chain[idx + 1]
-                    steps = flow_svc.get_flow_steps(next_flow)
-                    next_step_name = steps[0] if steps else None
-                    step_vars["flow.name"] = next_flow
+        # Use snapshot if available, otherwise fall back to template
+        if run.run_flow_id:
+            next_step_name = flow_svc.get_run_flow_next_step(run.run_flow_id, current_step_name)
+        else:
+            next_step_name = flow_svc.get_next_step(current_flow, current_step_name, project_id=run.project_id)
 
         if not next_step_name:
             self._launch_summary_step(
@@ -315,7 +349,10 @@ class Daemon:
             return
 
         while next_step_name:
-            step_obj = flow_svc.get_step_obj(next_flow, next_step_name)
+            if run.run_flow_id:
+                step_obj = flow_svc.get_run_flow_step(run.run_flow_id, next_step_name)
+            else:
+                step_obj = flow_svc.get_step_obj(next_flow, next_step_name, project_id=run.project_id)
             if not step_obj:
                 break
             ifs = step_obj.get_ifs()
@@ -325,7 +362,10 @@ class Daemon:
                 "Task %s run %s: IF conditions not met for step '%s', skipping",
                 task.id, run.id, next_step_name,
             )
-            nxt = flow_svc.get_next_step(next_flow, next_step_name)
+            if run.run_flow_id:
+                nxt = flow_svc.get_run_flow_next_step(run.run_flow_id, next_step_name)
+            else:
+                nxt = flow_svc.get_next_step(next_flow, next_step_name, project_id=run.project_id)
             next_position += 1
             if nxt:
                 next_step_name = nxt
@@ -351,6 +391,14 @@ class Daemon:
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Launch the first step of a run that has been started but has no steps yet."""
+        # No flow selected -- run as one-shot prompt-only
+        if not run.flow_name:
+            self._launch_one_shot(
+                run, task, working_path, use_task_subdir,
+                run_svc, flow_svc,
+            )
+            return
+
         if run.one_shot:
             self._launch_one_shot(
                 run, task, working_path, use_task_subdir,
@@ -358,10 +406,20 @@ class Daemon:
             )
             return
 
+        # Snapshot the flow if not already done
+        if not run.run_flow_id:
+            run_flow = flow_svc.snapshot_flow(run.flow_name, run.id, project_id=run.project_id)
+            if not run_flow:
+                logger.error("Flow '%s' not found for task %s run %s", run.flow_name, task.id, run.id)
+                run_svc.mark_completed(run.id, outcome="error")
+                return
+            run.run_flow_id = run_flow.id
+            run_svc.session.commit()
+
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
 
-        steps = flow_svc.get_flow_steps(run.flow_name)
+        steps = flow_svc.get_run_flow_steps(run.run_flow_id)
         if not steps:
             logger.error("Flow '%s' has no steps for task %s run %s", run.flow_name, task.id, run.id)
             run_svc.mark_completed(run.id, outcome="error")
@@ -371,7 +429,7 @@ class Daemon:
         position = 0
 
         while first_step:
-            step_obj = flow_svc.get_step_obj(run.flow_name, first_step)
+            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, first_step)
             if not step_obj:
                 break
             ifs = step_obj.get_ifs()
@@ -379,7 +437,7 @@ class Daemon:
                 break
             logger.info("Task %s run %s: IF conditions not met for step '%s', skipping",
                         task.id, run.id, first_step)
-            nxt = flow_svc.get_next_step(run.flow_name, first_step)
+            nxt = flow_svc.get_run_flow_next_step(run.run_flow_id, first_step)
             position += 1
             first_step = nxt
 
@@ -403,17 +461,14 @@ class Daemon:
         """Assemble all steps into a single prompt and launch one agent."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
 
-        try:
-            chain = json.loads(run.flow_chain or "[]")
-        except (json.JSONDecodeError, TypeError):
-            chain = [run.flow_name]
-
         collected_steps = []
-        for flow_name in chain:
-            step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": flow_name}
-            step_names = flow_svc.get_flow_steps(flow_name)
+        active_flow = run.flow_name or "default"
+
+        if run.flow_name:
+            step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
+            step_names = flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id)
             for sname in step_names:
-                step_obj = flow_svc.get_step_obj(flow_name, sname)
+                step_obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
                 if not step_obj:
                     continue
                 ifs = step_obj.get_ifs()
@@ -429,11 +484,6 @@ class Daemon:
                     "gates": gates,
                 })
 
-        if not collected_steps:
-            logger.error("One-shot run %s has no steps after IF filtering", run.id)
-            run_svc.mark_completed(run.id, outcome="error")
-            return
-
         project_root = Path(task.project.path)
         artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
         ctx = ContextService(working_path / ".llmflows")
@@ -446,19 +496,21 @@ class Daemon:
             "gates": [],
         })
 
-        first_flow = chain[0] if chain else run.flow_name
-        resolved_agent = run.agent or "cursor"
-        resolved_model = run.model or ""
+        # Resolve agent/model from standard alias
+        try:
+            resolved_agent, resolved_model = resolve_alias(run_svc.session, "standard")
+        except ValueError:
+            resolved_agent, resolved_model = "cursor", ""
 
         step_run = run_svc.create_step_run(
             run_id=run.id,
             step_name="__one_shot__",
             step_position=0,
-            flow_name=first_flow,
+            flow_name=active_flow,
             agent=resolved_agent,
             model=resolved_model,
         )
-        run_svc.update_run_step(run.id, "__one_shot__", first_flow)
+        run_svc.update_run_step(run.id, "__one_shot__", active_flow)
 
         wt_display = str(working_path) if working_path != project_root else None
         execution_history = self._build_execution_history(run_svc, task.id, run.id)
@@ -523,24 +575,42 @@ class Daemon:
         step_name: str, step_position: int, flow_name: str,
         run_svc: RunService, flow_svc: FlowService,
         gate_failures: Optional[list[dict]] = None,
+        force_alias: Optional[str] = None,
     ) -> None:
         """Create a StepRun, render prompt, and launch agent for a step."""
-        step_obj = flow_svc.get_step_obj(flow_name, step_name)
+        # Get step definition from snapshot or template
+        step_obj = None
+        if run.run_flow_id:
+            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, step_name)
+        if not step_obj:
+            step_obj = flow_svc.get_step_obj(flow_name, step_name, project_id=run.project_id)
         step_content = (step_obj.content or "").rstrip() if step_obj else ""
 
-        step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": flow_name}
+        project_root = Path(task.project.path)
+        artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
+        step_artifact_dir = artifacts_dir / f"{step_position:02d}-{step_name}"
+        step_vars = {
+            "run.id": run.id,
+            "task.id": run.task_id,
+            "flow.name": flow_name,
+            "artifacts_output_dir": str(step_artifact_dir),
+        }
         if step_content:
             from .gate import _interpolate
             step_content = _interpolate(step_content, step_vars)
 
+        # Resolve agent/model from alias
+        alias_name = force_alias or getattr(step_obj, 'agent_alias', None) or "standard"
         try:
-            overrides = json.loads(run.step_overrides or "{}")
-        except (json.JSONDecodeError, TypeError):
-            overrides = {}
-        override_key = f"{flow_name}/{step_name}"
-        step_cfg = overrides.get(override_key, {})
-        resolved_agent = step_cfg.get("agent") or run.agent or "cursor"
-        resolved_model = step_cfg.get("model") or run.model or ""
+            resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_name)
+        except ValueError:
+            resolved_agent, resolved_model = "cursor", ""
+
+        # Track attempt number
+        attempt = len([
+            sr for sr in run_svc.list_step_runs(run.id)
+            if sr.step_name == step_name
+        ]) + 1
 
         step_run = run_svc.create_step_run(
             run_id=run.id,
@@ -550,6 +620,11 @@ class Daemon:
             agent=resolved_agent,
             model=resolved_model,
         )
+        step_run.attempt = attempt
+        if gate_failures:
+            import json as _json
+            step_run.gate_failures = _json.dumps(gate_failures)
+        run_svc.session.commit()
 
         run_svc.update_run_step(run.id, step_name, flow_name)
 
@@ -606,16 +681,22 @@ class Daemon:
             "artifacts_output_dir": str(artifacts_dir),
         })
 
+        try:
+            resolved_agent, resolved_model = resolve_alias(run_svc.session, "standard")
+        except ValueError:
+            resolved_agent, resolved_model = "cursor", ""
+
+        flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(
             run_id=run.id,
             step_name="__summary__",
             step_position=step_position,
-            flow_name=run.flow_name,
-            agent=run.agent or "cursor",
-            model=run.model or "",
+            flow_name=flow_label,
+            agent=resolved_agent,
+            model=resolved_model,
         )
 
-        run_svc.update_run_step(run.id, "__summary__", run.flow_name)
+        run_svc.update_run_step(run.id, "__summary__", flow_label)
 
         project_dir = Path(task.project.path) / ".llmflows"
         agent_svc = AgentService(project_dir, working_path)
@@ -630,9 +711,9 @@ class Daemon:
             step_name="__summary__",
             step_position=step_position,
             step_content=summary_content,
-            flow_name=run.flow_name,
-            model=run.model or "",
-            agent=run.agent or "cursor",
+            flow_name=flow_label,
+            model=resolved_model,
+            agent=resolved_agent,
             use_task_subdir=use_task_subdir,
             previous_step_log=previous_step_log,
         )
@@ -688,61 +769,6 @@ class Daemon:
                 return
 
         run_svc.mark_started(run.id)
-
-    # ── GitHub integration ────────────────────────────────────────────────────
-
-    def _poll_integrations(self, session) -> None:
-        """Poll all enabled GitHub integrations for @llmflows comments."""
-        token = get_github_token()
-        if not token:
-            return
-
-        integrations = (
-            session.query(Integration)
-            .filter_by(provider="github", enabled=True)
-            .all()
-        )
-        if not integrations:
-            return
-
-        from .github import GitHubService
-        gh = GitHubService(token)
-        try:
-            for integration in integrations:
-                try:
-                    count = gh.poll_integration(integration, session)
-                    if count:
-                        logger.info("GitHub: created %d run(s) for %s", count, integration.project.name)
-                except Exception:
-                    logger.exception("Error polling GitHub integration %s", integration.id)
-        finally:
-            gh.close()
-
-    def _post_github_result(self, task, run, project) -> None:
-        """Post run result back to the GitHub issue."""
-        token = get_github_token()
-        if not token:
-            return
-
-        config = task.integration.get_config()
-        repo = config.get("repo", "")
-        if not repo:
-            return
-
-        from .github import GitHubService
-        gh = GitHubService(token)
-        try:
-            gh.post_run_result(
-                repo=repo,
-                task=task,
-                run_id=run.id,
-                summary=run.summary or "",
-                branch=task.worktree_branch or "",
-            )
-        except Exception:
-            logger.exception("Error posting GitHub result for run %s", run.id)
-        finally:
-            gh.close()
 
 
 def write_pid_file(pid: int) -> Path:

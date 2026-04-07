@@ -145,14 +145,13 @@ def save_system_config(config: dict[str, Any]) -> Path:
     return _write_config(config)
 
 
-def get_github_token() -> Optional[str]:
-    """Return a GitHub token from GITHUB_TOKEN env var or config.toml, in that order."""
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if token:
-        return token
-    config = load_system_config()
-    token = config.get("github", {}).get("token", "")
-    return token or None
+def resolve_alias(session, name: str) -> tuple[str, str]:
+    """Look up an agent alias by name. Returns (agent, model). Raises ValueError if not found."""
+    from .db.models import AgentAlias
+    alias = session.query(AgentAlias).filter_by(name=name).first()
+    if not alias:
+        raise ValueError(f"Agent alias '{name}' not found")
+    return alias.agent, alias.model
 
 
 def find_project_dir(start_path: Optional[Path] = None) -> Optional[Path]:
