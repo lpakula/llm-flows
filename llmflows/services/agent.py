@@ -192,6 +192,12 @@ class AgentService:
                 cmd.extend(["--model", model])
             return cmd
 
+        if binary == "pi":
+            cmd = ["pi", "-p", prompt_content, "--mode", "json"]
+            if model:
+                cmd.extend(["--model", model])
+            return cmd
+
         cmd = [binary]
         if mode == "file":
             cmd.extend(["-f", str(prompt_file)])

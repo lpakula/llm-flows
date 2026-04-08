@@ -1,30 +1,103 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
 import type { AgentInfo, AgentAlias, AgentConfigEntry } from "@/api/types";
+
+function ModelCombobox({
+  value,
+  onChange,
+  options,
+  placeholder = "Select or type a model...",
+  bg = "bg-gray-900",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+  bg?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const commit = (v: string) => {
+    onChange(v);
+    setQuery(v);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative w-full">
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        className={`${bg} border border-gray-700 rounded px-2 py-1 text-sm w-full focus:outline-none focus:border-gray-500`}
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-gray-800 border border-gray-700 rounded shadow-lg">
+          {filtered.map((m) => (
+            <li
+              key={m}
+              onMouseDown={() => commit(m)}
+              className={`px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-gray-700 ${m === value ? "text-cyan-400" : "text-gray-300"}`}
+            >
+              {m}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export function AgentsView() {
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({});
   const [loading, setLoading] = useState(true);
 
-  // Per-agent config
   const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentConfigEntry[]>>({});
-  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [addingEnvFor, setAddingEnvFor] = useState<string | null>(null);
   const [newConfigKey, setNewConfigKey] = useState("");
   const [newConfigValue, setNewConfigValue] = useState("");
 
-  // Agent aliases
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
   const [editingAlias, setEditingAlias] = useState<string | null>(null);
   const [aliasForm, setAliasForm] = useState({ name: "", agent: "", model: "" });
-  const [showAddAlias, setShowAddAlias] = useState(false);
-  const [newAlias, setNewAlias] = useState({ name: "", agent: "cursor", model: "" });
   const [agentNames, setAgentNames] = useState<string[]>([]);
   const [models, setModels] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     (async () => {
       try {
-        setAgents(await api.getAgentsStatus());
+        const agentsData = await api.getAgentsStatus();
+        setAgents(agentsData);
+
+        // Load all agent configs upfront
+        const configMap: Record<string, AgentConfigEntry[]> = {};
+        await Promise.all(
+          Object.keys(agentsData).map(async (key) => {
+            try {
+              configMap[key] = await api.getAgentConfig(key);
+            } catch {
+              configMap[key] = [];
+            }
+          })
+        );
+        setAgentConfigs(configMap);
       } catch {
         setAgents({});
       }
@@ -51,7 +124,7 @@ export function AgentsView() {
 
   const agentList = Object.entries(agents).map(([key, info]) => ({ key, ...info }));
 
-  const loadAgentConfig = async (agentName: string) => {
+  const reloadAgentConfig = async (agentName: string) => {
     try {
       const configs = await api.getAgentConfig(agentName);
       setAgentConfigs((prev) => ({ ...prev, [agentName]: configs }));
@@ -60,28 +133,18 @@ export function AgentsView() {
     }
   };
 
-  const toggleAgentConfig = (agentName: string) => {
-    if (expandedAgent === agentName) {
-      setExpandedAgent(null);
-    } else {
-      setExpandedAgent(agentName);
-      loadAgentConfig(agentName);
-    }
-    setNewConfigKey("");
-    setNewConfigValue("");
-  };
-
   const addConfig = async (agentName: string) => {
     if (!newConfigKey.trim()) return;
-    const configs = await api.setAgentConfig(agentName, newConfigKey.trim(), newConfigValue);
-    setAgentConfigs((prev) => ({ ...prev, [agentName]: configs }));
+    await api.setAgentConfig(agentName, newConfigKey.trim(), newConfigValue);
+    await reloadAgentConfig(agentName);
     setNewConfigKey("");
     setNewConfigValue("");
+    setAddingEnvFor(null);
   };
 
   const deleteConfig = async (agentName: string, configId: string) => {
     await api.deleteAgentConfig(agentName, configId);
-    loadAgentConfig(agentName);
+    await reloadAgentConfig(agentName);
   };
 
   const reloadAliases = async () => {
@@ -99,19 +162,6 @@ export function AgentsView() {
     reloadAliases();
   };
 
-  const addAlias = async () => {
-    if (!newAlias.name.trim() || !newAlias.model.trim()) return;
-    await api.createAgentAlias(newAlias);
-    setNewAlias({ name: "", agent: "cursor", model: "" });
-    setShowAddAlias(false);
-    reloadAliases();
-  };
-
-  const deleteAlias = async (id: string) => {
-    if (!confirm("Delete this alias?")) return;
-    await api.deleteAgentAlias(id);
-    reloadAliases();
-  };
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -119,194 +169,203 @@ export function AgentsView() {
 
       {loading && <div className="text-gray-500">Loading...</div>}
 
-      {/* Agent availability */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        {agentList.map((agent) => (
-          <div
-            key={agent.key}
-            className={`bg-gray-900 border rounded-xl p-5 ${
-              agent.available ? "border-green-800" : "border-gray-800"
-            }`}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-white">{agent.label}</h3>
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${agent.available ? "bg-green-400" : "bg-gray-600"}`}
-              />
-            </div>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Binary</span>
-                <span className="text-gray-400 font-mono">{agent.binary}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Status</span>
-                <span className={agent.available ? "text-green-400" : "text-gray-600"}>
-                  {agent.available ? "Available" : "Not found"}
-                </span>
-              </div>
-              {agent.binary_path && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Path</span>
-                  <span className="text-gray-500 font-mono truncate max-w-[200px]">{agent.binary_path}</span>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => toggleAgentConfig(agent.key)}
-              className="mt-3 text-[11px] text-gray-500 hover:text-gray-300 transition"
-            >
-              {expandedAgent === agent.key ? "Hide env" : `Env${(agentConfigs[agent.key] || []).length ? ` (${agentConfigs[agent.key].length})` : ""}`}
-            </button>
-            {expandedAgent === agent.key && (
-              <div className="mt-2 pt-2 border-t border-gray-800 space-y-2">
-                {(agentConfigs[agent.key] || []).map((c) => (
-                  <div key={c.id} className="flex items-center gap-2 text-xs">
-                    <span className="text-gray-400 font-mono">{c.key}</span>
-                    <span className="text-gray-600">=</span>
-                    <span className="text-gray-500 font-mono truncate flex-1">{c.value ? "••••••••" : "(empty)"}</span>
-                    <button onClick={() => deleteConfig(agent.key, c.id)} className="text-gray-600 hover:text-red-400">×</button>
-                  </div>
-                ))}
-                <div className="flex gap-1">
-                  <input
-                    value={newConfigKey}
-                    onChange={(e) => setNewConfigKey(e.target.value)}
-                    placeholder="KEY"
-                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-28"
-                  />
-                  <input
-                    value={newConfigValue}
-                    onChange={(e) => setNewConfigValue(e.target.value)}
-                    placeholder="value"
-                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono flex-1"
-                  />
-                  <button
-                    onClick={() => addConfig(agent.key)}
-                    disabled={!newConfigKey.trim()}
-                    className="text-xs text-blue-400 disabled:opacity-40 px-1"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-            )}
+      {/* Agents table */}
+      {!loading && (
+        <div className="mb-10">
+          <div className="border border-gray-800 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 bg-gray-900/60">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-8"></th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Binary</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Path</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Env Variables</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentList.map((agent, i) => {
+                  const configs = agentConfigs[agent.key] || [];
+                  const isAddingEnv = addingEnvFor === agent.key;
+                  return (
+                    <>
+                      <tr
+                        key={agent.key}
+                        className={`${i < agentList.length - 1 || isAddingEnv ? "border-b border-gray-800" : ""} bg-gray-900 hover:bg-gray-800/50 transition-colors`}
+                      >
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-block w-2 h-2 rounded-full ${agent.available ? "bg-green-400" : "bg-gray-600"}`}
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium text-white">{agent.label}</td>
+                        <td className="px-4 py-3 font-mono text-gray-400">{agent.binary}</td>
+                        <td className="px-4 py-3">
+                          <span className={agent.available ? "text-green-400" : "text-gray-500"}>
+                            {agent.available ? "Available" : "Not found"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-gray-500 text-xs max-w-[220px] truncate">
+                          {agent.binary_path ?? "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {configs.map((c) => (
+                              <span
+                                key={c.id}
+                                className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
+                              >
+                                {c.key}
+                                <button
+                                  onClick={() => deleteConfig(agent.key, c.id)}
+                                  className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                            <button
+                              onClick={() => {
+                                setAddingEnvFor(isAddingEnv ? null : agent.key);
+                                setNewConfigKey("");
+                                setNewConfigValue("");
+                              }}
+                              className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
+                              title="Add env variable"
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {isAddingEnv && (
+                        <tr key={`${agent.key}-add-env`} className={`bg-gray-900/80 ${i < agentList.length - 1 ? "border-b border-gray-800" : ""}`}>
+                          <td colSpan={6} className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={newConfigKey}
+                                onChange={(e) => setNewConfigKey(e.target.value)}
+                                placeholder="KEY"
+                                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-36 focus:outline-none focus:border-gray-500"
+                                autoFocus
+                                onKeyDown={(e) => e.key === "Enter" && addConfig(agent.key)}
+                              />
+                              <input
+                                value={newConfigValue}
+                                onChange={(e) => setNewConfigValue(e.target.value)}
+                                placeholder="value"
+                                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-52 focus:outline-none focus:border-gray-500"
+                                onKeyDown={(e) => e.key === "Enter" && addConfig(agent.key)}
+                              />
+                              <button
+                                onClick={() => addConfig(agent.key)}
+                                disabled={!newConfigKey.trim()}
+                                className="text-xs text-blue-400 disabled:opacity-40 hover:text-blue-300 transition-colors"
+                              >
+                                Add
+                              </button>
+                              <button
+                                onClick={() => setAddingEnvFor(null)}
+                                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
+                {agentList.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500 bg-gray-900">
+                      No agents configured
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        ))}
-      </div>
-
-      {!loading && agentList.length === 0 && (
-        <div className="text-gray-500 text-center py-8 mb-8">No agents configured</div>
+        </div>
       )}
 
-      {/* Agent Aliases */}
+      {/* Aliases table */}
       {!loading && (
-        <div className="max-w-2xl">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">Aliases</h3>
-              <button
-                onClick={() => setShowAddAlias(true)}
-                className="text-xs text-blue-400 hover:text-blue-300"
-              >
-                + Add Alias
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mb-4">
-              Define agent/model combinations. Each flow step references an alias by name.
-            </p>
+        <div>
+          <div className="mb-3">
+            <h3 className="text-base font-semibold">Aliases</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Agent/model combinations referenced by flow steps</p>
+          </div>
 
-            {showAddAlias && (
-              <div className="mb-4 p-3 bg-gray-800 rounded-lg space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    value={newAlias.name}
-                    onChange={(e) => setNewAlias({ ...newAlias, name: e.target.value })}
-                    placeholder="Alias name"
-                    className="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm"
-                    autoFocus
-                  />
-                  <select
-                    value={newAlias.agent}
-                    onChange={(e) => setNewAlias({ ...newAlias, agent: e.target.value, model: "" })}
-                    className="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm"
+          <div className="border border-gray-800 rounded-xl overflow-visible">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 bg-gray-900/60">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Model</th>
+                  <th className="px-4 py-3 w-24"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {aliases.map((a, i) => (
+                  <tr
+                    key={a.id}
+                    className={`bg-gray-900 hover:bg-gray-800/50 transition-colors ${i < aliases.length - 1 ? "border-b border-gray-800" : ""}`}
                   >
-                    {agentNames.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={newAlias.model}
-                    onChange={(e) => setNewAlias({ ...newAlias, model: e.target.value })}
-                    className="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm col-span-2"
-                  >
-                    <option value="">Select model...</option>
-                    {(models[newAlias.agent] || []).map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={addAlias} disabled={!newAlias.name.trim() || !newAlias.model} className="text-xs text-blue-400 disabled:opacity-40">
-                    Add
-                  </button>
-                  <button onClick={() => setShowAddAlias(false)} className="text-xs text-gray-500">Cancel</button>
-                </div>
-              </div>
-            )}
+                    {editingAlias === a.id ? (
+                      <>
+                        <td className="px-4 py-2 font-medium text-cyan-400">{a.name}</td>
+                        <td className="px-4 py-2">
+                          <select
+                            value={aliasForm.agent}
+                            onChange={(e) => setAliasForm({ ...aliasForm, agent: e.target.value, model: "" })}
+                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm w-full focus:outline-none"
+                          >
+                            {agentNames.map((ag) => (
+                              <option key={ag} value={ag}>{ag}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-4 py-2">
+                          <ModelCombobox
+                            value={aliasForm.model}
+                            onChange={(v) => setAliasForm({ ...aliasForm, model: v })}
+                            options={models[aliasForm.agent] || []}
+                            bg="bg-gray-800"
+                          />
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => saveAlias(a.id)} disabled={!aliasForm.agent.trim() || !aliasForm.model.trim()} className="text-xs text-blue-400 disabled:opacity-40 hover:text-blue-300 transition-colors">Save</button>
+                            <button onClick={() => setEditingAlias(null)} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Cancel</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-4 py-3 font-medium text-cyan-400">{a.name}</td>
+                        <td className="px-4 py-3 text-gray-400">{a.agent}</td>
+                        <td className="px-4 py-3 text-gray-500 font-mono text-xs">{a.model}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => startEditAlias(a)} className="text-xs text-gray-500 hover:text-blue-400 transition-colors">Edit</button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
 
-            <div className="space-y-1">
-              {aliases.map((a) => (
-                <div key={a.id} className="border border-gray-800 rounded-lg px-4 py-2">
-                  {editingAlias === a.id ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          value={aliasForm.name}
-                          onChange={(e) => setAliasForm({ ...aliasForm, name: e.target.value })}
-                          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-                        />
-                        <select
-                          value={aliasForm.agent}
-                          onChange={(e) => setAliasForm({ ...aliasForm, agent: e.target.value, model: "" })}
-                          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-                        >
-                          {agentNames.map((ag) => (
-                            <option key={ag} value={ag}>{ag}</option>
-                          ))}
-                        </select>
-                        <select
-                          value={aliasForm.model}
-                          onChange={(e) => setAliasForm({ ...aliasForm, model: e.target.value })}
-                          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm col-span-2"
-                        >
-                          <option value="">Select model...</option>
-                          {(models[aliasForm.agent] || []).map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => saveAlias(a.id)} className="text-xs text-blue-400">Save</button>
-                        <button onClick={() => setEditingAlias(null)} className="text-xs text-gray-500">Cancel</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-medium text-cyan-400 w-20">{a.name}</span>
-                        <span className="text-xs text-gray-400">{a.agent}</span>
-                        <span className="text-xs text-gray-500">{a.model}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => startEditAlias(a)} className="text-xs text-gray-500 hover:text-blue-400">Edit</button>
-                        <button onClick={() => deleteAlias(a.id)} className="text-xs text-gray-600 hover:text-red-400">Delete</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                {aliases.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-gray-500 bg-gray-900">
+                      No aliases defined
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

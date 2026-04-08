@@ -23,6 +23,7 @@ KNOWN_AGENTS = [
     "claude-code",
     "codex",
     "qwen",
+    "pi",
 ]
 
 AGENT_REGISTRY = {
@@ -78,6 +79,27 @@ AGENT_REGISTRY = {
         "output_format": "stream-json",
         "models": [
             "default",
+        ],
+    },
+    "pi": {
+        "label": "Pi",
+        "binary": "pi",
+        "command": "pi -p \"<prompt>\" --mode json",
+        "prompt_mode": "arg",
+        "output_format": "stream-json",
+        "models": [
+            "anthropic/claude-opus-4-5",
+            "anthropic/claude-sonnet-4-5",
+            "anthropic/claude-haiku-4-5",
+            "openai/gpt-4o",
+            "openai/o3",
+            "openai/o4-mini",
+            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
+            "xai/grok-3",
+            "xai/grok-3-mini",
+            "mistral/mistral-large",
+            "groq/llama-3.3-70b",
         ],
     },
 }
