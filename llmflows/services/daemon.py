@@ -30,7 +30,6 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
-        self.max_step_retries = self.config["daemon"].get("max_recovery_attempts", 3)
 
     def start(self) -> None:
         """Start the daemon loop."""
@@ -247,14 +246,14 @@ class Daemon:
 
         # Resolve step definition from snapshot or template
         step_obj = None
-        max_retries = self.max_step_retries
+        max_retries = None  # None = unlimited
         step_allow_max = False
         if run.run_flow_id:
             step_obj = flow_svc.get_run_flow_step(run.run_flow_id, step_run.step_name)
         if not step_obj:
             step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, project_id=run.project_id)
         if step_obj:
-            max_retries = getattr(step_obj, 'max_gate_retries', self.max_step_retries) or self.max_step_retries
+            max_retries = getattr(step_obj, 'max_gate_retries', None)
             step_allow_max = bool(getattr(step_obj, 'allow_max', False))
 
         gates = list(step_obj.get_gates()) if step_obj else []
@@ -273,13 +272,15 @@ class Daemon:
                     if sr.step_name == step_run.step_name and sr.completed_at
                 ])
                 retry_count = max(0, total_completed - 1)
-                if retry_count < max_retries:
-                    is_last_retry = (retry_count + 1 >= max_retries)
+                unlimited = max_retries is None or max_retries == 0
+                if unlimited or retry_count < max_retries:
+                    is_last_retry = not unlimited and (retry_count + 1 >= max_retries)
                     use_max = step_allow_max and is_last_retry
+                    limit_str = "∞" if unlimited else str(max_retries)
                     logger.warning(
-                        "Task %s run %s step '%s' gate failed (retry %d/%d%s), retrying",
+                        "Task %s run %s step '%s' gate failed (retry %d/%s%s), retrying",
                         task.id, run.id, step_run.step_name,
-                        retry_count + 1, max_retries,
+                        retry_count + 1, limit_str,
                         " [escalating to max]" if use_max else "",
                     )
                     gate_failure_info = [

@@ -177,6 +177,8 @@ async def update_daemon_config(body: DaemonConfigBody):
     config = load_system_config()
     if "daemon" not in config:
         config["daemon"] = {}
+    if "ui" not in config:
+        config["ui"] = {}
     if body.poll_interval_seconds is not None:
         config["daemon"]["poll_interval_seconds"] = body.poll_interval_seconds
     if body.run_timeout_minutes is not None:
@@ -578,14 +580,14 @@ async def stop_run(run_id: str):
 
 @app.delete("/api/runs/{run_id}")
 async def delete_run(run_id: str):
-    """Delete a completed task run by ID."""
+    """Delete a completed or queued (not yet started) task run by ID."""
     session, _, _ = _get_services()
     try:
         from ..db.models import TaskRun
         run = session.query(TaskRun).filter_by(id=run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
-        if not run.completed_at:
+        if run.started_at and not run.completed_at:
             raise HTTPException(status_code=400, detail="Cannot delete an active run")
         session.delete(run)
         session.commit()

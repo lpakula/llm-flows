@@ -184,7 +184,7 @@ class FlowStep(Base):
     ifs: str = Column(Text, default="[]")
     agent_alias: str = Column(String(50), default="standard")
     allow_max: bool = Column(Boolean, default=False)
-    max_gate_retries: int = Column(Integer, default=3)
+    max_gate_retries: int = Column(Integer, default=None)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
