@@ -4,6 +4,8 @@ import type { LogEntry } from "@/api/types";
 interface Props {
   entries: LogEntry[];
   streaming: boolean;
+  /** Notifies parent so layout (e.g. fixed height) can shrink when collapsed */
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 function OutputBlock({ entry }: { entry: LogEntry }) {
@@ -13,15 +15,15 @@ function OutputBlock({ entry }: { entry: LogEntry }) {
 
   if (lines.length <= 3) {
     return (
-      <div className="ml-4 text-xs text-gray-500 font-mono whitespace-pre-wrap">
+      <div className="text-xs text-gray-500 font-mono whitespace-pre-wrap">
         {lines.join("\n")}
       </div>
     );
   }
 
   return (
-    <div className="ml-4">
-      <div className="text-xs text-gray-500 font-mono whitespace-pre-wrap">
+    <div>
+      <div className={`text-xs text-gray-500 font-mono whitespace-pre-wrap ${expanded ? "" : "ml-4"}`}>
         {expanded ? lines.join("\n") : preview.join("\n")}
       </div>
       <button
@@ -34,9 +36,10 @@ function OutputBlock({ entry }: { entry: LogEntry }) {
   );
 }
 
-export function LogViewer({ entries, streaming }: Props) {
+export function LogViewer({ entries, streaming, onExpandedChange }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [agentLogOpen, setAgentLogOpen] = useState(true);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -62,19 +65,45 @@ export function LogViewer({ entries, streaming }: Props) {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800">
-        <span className="text-[10px] uppercase tracking-wide text-gray-600">Agent log</span>
+    <div className={`flex flex-col min-h-0 ${agentLogOpen ? "h-full" : "h-auto"}`}>
+      <div className="flex items-center justify-between px-5 py-2 border-b border-gray-800 shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            setAgentLogOpen((o) => {
+              const next = !o;
+              onExpandedChange?.(next);
+              return next;
+            });
+          }}
+          aria-expanded={agentLogOpen}
+          className="flex items-center gap-2 min-w-0 text-left rounded-lg -ml-1 pl-1 pr-2 py-0.5 hover:bg-gray-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+        >
+          <span className="w-4 flex justify-center shrink-0 leading-none" aria-hidden>
+            <span
+              className={`text-[9px] text-gray-600 transition-transform inline-block ${agentLogOpen ? "rotate-90" : ""}`}
+            >
+              ▶
+            </span>
+          </span>
+          <span className="text-[10px] uppercase tracking-wide text-gray-600">Agent log</span>
+        </button>
         {entries.length > 0 && (
-          <button onClick={copyLogs} className="text-[11px] text-gray-500 hover:text-gray-300 transition">
-            Copy
+          <button
+            type="button"
+            onClick={copyLogs}
+            className="text-[11px] text-gray-500 hover:text-gray-300 transition shrink-0"
+          >
+            Copy logs
           </button>
         )}
       </div>
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5"
+        className={`min-h-0 font-mono text-xs space-y-0.5 px-5 overflow-y-auto ${
+          agentLogOpen ? "flex-1 py-2" : "h-0 overflow-hidden py-0 pointer-events-none"
+        }`}
       >
         {entries.map((entry, i) =>
           entry.type === "output" ? (

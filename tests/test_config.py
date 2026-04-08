@@ -11,13 +11,13 @@ def test_default_config():
     assert "daemon" in DEFAULT_CONFIG
     assert "ui" in DEFAULT_CONFIG
     assert DEFAULT_CONFIG["daemon"]["poll_interval_seconds"] == 30
-    assert DEFAULT_CONFIG["ui"]["port"] == 4200
+    assert DEFAULT_CONFIG["ui"]["port"] == 4201
 
 
 def test_load_system_config_defaults():
     config = load_system_config()
     assert config["daemon"]["poll_interval_seconds"] == 30
-    assert config["ui"]["port"] == 4200
+    assert config["ui"]["port"] == 4201
     assert config["ui"]["host"] == "localhost"
 
 

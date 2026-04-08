@@ -6,5 +6,5 @@ auto_recover = true
 max_recovery_attempts = 3
 
 [ui]
-port = 4200
+port = 4201
 host = "localhost"

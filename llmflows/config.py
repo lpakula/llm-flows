@@ -130,7 +130,9 @@ def _write_config(config: dict[str, Any]) -> Path:
         if isinstance(values, dict):
             lines.append(f"[{section}]")
             for key, val in values.items():
-                if isinstance(val, str):
+                if isinstance(val, bool):
+                    lines.append(f"{key} = {str(val).lower()}")
+                elif isinstance(val, str):
                     lines.append(f'{key} = "{val}"')
                 else:
                     lines.append(f"{key} = {val}")

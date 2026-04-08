@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -6,8 +6,25 @@ import { useLogStream } from "@/hooks/useEventSource";
 import { useApp } from "@/App";
 import { LogViewer } from "@/components/LogViewer";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
-import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass } from "@/lib/format";
+import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { marked } from "marked";
+
+const DESC_PREVIEW_LINES = 4;
+
+function formatTaskTimestamp(iso: string | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z").toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function truncateOneLine(text: string, maxChars: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= maxChars) return t;
+  return t.slice(0, maxChars - 1) + "…";
+}
 
 export function TaskView() {
   const { projectId, taskId } = useParams<{ projectId: string; taskId: string }>();
@@ -35,11 +52,14 @@ export function TaskView() {
   // Selected attempt for viewing logs
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
   const [viewingStepPrompt, setViewingStepPrompt] = useState<string | null>(null);
+  const [viewingStepAgentModel, setViewingStepAgentModel] = useState<{ agent: string; model: string } | null>(null);
   const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
+  const [agentLogExpanded, setAgentLogExpanded] = useState(true);
 
   // Description editing
   const [editingDesc, setEditingDesc] = useState(false);
   const [editDescText, setEditDescText] = useState("");
+  const [descExpanded, setDescExpanded] = useState(false);
 
   const worktreePrefix = task?.worktree_path ? task.worktree_path + "/" : null;
   const { entries: logEntries, streaming } = useLogStream(logUrl, worktreePrefix);
@@ -87,7 +107,18 @@ export function TaskView() {
             const activeStep = steps.find((s) => s.step_run && s.status === "running");
             if (activeStep?.step_run) {
               setLogUrl(`/api/step-runs/${activeStep.step_run.id}/logs`);
-              setViewingStepName(activeStep.name);
+              const stepLabel =
+                activeStep.name === "__summary__"
+                  ? "summary"
+                  : activeStep.name === "__one_shot__"
+                    ? "one-shot"
+                    : activeStep.name;
+              setViewingStepName(stepLabel);
+              setViewingStepPrompt(activeStep.step_run.prompt || null);
+              setViewingStepAgentModel({
+                agent: activeStep.step_run.agent || "",
+                model: activeStep.step_run.model || "",
+              });
             }
           }
           return;
@@ -111,14 +142,18 @@ export function TaskView() {
       setViewingStepName(null);
       setSelectedAttempt(null);
       setViewingStepPrompt(null);
+      setViewingStepAgentModel(null);
       setViewingGateFailures([]);
+      setAgentLogExpanded(true);
     } else {
       setExpandedRun(runId);
       setLogUrl(null);
       setViewingStepName(null);
       setSelectedAttempt(null);
       setViewingStepPrompt(null);
+      setViewingStepAgentModel(null);
       setViewingGateFailures([]);
+      setAgentLogExpanded(true);
       loadRunSteps(runId);
       const run = runs.find((r) => r.id === runId);
       if (run && isRunActive(run)) {
@@ -137,6 +172,10 @@ export function TaskView() {
     const name = step.name === "__summary__" ? "summary" : step.name === "__one_shot__" ? "one-shot" : step.name;
     setViewingStepName(name);
     setViewingStepPrompt(step.step_run.prompt || null);
+    setViewingStepAgentModel({
+      agent: step.step_run.agent || "",
+      model: step.step_run.model || "",
+    });
     setViewingGateFailures(step.step_run.gate_failures || []);
   };
 
@@ -167,8 +206,10 @@ export function TaskView() {
     setLogUrl(null);
     setViewingStepName(null);
     setViewingStepPrompt(null);
+    setViewingStepAgentModel(null);
     setSelectedAttempt(null);
     setViewingGateFailures([]);
+    setAgentLogExpanded(true);
     await api.retryStep(runId, stepName, retryPrompt);
     if (taskId) setRuns(await api.listTaskRuns(taskId));
     await loadRunSteps(runId);
@@ -219,142 +260,252 @@ export function TaskView() {
     setEditingDesc(false);
   };
 
+  const headlineRun =
+    runs.find((r) => isRunActive(r)) || runs.find((r) => !r.completed_at) || null;
+  const descPlain = (task?.description || "").trim();
+  const descLines = descPlain ? descPlain.split("\n") : [];
+  const descNeedsClamp =
+    !editingDesc &&
+    descPlain.length > 0 &&
+    (descLines.length > DESC_PREVIEW_LINES || descPlain.length > 320);
+
   return (
     <div className="flex-1 overflow-y-auto">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => task ? navigate(`/project/${task.project_id}`) : navigate("/")}
-            className="text-xs text-gray-500 hover:text-gray-300"
-          >
-            &larr; Back
-          </button>
-          <h2 className="text-base font-medium">{task?.name || "Loading..."}</h2>
-          <span className="text-[10px] uppercase text-gray-500 font-medium">{task?.type}</span>
-        </div>
+      <header className="border-b border-gray-800 px-6 py-4">
         <button
-          onClick={openRunModal}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition"
+          onClick={() => (task ? navigate(`/project/${task.project_id}`) : navigate("/"))}
+          className="text-xs text-gray-500 hover:text-gray-300"
         >
-          Start Run
+          &larr; Back
         </button>
+        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 gap-y-1">
+              <h1 className="text-xl font-semibold text-white tracking-tight">{task?.name || "Loading..."}</h1>
+              {headlineRun && (
+                <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${statusBadge(displayStatus(headlineRun))}`}>
+                  {displayStatus(headlineRun)}
+                </span>
+              )}
+              {task?.agent_active ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                  Agent active
+                </span>
+              ) : null}
+            </div>
+            {task ? (
+              <p className="text-[11px] text-gray-600 font-mono mt-1.5">
+                Task ID: <span className="text-gray-500">{task.id}</span>
+              </p>
+            ) : null}
+
+            {task && !editingDesc ? (
+              <div className="mt-3">
+                {descPlain ? (
+                  <div
+                    className={`text-sm text-gray-400 whitespace-pre-wrap ${!descExpanded && descNeedsClamp ? "line-clamp-4" : ""}`}
+                  >
+                    {task.description}
+                  </div>
+                ) : (
+                  <p className="text-sm italic text-gray-600">No description</p>
+                )}
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  {descNeedsClamp ? (
+                    <button
+                      type="button"
+                      onClick={() => setDescExpanded((e) => !e)}
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      {descExpanded ? "Show less" : "Show more"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditDescText(task.description || "");
+                      setEditingDesc(true);
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Edit
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {task && editingDesc ? (
+              <div className="mt-3 space-y-2">
+                <textarea
+                  value={editDescText}
+                  onChange={(e) => setEditDescText(e.target.value)}
+                  rows={4}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={saveDescription} className="text-xs text-blue-400 hover:text-blue-300">
+                    Save
+                  </button>
+                  <button type="button" onClick={() => setEditingDesc(false)} className="text-xs text-gray-500 hover:text-gray-300">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
 
-      {/* Description */}
-      {task && (
-        <div className="px-6 py-3 border-b border-gray-800">
-          {!editingDesc ? (
-            <div className="flex items-start gap-2">
-              <p className="text-sm text-gray-400 flex-1 whitespace-pre-wrap">
-                {task.description || <span className="italic text-gray-600">No description</span>}
-              </p>
-              <button
-                onClick={() => { setEditDescText(task.description || ""); setEditingDesc(true); }}
-                className="text-xs text-gray-600 hover:text-gray-400 flex-shrink-0"
-              >
-                Edit
-              </button>
+      {/* Task metadata */}
+      {task ? (
+        <div className="px-6 py-4 border-b border-gray-800">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Type</div>
+              <div className="text-sm text-gray-200 mt-1 capitalize">{task.type}</div>
             </div>
-          ) : (
-            <div className="space-y-2">
-              <textarea
-                value={editDescText}
-                onChange={(e) => setEditDescText(e.target.value)}
-                rows={4}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <button onClick={saveDescription} className="text-xs text-blue-400 hover:text-blue-300">Save</button>
-                <button onClick={() => setEditingDesc(false)} className="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
+            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Branch</div>
+              <div className="text-sm mt-1">
+                {task.worktree_branch ? (
+                  <span className="text-gray-200 font-mono text-xs">{task.worktree_branch}</span>
+                ) : (
+                  <span className="text-blue-400">—</span>
+                )}
               </div>
             </div>
-          )}
+            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Created</div>
+              <div className="text-sm text-gray-200 mt-1 tabular-nums">{formatTaskTimestamp(task.created_at)}</div>
+            </div>
+          </div>
         </div>
-      )}
+      ) : null}
 
       {/* Runs */}
       <div className="p-6">
-        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">
-          Runs ({runs.length})
-        </h3>
-        <div className="space-y-2">
-          {runs.map((run) => (
-            <div key={run.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-              <div
-                className="px-5 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-800/50"
-                onClick={() => toggleRun(run.id)}
-              >
-                <div className="flex items-center gap-3">
-                  <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(displayStatus(run))}`}>
-                    {displayStatus(run)}
-                  </span>
-                  {run.flow_name && <span className="text-xs text-cyan-400">{run.flow_name}</span>}
-                  {!run.flow_name && <span className="text-xs text-gray-500 italic">prompt-only</span>}
-                  <span className="text-xs text-gray-500">{duration(run.started_at, run.completed_at)}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isRunActive(run) && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); forceStopRun(run.id); }}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Force Stop
-                    </button>
-                  )}
-                  {run.completed_at && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteRun(run.id); }}
-                      className="text-xs text-gray-600 hover:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  )}
-                  <span className="text-xs text-gray-600">{expandedRun === run.id ? "▲" : "▼"}</span>
-                </div>
-              </div>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">
+            Runs ({runs.length})
+          </h3>
+          <button
+            type="button"
+            onClick={openRunModal}
+            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-lg transition"
+          >
+            + New Run
+          </button>
+        </div>
 
-              {expandedRun === run.id && (
-                <div className="border-t border-gray-800">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed text-left text-xs min-w-[640px]">
+              <colgroup>
+                <col className="w-[140px]" />
+                <col className="w-[120px]" />
+                <col className="w-[240px]" />
+                <col className="w-[88px]" />
+                <col className="w-[150px]" />
+                <col className="w-[120px]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-800 text-[10px] uppercase tracking-wide text-gray-600">
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Flow</th>
+                  <th className="px-4 py-2.5 font-medium">Prompt</th>
+                  <th className="px-4 py-2.5 font-medium">Duration</th>
+                  <th className="px-4 py-2.5 font-medium">Date</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-600">
+                      No runs yet. Start one with <span className="text-blue-400">+ New Run</span>.
+                    </td>
+                  </tr>
+                ) : (
+                  runs.map((run) => (
+                    <Fragment key={run.id}>
+                      <tr
+                        className="border-b border-gray-800/80 hover:bg-gray-800/40 cursor-pointer transition-colors"
+                        onClick={() => toggleRun(run.id)}
+                      >
+                        <td className="px-4 py-3 align-top">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${statusDot(displayStatus(run), run.outcome)}`}
+                              />
+                              <span className={`text-[11px] px-2 py-0.5 rounded w-fit ${statusBadge(displayStatus(run))}`}>
+                                {displayStatus(run)}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-gray-600 font-mono pl-4">
+                              Run ID: {run.id}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 align-top text-cyan-400 font-medium">
+                          {run.flow_name || <span className="text-gray-500 font-normal italic">prompt-only</span>}
+                        </td>
+                        <td className="px-4 py-3 align-top text-gray-500 min-w-0">
+                          <span className="block truncate" title={(run.prompt || run.user_prompt || "").trim() || undefined}>
+                            {truncateOneLine((run.prompt || run.user_prompt || "").trim() || "—", 120)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 align-top text-gray-400 tabular-nums whitespace-nowrap">
+                          {duration(run.started_at, run.completed_at)}
+                        </td>
+                        <td className="px-4 py-3 align-top text-gray-500 tabular-nums whitespace-nowrap">
+                          {formatTaskTimestamp(run.started_at || run.created_at)}
+                        </td>
+                        <td className="px-4 py-3 align-top text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2">
+                            {isRunActive(run) ? (
+                              <button
+                                type="button"
+                                onClick={() => forceStopRun(run.id)}
+                                className="text-xs text-red-400 hover:text-red-300"
+                              >
+                                Force Stop
+                              </button>
+                            ) : null}
+                            {run.completed_at ? (
+                              <button type="button" onClick={() => deleteRun(run.id)} className="text-xs text-gray-600 hover:text-red-400">
+                                Delete
+                              </button>
+                            ) : null}
+                            <span className="text-gray-600 text-[10px] ml-1">{expandedRun === run.id ? "▲" : "▼"}</span>
+                          </div>
+                        </td>
+                      </tr>
+                      {expandedRun === run.id ? (
+                        <tr className="bg-gray-950/50">
+                          <td colSpan={6} className="p-0 border-b border-gray-800">
+                            <div className="border-t border-gray-800">
                   {/* Run summary */}
-                  {run.summary && (
-                    <div className="px-5 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
-                      <div
-                        className="prose prose-invert max-w-none text-gray-300 text-xs leading-relaxed
-                          [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2
-                          [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-100 [&_h2]:mt-3 [&_h2]:mb-1.5
-                          [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-200 [&_h3]:mt-2.5 [&_h3]:mb-1
-                          [&_p]:my-1.5 [&_p]:text-gray-300
-                          [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
-                          [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
-                          [&_li]:text-gray-300
-                          [&_code]:bg-gray-800 [&_code]:text-cyan-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono
-                          [&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
-                          [&_pre_code]:bg-transparent [&_pre_code]:text-green-300 [&_pre_code]:p-0 [&_pre_code]:text-[11px]
-                          [&_strong]:text-gray-100 [&_strong]:font-semibold
-                          [&_a]:text-blue-400 [&_a]:underline
-                          [&_table]:w-full [&_table]:my-2 [&_table]:text-[11px] [&_table]:border-collapse
-                          [&_th]:text-left [&_th]:text-gray-300 [&_th]:font-semibold [&_th]:border-b [&_th]:border-gray-700 [&_th]:px-2 [&_th]:py-1.5
-                          [&_td]:text-gray-400 [&_td]:border-b [&_td]:border-gray-800 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top
-                          [&_tr:last-child_td]:border-b-0"
-                        dangerouslySetInnerHTML={{ __html: marked.parse(run.summary) as string }}
-                      />
-                    </div>
-                  )}
+                  {run.summary ? <RunSummarySection summary={run.summary} /> : null}
+
+                  {/* Run prompt */}
+                  {(run.user_prompt || "").trim() ? (
+                    <RunPromptCollapsible text={(run.user_prompt || "").trim()} />
+                  ) : null}
 
                   {/* Step pipeline */}
                   {(runSteps[run.id] || []).length > 0 && (
                     <div className="px-5 py-3">
                       <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-2">Steps</div>
-                      <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                      <div className="flex items-center overflow-x-auto pb-1">
                         {(runSteps[run.id] || []).map((step, i) => {
                           const attempts = step.attempts || [];
                           const stepLabel = step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name;
                           return (
-                            <div key={i} className="flex items-center gap-1">
-                              {i > 0 && <div className={`w-4 h-0.5 ${stepConnectorClass(step.status)}`} />}
+                            <div key={i} className="flex items-center">
+                              {i > 0 && <div className={`w-5 h-0.5 ${stepConnectorClass(step.status)}`} />}
                               <div className="relative">
                                 <button
                                   onClick={() => {
@@ -362,7 +513,7 @@ export function TaskView() {
                                     viewStepLogs(step);
                                     setSelectedAttempt(null);
                                   }}
-                                  className={`px-2 py-1 rounded text-[11px] whitespace-nowrap ${stepBoxClass(step.status)} ${
+                                  className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(step.status)} ${
                                     viewingStepName === stepLabel && !selectedAttempt
                                       ? "border-2"
                                       : "border"
@@ -411,6 +562,10 @@ export function TaskView() {
                                       setViewingStepName(`${stepLabel} #${j + 1}`);
                                       setSelectedAttempt({ stepName: step.name, attemptId: att.id });
                                       setViewingStepPrompt(att.prompt || null);
+                                      setViewingStepAgentModel({
+                                        agent: att.agent || "",
+                                        model: att.model || "",
+                                      });
                                       setViewingGateFailures(att.gate_failures || []);
                                     }}
                                     className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
@@ -434,14 +589,43 @@ export function TaskView() {
                   {/* Log viewer - only when a step is selected */}
                   {viewingStepName && (
                     <div className="border-t border-gray-800">
-                      <div className="px-5 py-1.5 flex items-center justify-end">
+                      <div className="px-5 py-2 flex items-center justify-between border-b border-gray-800/80">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-4 flex justify-center items-center shrink-0" aria-hidden>
+                            <span className="w-2 h-2 rounded-full bg-green-500" />
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wide text-gray-500 truncate">
+                            Step:{" "}
+                            <span className="text-gray-200 font-mono normal-case">{viewingStepName}</span>
+                          </span>
+                        </div>
                         <button
-                          onClick={() => { setLogUrl(null); setViewingStepName(null); setViewingStepPrompt(null); setSelectedAttempt(null); setViewingGateFailures([]); }}
-                          className="text-xs text-gray-500 hover:text-gray-300 transition"
+                          type="button"
+                          onClick={() => {
+                            setLogUrl(null);
+                            setViewingStepName(null);
+                            setViewingStepPrompt(null);
+                            setViewingStepAgentModel(null);
+                            setSelectedAttempt(null);
+                            setViewingGateFailures([]);
+                            setAgentLogExpanded(true);
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-300 transition shrink-0"
                         >
                           Close
                         </button>
                       </div>
+                      {viewingStepAgentModel ? (
+                        <div className="px-5 py-2 flex items-center gap-2 border-b border-gray-800/80">
+                          <span className="w-4 flex justify-center shrink-0" aria-hidden />
+                          <span className="text-[10px] uppercase tracking-wide text-gray-500 truncate">
+                            MODEL:{" "}
+                            <span className="text-gray-200 font-mono normal-case">
+                              {viewingStepAgentModel.agent || "—"}/{viewingStepAgentModel.model || "—"}
+                            </span>
+                          </span>
+                        </div>
+                      ) : null}
                       {/* Initial prompt (when not viewing a step's injected context) */}
                       {run.prompt && !viewingStepPrompt && (
                         <CollapsiblePrompt label="Initial prompt (start.md)" text={run.prompt} />
@@ -472,15 +656,26 @@ export function TaskView() {
                           </details>
                         </div>
                       )}
-                      <div className="h-80">
-                        <LogViewer entries={logEntries} streaming={streaming} />
+                      <div className={agentLogExpanded ? "h-80 min-h-0" : "min-h-0"}>
+                        <LogViewer
+                          entries={logEntries}
+                          streaming={streaming}
+                          onExpandedChange={setAgentLogExpanded}
+                        />
                       </div>
                     </div>
                   )}
-                </div>
-              )}
-            </div>
-          ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  ))
+                )
+                }
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -488,14 +683,18 @@ export function TaskView() {
       {runModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setRunModal(false)}>
           <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-sm font-semibold mb-4">Start Run</h2>
+            <h2 className="text-sm font-semibold mb-4">{runs.length === 0 ? "New Run" : "Start Run"}</h2>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Flow</label>
+                <label className="text-xs text-gray-500 block mb-1">{runs.length === 0 ? "Alias" : "Flow"}</label>
                 <select
                   value={runModalFlow}
                   onChange={(e) => setRunModalFlow(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                  className={
+                    runs.length === 0
+                      ? "w-full bg-gray-800 border-2 border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      : "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                  }
                 >
                   <option value="">No flow (prompt only)</option>
                   {flows.map((f) => (
@@ -505,15 +704,42 @@ export function TaskView() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Additional prompt (optional)</label>
-                <textarea
-                  value={runModalPrompt}
-                  onChange={(e) => setRunModalPrompt(e.target.value)}
-                  rows={3}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none"
-                />
-              </div>
+              {runs.length === 0 ? (
+                <>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Prompt</label>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-600 mb-1.5">
+                      Task description (included automatically)
+                    </p>
+                    <textarea
+                      readOnly
+                      value={(task?.description || "").trim() || ""}
+                      placeholder="No task description yet — edit the task above or add instructions below."
+                      rows={6}
+                      className="w-full bg-gray-800/90 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 resize-y min-h-[120px] cursor-default"
+                    />
+                  </div>
+                  <div>
+                    <textarea
+                      value={runModalPrompt}
+                      onChange={(e) => setRunModalPrompt(e.target.value)}
+                      rows={4}
+                      placeholder="Additional instructions (optional)"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 placeholder:text-gray-600 resize-y min-h-[96px] focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">Additional prompt (optional)</label>
+                  <textarea
+                    value={runModalPrompt}
+                    onChange={(e) => setRunModalPrompt(e.target.value)}
+                    rows={3}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none"
+                  />
+                </div>
+              )}
               {runModalFlow && (
                 <label className="flex items-center gap-2 text-sm text-gray-400">
                   <input
@@ -534,7 +760,7 @@ export function TaskView() {
                 onClick={submitRunModal}
                 className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500"
               >
-                Start
+                {runs.length === 0 ? "Run" : "Start"}
               </button>
             </div>
           </div>
@@ -573,15 +799,97 @@ export function TaskView() {
   );
 }
 
+const SUMMARY_READ_MORE_THRESHOLD = 500;
+
+function RunSummarySection({ summary }: { summary: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = summary.length > SUMMARY_READ_MORE_THRESHOLD;
+  const html = marked.parse(summary) as string;
+  const proseClass =
+    "prose prose-invert max-w-none text-gray-400 text-sm leading-relaxed " +
+    "[&_h1]:text-base [&_h1]:font-bold [&_h1]:text-gray-300 [&_h1]:mt-4 [&_h1]:mb-2 " +
+    "[&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-300 [&_h2]:mt-3 [&_h2]:mb-1.5 " +
+    "[&_h3]:text-xs [&_h3]:font-semibold [&_h3]:text-gray-300 [&_h3]:mt-2.5 [&_h3]:mb-1 " +
+    "[&_p]:my-1.5 [&_p]:text-gray-400 " +
+    "[&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5 " +
+    "[&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5 " +
+    "[&_li]:text-gray-400 " +
+    "[&_code]:bg-gray-800 [&_code]:text-gray-300 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_code]:font-mono " +
+    "[&_pre]:bg-gray-800 [&_pre]:border [&_pre]:border-gray-700 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto " +
+    "[&_pre_code]:bg-transparent [&_pre_code]:text-gray-400 [&_pre_code]:p-0 [&_pre_code]:text-[11px] " +
+    "[&_strong]:text-gray-300 [&_strong]:font-semibold " +
+    "[&_a]:text-blue-400 [&_a]:underline " +
+    "[&_table]:w-full [&_table]:my-2 [&_table]:text-[11px] [&_table]:border-collapse " +
+    "[&_th]:text-left [&_th]:text-gray-400 [&_th]:font-semibold [&_th]:border-b [&_th]:border-gray-700 [&_th]:px-2 [&_th]:py-1.5 " +
+    "[&_td]:text-gray-400 [&_td]:border-b [&_td]:border-gray-800 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top " +
+    "[&_tr:last-child_td]:border-b-0";
+
+  return (
+    <div className="px-5 py-3">
+      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
+      <div className="relative">
+        <div
+          className={`${proseClass}${!expanded && long ? " max-h-48 overflow-hidden" : ""}`}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+        {!expanded && long ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-gray-950 via-gray-950/70 to-transparent"
+            aria-hidden
+          />
+        ) : null}
+      </div>
+      {long ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="relative z-10 text-xs text-blue-400 hover:text-blue-300 mt-2"
+        >
+          {expanded ? "Read less" : "Read more"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function RunPromptCollapsible({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 400 || text.split("\n").length > 6;
+  return (
+    <div className="px-5 py-3 border-b border-gray-800">
+      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Prompt</div>
+      <div
+        className={`text-xs text-gray-400 whitespace-pre-wrap font-mono bg-gray-900/50 border border-gray-800 rounded-lg p-3 ${
+          !open && long ? "max-h-32 overflow-hidden" : ""
+        }`}
+      >
+        {text}
+      </div>
+      {long ? (
+        <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-blue-400 hover:text-blue-300 mt-1.5">
+          {open ? "Show less" : "Show more"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function CollapsiblePrompt({ label, text }: { label: string; text: string }) {
   return (
-    <div className="px-5 mb-2">
-      <details className="group">
-        <summary className="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none hover:text-gray-400 list-none flex items-center gap-1">
-          <span className="text-gray-700 group-open:rotate-90 transition-transform inline-block">▶</span>
-          {label}
+    <div className="border-b border-gray-800/80">
+      <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3">
+        <summary className="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none list-none inline-flex w-fit max-w-full items-center gap-2 rounded-lg -ml-1 pl-1 pr-2 py-0.5 hover:bg-gray-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50">
+          <span className="w-4 flex justify-center items-center shrink-0 leading-none" aria-hidden>
+            <span className="text-gray-700 group-open:rotate-90 transition-transform inline-block text-[9px]">
+              ▶
+            </span>
+          </span>
+          <span>{label}</span>
         </summary>
-        <pre className="mt-1 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto">
+        <pre className="mt-2 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto">
           {text}
         </pre>
       </details>

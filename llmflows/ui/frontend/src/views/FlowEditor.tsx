@@ -166,7 +166,7 @@ export function FlowEditorView() {
     const newName = prompt("Name for the copy:", flow.name + "-copy");
     if (!newName) return;
     try {
-      const created = await api.createFlow({ name: newName, copy_from: flow.name });
+      const created = await api.createFlow(flow.project_id, { name: newName, copy_from: flow.name });
       reload();
       navigate(`/flow-editor/${created.id}`);
     } catch (e: unknown) {
