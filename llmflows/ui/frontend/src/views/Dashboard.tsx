@@ -45,7 +45,7 @@ export function Dashboard() {
         <p className="text-sm text-gray-500">
           To add a project, run{" "}
           <code className="text-cyan-400 bg-gray-800 px-1.5 py-0.5 rounded text-xs">llmflows register</code>{" "}
-          inside any folder.
+          in any project folder.
         </p>
       </div>
 
@@ -127,7 +127,7 @@ export function Dashboard() {
 
       {!loading && (!data || data.length === 0) && (
         <div className="text-gray-500 text-center py-12">
-          No projects registered. Run <code className="text-cyan-400">llmflows register</code> in a git repo.
+          No projects registered. Run <code className="text-cyan-400">llmflows register</code> in any project folder.
         </div>
       )}
     </div>

@@ -69,18 +69,30 @@ class Daemon:
         finally:
             session.close()
 
-    def _get_project_settings(self, project_id: str, session) -> object:
-        """Return the ProjectSettings for a project, or a defaults object."""
-        from ..db.models import ProjectSettings
+    @staticmethod
+    def _get_snapshot_steps(run) -> list[str]:
+        """Return ordered step names from a run's flow_snapshot JSON, or [] if none."""
+        if not run.flow_snapshot:
+            return []
+        try:
+            snap = json.loads(run.flow_snapshot)
+            return [s["name"] for s in sorted(snap.get("steps", []), key=lambda s: s.get("position", 0))]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return []
 
-        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
-        if settings:
-            return settings
-
-        class _Defaults:
-            is_git_repo = True
-
-        return _Defaults()
+    @staticmethod
+    def _get_snapshot_step(run, step_name: str) -> Optional[dict]:
+        """Return a step dict from the run's flow_snapshot, or None."""
+        if not run.flow_snapshot:
+            return None
+        try:
+            snap = json.loads(run.flow_snapshot)
+            for s in snap.get("steps", []):
+                if s["name"] == step_name:
+                    return s
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+        return None
 
     @staticmethod
     def _set_task_status(task_id: str, status: str, run_svc: RunService) -> None:
@@ -109,10 +121,7 @@ class Daemon:
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Process a single project: orchestrate active runs step-by-step, pick up pending."""
-        settings = self._get_project_settings(project.id, run_svc.session)
-        is_git = getattr(settings, "is_git_repo", True)
-        if is_git is None:
-            is_git = True
+        is_git = project.is_git_repo if project.is_git_repo is not None else True
 
         active_runs = run_svc.get_active_by_project(project.id)
 
@@ -161,14 +170,9 @@ class Daemon:
         step_name = run.current_step
         flow_name = run.flow_name or ""
         position = 0
-        if run.run_flow_id:
-            steps = flow_svc.get_run_flow_steps(run.run_flow_id)
-            if step_name in steps:
-                position = steps.index(step_name)
-        else:
-            steps = flow_svc.get_flow_steps(flow_name, project_id=run.project_id)
-            if step_name in steps:
-                position = steps.index(step_name)
+        steps = self._get_snapshot_steps(run) or flow_svc.get_flow_steps(flow_name, project_id=run.project_id)
+        if step_name in steps:
+            position = steps.index(step_name)
         self._launch_step(
             run, task, working_path, use_task_subdir,
             step_name, position, flow_name,
@@ -261,19 +265,17 @@ class Daemon:
             "artifacts_output_dir": str(step_artifact_dir),
         }
 
-        # Resolve step definition from snapshot or template
-        step_obj = None
+        # Resolve step definition from snapshot or live template
+        snap_step = self._get_snapshot_step(run, step_run.step_name)
+        step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, project_id=run.project_id)
+        step_src = snap_step or step_obj
         max_retries = None  # None = unlimited
         step_allow_max = False
-        if run.run_flow_id:
-            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, step_run.step_name)
-        if not step_obj:
-            step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, project_id=run.project_id)
-        if step_obj:
-            max_retries = getattr(step_obj, 'max_gate_retries', None)
-            step_allow_max = bool(getattr(step_obj, 'allow_max', False))
+        if step_src:
+            max_retries = step_src.get("max_gate_retries") if snap_step else getattr(step_obj, 'max_gate_retries', None)
+            step_allow_max = bool(step_src.get("allow_max") if snap_step else getattr(step_obj, 'allow_max', False))
 
-        gates = list(step_obj.get_gates()) if step_obj else []
+        gates = list(snap_step.get("gates", []) if snap_step else (step_obj.get_gates() if step_obj else []))
 
         if step_run.step_name != "__summary__":
             gates.insert(0, {
@@ -355,8 +357,13 @@ class Daemon:
         next_position = current_position + 1
 
         # Use snapshot if available, otherwise fall back to template
-        if run.run_flow_id:
-            next_step_name = flow_svc.get_run_flow_next_step(run.run_flow_id, current_step_name)
+        snap_steps = self._get_snapshot_steps(run)
+        if snap_steps:
+            try:
+                idx = snap_steps.index(current_step_name)
+                next_step_name = snap_steps[idx + 1] if idx + 1 < len(snap_steps) else None
+            except ValueError:
+                next_step_name = None
         else:
             next_step_name = flow_svc.get_next_step(current_flow, current_step_name, project_id=run.project_id)
 
@@ -368,28 +375,28 @@ class Daemon:
             return
 
         while next_step_name:
-            if run.run_flow_id:
-                step_obj = flow_svc.get_run_flow_step(run.run_flow_id, next_step_name)
-            else:
-                step_obj = flow_svc.get_step_obj(next_flow, next_step_name, project_id=run.project_id)
-            if not step_obj:
+            snap_step = self._get_snapshot_step(run, next_step_name)
+            step_obj = flow_svc.get_step_obj(next_flow, next_step_name, project_id=run.project_id)
+            step_src = snap_step or step_obj
+            if not step_src:
                 break
-            ifs = step_obj.get_ifs()
+            ifs = snap_step.get("ifs", []) if snap_step else (step_obj.get_ifs() if step_obj else [])
             if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
                 break
             logger.info(
                 "Task %s run %s: IF conditions not met for step '%s', skipping",
                 task.id, run.id, next_step_name,
             )
-            if run.run_flow_id:
-                nxt = flow_svc.get_run_flow_next_step(run.run_flow_id, next_step_name)
+            if snap_steps:
+                try:
+                    idx = snap_steps.index(next_step_name)
+                    nxt = snap_steps[idx + 1] if idx + 1 < len(snap_steps) else None
+                except ValueError:
+                    nxt = None
             else:
                 nxt = flow_svc.get_next_step(next_flow, next_step_name, project_id=run.project_id)
             next_position += 1
-            if nxt:
-                next_step_name = nxt
-            else:
-                next_step_name = None
+            next_step_name = nxt
 
         if not next_step_name:
             self._launch_summary_step(
@@ -425,21 +432,21 @@ class Daemon:
             )
             return
 
-        # Snapshot the flow if not already done
-        if not run.run_flow_id:
-            run_flow = flow_svc.snapshot_flow(run.flow_name, run.id, project_id=run.project_id)
-            if not run_flow:
+        # Build and persist flow snapshot if not already done
+        if not run.flow_snapshot:
+            snapshot = flow_svc.build_flow_snapshot(run.flow_name, project_id=run.project_id)
+            if not snapshot:
                 logger.error("Flow '%s' not found for task %s run %s", run.flow_name, task.id, run.id)
                 run_svc.mark_completed(run.id, outcome="error")
                 self._set_task_status(task.id, "stopped", run_svc)
                 return
-            run.run_flow_id = run_flow.id
+            run.flow_snapshot = json.dumps(snapshot)
             run_svc.session.commit()
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
 
-        steps = flow_svc.get_run_flow_steps(run.run_flow_id)
+        steps = self._get_snapshot_steps(run)
         if not steps:
             logger.error("Flow '%s' has no steps for task %s run %s", run.flow_name, task.id, run.id)
             run_svc.mark_completed(run.id, outcome="error")
@@ -450,15 +457,19 @@ class Daemon:
         position = 0
 
         while first_step:
-            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, first_step)
-            if not step_obj:
+            snap_step = self._get_snapshot_step(run, first_step)
+            if not snap_step:
                 break
-            ifs = step_obj.get_ifs()
+            ifs = snap_step.get("ifs", [])
             if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
                 break
             logger.info("Task %s run %s: IF conditions not met for step '%s', skipping",
                         task.id, run.id, first_step)
-            nxt = flow_svc.get_run_flow_next_step(run.run_flow_id, first_step)
+            try:
+                idx = steps.index(first_step)
+                nxt = steps[idx + 1] if idx + 1 < len(steps) else None
+            except ValueError:
+                nxt = None
             position += 1
             first_step = nxt
 
@@ -600,13 +611,10 @@ class Daemon:
         force_alias: Optional[str] = None,
     ) -> None:
         """Create a StepRun, render prompt, and launch agent for a step."""
-        # Get step definition from snapshot or template
-        step_obj = None
-        if run.run_flow_id:
-            step_obj = flow_svc.get_run_flow_step(run.run_flow_id, step_name)
-        if not step_obj:
-            step_obj = flow_svc.get_step_obj(flow_name, step_name, project_id=run.project_id)
-        step_content = (step_obj.content or "").rstrip() if step_obj else ""
+        # Get step definition from snapshot or live template
+        snap_step = self._get_snapshot_step(run, step_name)
+        step_obj = flow_svc.get_step_obj(flow_name, step_name, project_id=run.project_id)
+        step_content = ((snap_step or {}).get("content", "") or (step_obj.content if step_obj else "") or "").rstrip()
 
         project_root = Path(task.project.path)
         artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
@@ -622,7 +630,7 @@ class Daemon:
             step_content = _interpolate(step_content, step_vars)
 
         # Resolve agent/model from alias
-        alias_name = force_alias or getattr(step_obj, 'agent_alias', None) or "standard"
+        alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "standard"
         try:
             resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_name)
         except ValueError:
@@ -771,12 +779,7 @@ class Daemon:
         if not task:
             return
 
-        if settings is None:
-            settings = self._get_project_settings(project.id, run_svc.session)
-
-        is_git = getattr(settings, "is_git_repo", True)
-        if is_git is None:
-            is_git = True
+        is_git = project.is_git_repo if project.is_git_repo is not None else True
         logger.info("Starting run for task %s (flow=%s, is_git=%s): %s",
                     task.id, run.flow_name, is_git, (task.description or "")[:60])
 

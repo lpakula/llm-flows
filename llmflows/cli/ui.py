@@ -1,5 +1,8 @@
 """UI CLI command -- launch web UI."""
 
+import logging
+import os
+import sys
 from pathlib import Path
 
 import click
@@ -9,9 +12,49 @@ from ..config import load_system_config
 FRONTEND_DIR = Path(__file__).parent.parent / "ui" / "frontend"
 
 
+def _ensure_daemon_running() -> None:
+    """Start the daemon if it is not already running (or restart if stale)."""
+    from ..services.daemon import Daemon, write_pid_file, read_pid_file, remove_pid_file
+
+    existing_pid = read_pid_file()
+    if existing_pid:
+        try:
+            os.kill(existing_pid, 0)  # signal 0 = just check existence
+            click.echo(f"  Daemon:          already running (pid {existing_pid})")
+            return
+        except ProcessLookupError:
+            click.echo("  Daemon:          stale PID found, restarting…")
+            remove_pid_file()
+
+    log_file = os.path.expanduser("~/.llmflows/daemon.log")
+    open(log_file, "w").close()
+
+    pid = os.fork()
+    if pid > 0:
+        click.echo(f"  Daemon:          started (pid {pid})")
+        return
+
+    # ── child process ────────────────────────────────────────────────────────
+    os.setsid()
+    write_pid_file(os.getpid())
+    sys.stdin.close()
+
+    fmt = "%(asctime)s %(name)s %(message)s"
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter(fmt))
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+
+    try:
+        Daemon().start()
+    finally:
+        remove_pid_file()
+    sys.exit(0)
+
+
 def _free_port(port: int) -> None:
     """Kill any process currently listening on *port*."""
-    import signal
     import socket
     import subprocess
 
@@ -29,8 +72,7 @@ def _free_port(port: int) -> None:
         for pid in pids:
             if pid:
                 try:
-                    import os
-                    os.kill(int(pid), signal.SIGTERM)
+                    os.kill(int(pid), 15)  # SIGTERM
                     click.echo(f"Freed port {port} (killed PID {pid})")
                 except (ProcessLookupError, ValueError):
                     pass
@@ -40,10 +82,8 @@ def _free_port(port: int) -> None:
 
 def _run_dev_mode(host: str, port: int):
     """Start Vite dev server + FastAPI backend concurrently."""
-    import os
     import signal
     import subprocess
-    import sys
     import threading
 
     if not FRONTEND_DIR.exists():
@@ -55,12 +95,13 @@ def _run_dev_mode(host: str, port: int):
         click.echo("Installing frontend dependencies...")
         subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True)
 
-    vite_port = 5173
+    vite_port = 4200
     _free_port(port)
     _free_port(vite_port)
     click.echo(f"llmflows UI (dev): http://{host}:{vite_port}")
     click.echo(f"  Vite dev server: :{vite_port}  (open this in browser)")
     click.echo(f"  FastAPI backend:  :{port}")
+    _ensure_daemon_running()
 
     procs: list[subprocess.Popen] = []
 
@@ -128,6 +169,7 @@ def ui(port, host, reload, dev):
     import uvicorn
 
     click.echo(f"llmflows UI: http://{host}:{port}")
+    _ensure_daemon_running()
     kwargs = dict(host=host, port=port, log_level="warning")
     if reload:
         import llmflows

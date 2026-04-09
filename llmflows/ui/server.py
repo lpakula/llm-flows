@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
-from ..db.models import ProjectSettings, TaskType
+from ..db.models import TaskType
 from ..services.agent import AgentService
 from ..services.flow import FlowService
 from ..services.project import ProjectService
@@ -105,21 +105,15 @@ def _get_services():
     return session, ProjectService(session), TaskService(session)
 
 
-def _get_project_settings(project_id: str, session) -> dict:
-    """Return project settings as a dict, falling back to defaults."""
-    s = session.query(ProjectSettings).filter_by(project_id=project_id).first()
-    if s:
-        return s.to_dict()
-    return {"is_git_repo": True}
-
-
-def _enrich_task(task_dict: dict, project_path: str, session, project_settings: Optional[dict] = None) -> dict:
+def _enrich_task(task_dict: dict, project_path: str, session, project: Optional[object] = None) -> dict:
     """Add dynamic fields from active TaskRun and run count."""
     run_svc = RunService(session)
     active_run = run_svc.get_active(task_dict["id"])
     all_runs = run_svc.list_by_task(task_dict["id"])
 
-    is_git = (project_settings or {}).get("is_git_repo", True)
+    is_git = (project.is_git_repo if project is not None else None)
+    if is_git is None:
+        is_git = True
     branch = task_dict.get("worktree_branch", "")
 
     task_dict["agent_active"] = bool(active_run) and AgentService.is_agent_running(
@@ -321,7 +315,7 @@ async def get_project_settings(project_id: str):
         project = project_svc.get(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        return _get_project_settings(project_id, session)
+        return {"is_git_repo": project.is_git_repo if project.is_git_repo is not None else True}
     finally:
         session.close()
 
@@ -334,16 +328,11 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
-        if not settings:
-            settings = ProjectSettings(project_id=project_id)
-            session.add(settings)
-
         if body.is_git_repo is not None:
-            settings.is_git_repo = body.is_git_repo
+            project_svc.update(project_id, is_git_repo=body.is_git_repo)
+            session.refresh(project)
 
-        session.commit()
-        return settings.to_dict()
+        return {"is_git_repo": project.is_git_repo if project.is_git_repo is not None else True}
     finally:
         session.close()
 
@@ -358,9 +347,8 @@ async def list_tasks(project_id: str):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        ps = _get_project_settings(project_id, session)
         tasks = task_svc.list_by_project(project_id)
-        return [_enrich_task(t.to_dict(), project.path, session, ps) for t in tasks]
+        return [_enrich_task(t.to_dict(), project.path, session, project) for t in tasks]
     finally:
         session.close()
 
@@ -386,8 +374,7 @@ async def create_task(project_id: str, body: TaskCreate):
             default_flow_name=body.default_flow_name or None,
         )
 
-        ps = _get_project_settings(project_id, session)
-        return _enrich_task(task.to_dict(), project.path, session, ps)
+        return _enrich_task(task.to_dict(), project.path, session, project)
     finally:
         session.close()
 
@@ -413,8 +400,7 @@ async def update_task(task_id: str, body: TaskUpdate):
             task = task_svc.update(task_id, **updates)
 
         project = project_svc.get(task.project_id)
-        ps = _get_project_settings(task.project_id, session)
-        return _enrich_task(task.to_dict(), project.path, session, ps)
+        return _enrich_task(task.to_dict(), project.path, session, project)
     finally:
         session.close()
 
@@ -450,8 +436,7 @@ async def start_task(task_id: str, body: TaskStartBody):
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)
-        ps = _get_project_settings(task.project_id, session)
-        return _enrich_task(task.to_dict(), project.path, session, ps)
+        return _enrich_task(task.to_dict(), project.path, session, project)
     finally:
         session.close()
 
@@ -490,8 +475,7 @@ async def pause_run(run_id: str):
         task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
         if task and project:
-            ps = _get_project_settings(project.id, session)
-            is_git = ps.get("is_git_repo", True)
+            is_git = project.is_git_repo if project.is_git_repo is not None else True
             AgentService.kill_agent(
                 project.path,
                 task.worktree_branch if is_git else "",
@@ -570,8 +554,7 @@ async def stop_run(run_id: str):
         project = project_svc.get(run.project_id) if run.project_id else None
         killed = False
         if task and project:
-            ps = _get_project_settings(project.id, session)
-            is_git = ps.get("is_git_repo", True)
+            is_git = project.is_git_repo if project.is_git_repo is not None else True
             killed = AgentService.kill_agent(
                 project.path,
                 task.worktree_branch if is_git else "",
@@ -649,58 +632,50 @@ async def get_run_steps(run_id: str):
 
         result = []
 
-        if run.run_flow_id:
-            # Use snapshot steps
-            step_names = flow_svc.get_run_flow_steps(run.run_flow_id)
-            flow_name = run.flow_name or ""
-            position = 0
-            for step_name in step_names:
-                rfs = flow_svc.get_run_flow_step(run.run_flow_id, step_name)
-                has_ifs = bool(rfs and rfs.get_ifs())
-                sr = step_run_map.get(step_name)
-                attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
-                if sr:
-                    status = sr.status
-                    step_data = sr.to_dict()
-                else:
-                    status = "skipped" if has_ifs and position < max_started_position else "pending"
-                    step_data = None
-                result.append({
-                    "name": step_name,
-                    "flow": flow_name,
-                    "status": status,
-                    "has_ifs": has_ifs,
-                    "step_run": step_data,
-                    "attempts": attempts,
-                    "agent_alias": rfs.agent_alias if rfs else "standard",
-                    "allow_max": bool(rfs.allow_max) if rfs else False,
-                    "max_gate_retries": rfs.max_gate_retries if rfs else 3,
+        # Resolve step list from snapshot (preferred) or live template
+        snap_steps = []
+        if run.flow_snapshot:
+            try:
+                snap = json.loads(run.flow_snapshot)
+                snap_steps = sorted(snap.get("steps", []), key=lambda s: s.get("position", 0))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        step_sources = snap_steps or []
+        if not step_sources and run.flow_name:
+            # Fallback: build step list from live template
+            for sname in flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id):
+                obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
+                step_sources.append({
+                    "name": sname,
+                    "ifs": obj.get_ifs() if obj else [],
+                    "agent_alias": obj.agent_alias if obj else "standard",
+                    "allow_max": bool(obj.allow_max) if obj else False,
+                    "max_gate_retries": obj.max_gate_retries if obj else 5,
                 })
-                position += 1
-        elif run.flow_name:
-            # Fallback to template (legacy runs without snapshot)
-            steps = flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id)
-            position = 0
-            for step_name in steps:
-                step_obj = flow_svc.get_step_obj(run.flow_name, step_name, project_id=run.project_id)
-                has_ifs = bool(step_obj and step_obj.get_ifs())
-                sr = step_run_map.get(step_name)
-                attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
-                if sr:
-                    status = sr.status
-                    step_data = sr.to_dict()
-                else:
-                    status = "skipped" if has_ifs and position < max_started_position else "pending"
-                    step_data = None
-                result.append({
-                    "name": step_name,
-                    "flow": run.flow_name,
-                    "status": status,
-                    "has_ifs": has_ifs,
-                    "step_run": step_data,
-                    "attempts": attempts,
-                })
-                position += 1
+
+        for position, step_src in enumerate(step_sources):
+            step_name = step_src["name"]
+            has_ifs = bool(step_src.get("ifs"))
+            sr = step_run_map.get(step_name)
+            attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
+            if sr:
+                status = sr.status
+                step_data = sr.to_dict()
+            else:
+                status = "skipped" if has_ifs and position < max_started_position else "pending"
+                step_data = None
+            result.append({
+                "name": step_name,
+                "flow": run.flow_name or "",
+                "status": status,
+                "has_ifs": has_ifs,
+                "step_run": step_data,
+                "attempts": attempts,
+                "agent_alias": step_src.get("agent_alias", "standard"),
+                "allow_max": bool(step_src.get("allow_max", False)),
+                "max_gate_retries": step_src.get("max_gate_retries", 5),
+            })
 
         # Add summary step if present
         summary_sr = step_run_map.get("__summary__")
@@ -979,7 +954,7 @@ async def dashboard():
                 "idle": sum(1 for t in tasks if t.id not in task_ids_with_active),
             }
 
-            is_git = _get_project_settings(p.id, session).get("is_git_repo", True)
+            is_git = p.is_git_repo if p.is_git_repo is not None else True
 
             def _agent_active(run):
                 task = task_svc.get(run.task_id)

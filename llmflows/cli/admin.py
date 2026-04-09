@@ -4,9 +4,8 @@ from pathlib import Path
 
 import click
 
-from ..config import get_repo_root, is_git_repo, SYSTEM_DB
+from ..config import get_repo_root, SYSTEM_DB
 from ..db.database import init_db, get_session, reset_engine
-from ..db.models import ProjectSettings
 from ..services.project import ProjectService
 
 
@@ -65,6 +64,69 @@ def _update_gitignore(repo_root: Path) -> None:
 def db():
     """Database management."""
     pass
+
+
+@db.group("migrate")
+def db_migrate():
+    """Manage database schema migrations (powered by Alembic)."""
+    pass
+
+
+@db_migrate.command("upgrade")
+def migrate_upgrade():
+    """Apply all pending migrations to bring the DB up to date."""
+    from alembic import command as alembic
+    from ..db.database import init_db, _alembic_cfg
+    from ..config import SYSTEM_DB
+
+    init_db()
+    alembic.upgrade(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), "head")
+    click.secho("Database is up to date.", fg="green")
+
+
+@db_migrate.command("current")
+def migrate_current():
+    """Show the current migration revision."""
+    from alembic import command as alembic
+    from ..db.database import _alembic_cfg
+    from ..config import SYSTEM_DB
+
+    alembic.current(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), verbose=True)
+
+
+@db_migrate.command("history")
+def migrate_history():
+    """Show the full migration history."""
+    from alembic import command as alembic
+    from ..db.database import _alembic_cfg
+    from ..config import SYSTEM_DB
+
+    alembic.history(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), verbose=True)
+
+
+@db_migrate.command("create")
+@click.argument("message")
+@click.option("--no-autogenerate", is_flag=True, default=False,
+              help="Create an empty migration instead of auto-detecting schema changes")
+def migrate_create(message, no_autogenerate):
+    """Generate a new migration file.
+
+    Compares the current DB against the ORM models and writes the diff.
+
+    Example:
+
+      llmflows db migrate create "add tags column to tasks"
+    """
+    from alembic import command as alembic
+    from ..db.database import init_db, _alembic_cfg
+    from ..config import SYSTEM_DB
+
+    init_db()
+    alembic.revision(
+        _alembic_cfg(f"sqlite:///{SYSTEM_DB}"),
+        message=message,
+        autogenerate=not no_autogenerate,
+    )
 
 
 @db.command("reset")
@@ -230,16 +292,11 @@ def project_settings(project_id, git_repo):
             click.echo(f"Project {project_id} not found.")
             raise SystemExit(1)
 
-        settings = session.query(ProjectSettings).filter_by(project_id=project_id).first()
-
         if git_repo is not None:
-            if settings is None:
-                settings = ProjectSettings(project_id=project_id)
-                session.add(settings)
-            settings.is_git_repo = git_repo == "true"
-            session.commit()
+            project_svc.update(project_id, is_git_repo=(git_repo == "true"))
+            session.refresh(project)
 
-        is_git = settings.is_git_repo if settings and settings.is_git_repo is not None else True
+        is_git = project.is_git_repo if project.is_git_repo is not None else True
 
         click.echo()
         click.echo(f"  Project:   {click.style(project.name, fg='cyan')}  ({project.id})")

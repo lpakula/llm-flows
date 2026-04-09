@@ -3,11 +3,21 @@
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import create_engine, inspect, text
+from alembic import command as _alembic
+from alembic.config import Config as _AlembicConfig
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import SYSTEM_DB, ensure_system_dir
-from .models import Base
+
+_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def _alembic_cfg(url: str) -> _AlembicConfig:
+    cfg = _AlembicConfig()
+    cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+    cfg.set_main_option("sqlalchemy.url", url)
+    return cfg
 
 _engine = None
 _SessionLocal = None
@@ -16,17 +26,6 @@ _SessionLocal = None
 def get_db_path() -> Path:
     """Return the path to the central database."""
     return SYSTEM_DB
-
-
-def _add_column_if_missing(engine, inspector, table: str, column: str, column_def: str):
-    """Add a column to a table if it doesn't exist yet."""
-    if table not in inspector.get_table_names():
-        return
-    existing = {c["name"] for c in inspector.get_columns(table)}
-    if column not in existing:
-        with engine.connect() as conn:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}"))
-            conn.commit()
 
 
 def _seed_agent_aliases(session):
@@ -47,56 +46,12 @@ def _seed_agent_aliases(session):
 
 
 def init_db() -> Path:
-    """Initialize the central database schema and seed defaults."""
+    """Initialize the database and run any pending migrations."""
     ensure_system_dir()
-    engine = create_engine(f"sqlite:///{SYSTEM_DB}", echo=False)
-    Base.metadata.create_all(engine)
+    url = f"sqlite:///{SYSTEM_DB}"
+    _alembic.upgrade(_alembic_cfg(url), "head")
 
-    inspector = inspect(engine)
-
-    # Legacy project columns (kept for old DBs but no longer used in code)
-    _add_column_if_missing(engine, inspector, "projects", "aliases", "TEXT DEFAULT '{}'")
-
-    _add_column_if_missing(engine, inspector, "project_settings", "is_git_repo", "BOOLEAN DEFAULT 1")
-
-    # FlowStep migrations
-    _add_column_if_missing(engine, inspector, "flow_steps", "ifs", "TEXT DEFAULT '[]'")
-    _add_column_if_missing(engine, inspector, "flow_steps", "agent_alias", "VARCHAR(50) DEFAULT 'standard'")
-    _add_column_if_missing(engine, inspector, "flow_steps", "allow_max", "BOOLEAN DEFAULT 0")
-    _add_column_if_missing(engine, inspector, "flow_steps", "max_gate_retries", "INTEGER DEFAULT 3")
-
-    # Drop legacy columns no longer in the ORM
-    if "task_runs" in inspector.get_table_names():
-        existing_cols = {c["name"] for c in inspector.get_columns("task_runs")}
-        for legacy_col in ("model", "agent"):
-            if legacy_col in existing_cols:
-                with engine.connect() as conn:
-                    conn.execute(text(f"ALTER TABLE task_runs DROP COLUMN {legacy_col}"))
-                    conn.commit()
-
-    # TaskRun migrations
-    _add_column_if_missing(engine, inspector, "task_runs", "recovery_count", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(engine, inspector, "task_runs", "step_overrides", "TEXT DEFAULT '{}'")
-    _add_column_if_missing(engine, inspector, "task_runs", "one_shot", "BOOLEAN DEFAULT 0")
-    _add_column_if_missing(engine, inspector, "task_runs", "run_flow_id", "VARCHAR(6)")
-    _add_column_if_missing(engine, inspector, "task_runs", "paused_at", "DATETIME")
-    _add_column_if_missing(engine, inspector, "task_runs", "resume_prompt", "TEXT DEFAULT ''")
-
-    # Task migrations
-    _add_column_if_missing(engine, inspector, "tasks", "default_flow_name", "VARCHAR(255)")
-    _add_column_if_missing(engine, inspector, "tasks", "task_status", "VARCHAR(50) DEFAULT 'backlog'")
-    # Migrate legacy status values to current set
-    with engine.connect() as conn:
-        conn.execute(text("UPDATE tasks SET task_status = 'in_progress' WHERE task_status IN ('failed', 'stopped')"))
-        conn.commit()
-
-    # StepRun migrations
-    _add_column_if_missing(engine, inspector, "step_runs", "attempt", "INTEGER NOT NULL DEFAULT 1")
-    _add_column_if_missing(engine, inspector, "step_runs", "gate_failures", "TEXT DEFAULT ''")
-
-    # Flow.project_id migration
-    _add_column_if_missing(engine, inspector, "flows", "project_id", "VARCHAR(6)")
-
+    engine = create_engine(url, echo=False)
     session = sessionmaker(bind=engine)()
     try:
         _seed_agent_aliases(session)

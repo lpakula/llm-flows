@@ -155,11 +155,6 @@ export function ProjectFlowsView() {
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-semibold text-white">{flow.name}</h3>
-                  {flow.name === "default" && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">
-                      DEFAULT
-                    </span>
-                  )}
                 </div>
                 <span className="text-xs text-gray-500">{flow.step_count} steps</span>
               </div>
@@ -174,14 +169,12 @@ export function ProjectFlowsView() {
               >
                 Edit
               </button>
-              {flow.name !== "default" && (
-                <button
-                  onClick={() => deleteFlow(flow.id)}
-                  className="text-xs text-red-500 hover:text-red-400"
-                >
-                  Delete
-                </button>
-              )}
+              <button
+                onClick={() => deleteFlow(flow.id)}
+                className="text-xs text-red-500 hover:text-red-400"
+              >
+                Delete
+              </button>
             </div>
           </div>
         ))}

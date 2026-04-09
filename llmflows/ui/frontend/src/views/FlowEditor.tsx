@@ -147,15 +147,20 @@ function StepEditForm({
             className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
           />
         </div>
-        <label className="flex items-center gap-2 text-sm text-gray-400 mt-4">
-          <input
-            type="checkbox"
-            checked={form.allow_max}
-            onChange={(e) => onChange({ allow_max: e.target.checked })}
-            className="rounded"
-          />
-          Allow max
-        </label>
+        <div className="mt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-400">
+            <input
+              type="checkbox"
+              checked={form.allow_max}
+              onChange={(e) => onChange({ allow_max: e.target.checked })}
+              className="rounded"
+            />
+            Allow max
+          </label>
+          <p className="text-xs text-gray-600 mt-1 ml-5">
+            On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
+          </p>
+        </div>
       </div>
 
       <div className="text-xs text-amber-500 font-mono">

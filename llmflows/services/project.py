@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Project, ProjectSettings
+from ..db.models import Project
 
 
 class ProjectService:
@@ -17,29 +17,12 @@ class ProjectService:
 
         existing = self.session.query(Project).filter_by(path=path).first()
         if existing:
-            settings = self.session.query(ProjectSettings).filter_by(
-                project_id=existing.id
-            ).first()
-            if not settings:
-                settings = ProjectSettings(
-                    project_id=existing.id,
-                    is_git_repo=git_repo,
-                )
-                self.session.add(settings)
-                self.session.commit()
             flow_svc = FlowService(self.session)
             flow_svc.seed_defaults(existing.id)
             return existing
 
-        project = Project(name=name, path=path)
+        project = Project(name=name, path=path, is_git_repo=git_repo)
         self.session.add(project)
-        self.session.flush()
-
-        settings = ProjectSettings(
-            project_id=project.id,
-            is_git_repo=git_repo,
-        )
-        self.session.add(settings)
         self.session.commit()
 
         flow_svc = FlowService(self.session)

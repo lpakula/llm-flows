@@ -33,6 +33,7 @@ dependencies = [
     "uvicorn>=0.20.0",
     "python-multipart>=0.0.6",
     "httpx>=0.24.0",
+    "alembic>=1.12.0",
 ]
 
 [project.urls]
@@ -54,6 +55,9 @@ llmflows = "llmflows.cli:cli"
 [tool.hatch.build.targets.wheel]
 packages = ["llmflows"]
 
+[tool.hatch.build.hooks.custom]
+path = "scripts/build.py"
+
 [tool.hatch.build]
 include = [
     "llmflows/**/*.py",
@@ -64,4 +68,5 @@ include = [
     "llmflows/**/*.js",
     "llmflows/**/*.css",
     "llmflows/**/*.svg",
+    "llmflows/**/*.mako",
 ]

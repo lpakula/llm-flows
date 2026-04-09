@@ -5,7 +5,7 @@ import string
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text, UniqueConstraint  # noqa: F401
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -75,41 +75,19 @@ class Project(Base):
     id: str = Column(String(6), primary_key=True, default=generate_id)
     name: str = Column(String(255), nullable=False)
     path: str = Column(Text, nullable=False, unique=True)
+    is_git_repo: bool = Column(Boolean, default=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     flows = relationship("Flow", back_populates="project", cascade="all, delete-orphan")
-    settings = relationship("ProjectSettings", back_populates="project",
-                            uselist=False, cascade="all, delete-orphan")
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "path": self.path,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
-
-class ProjectSettings(Base):
-    __tablename__ = "project_settings"
-
-    id: str = Column(String(6), primary_key=True, default=generate_id)
-    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False, unique=True)
-    is_git_repo: bool = Column(Boolean, default=True)
-    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
-                                  onupdate=lambda: datetime.now(timezone.utc))
-
-    project = relationship("Project", back_populates="settings")
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "project_id": self.project_id,
             "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -186,7 +164,7 @@ class FlowStep(Base):
     ifs: str = Column(Text, default="[]")
     agent_alias: str = Column(String(50), default="standard")
     allow_max: bool = Column(Boolean, default=False)
-    max_gate_retries: int = Column(Integer, default=None)
+    max_gate_retries: int = Column(Integer, default=5)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -220,84 +198,9 @@ class FlowStep(Base):
             "ifs": self.get_ifs(),
             "agent_alias": self.agent_alias or "standard",
             "allow_max": bool(self.allow_max),
-            "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 3,
+            "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
-
-
-class RunFlow(Base):
-    """Snapshot of a flow template at the time a run starts."""
-    __tablename__ = "run_flows"
-
-    id: str = Column(String(6), primary_key=True, default=generate_id)
-    run_id: str = Column(String(6), ForeignKey("task_runs.id"), nullable=False)
-    source_flow_id: str = Column(String(6), nullable=True)
-    name: str = Column(String(255), nullable=False)
-    description: str = Column(Text, default="")
-    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    run = relationship("TaskRun", back_populates="run_flow", foreign_keys=[run_id])
-    steps = relationship("RunFlowStep", back_populates="run_flow", cascade="all, delete-orphan",
-                         order_by="RunFlowStep.position")
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "run_id": self.run_id,
-            "source_flow_id": self.source_flow_id,
-            "name": self.name,
-            "description": self.description or "",
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "steps": [s.to_dict() for s in self.steps],
-        }
-
-
-class RunFlowStep(Base):
-    """Snapshot of a flow step at the time a run starts."""
-    __tablename__ = "run_flow_steps"
-
-    id: str = Column(String(6), primary_key=True, default=generate_id)
-    run_flow_id: str = Column(String(6), ForeignKey("run_flows.id"), nullable=False)
-    name: str = Column(String(255), nullable=False)
-    position: int = Column(Integer, nullable=False, default=0)
-    content: str = Column(Text, default="")
-    gates: str = Column(Text, default="[]")
-    ifs: str = Column(Text, default="[]")
-    agent_alias: str = Column(String(50), default="standard")
-    allow_max: bool = Column(Boolean, default=False)
-    max_gate_retries: int = Column(Integer, default=3)
-    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    run_flow = relationship("RunFlow", back_populates="steps")
-
-    def get_gates(self) -> list[dict]:
-        import json
-        try:
-            return json.loads(self.gates or "[]")
-        except (json.JSONDecodeError, TypeError):
-            return []
-
-    def get_ifs(self) -> list[dict]:
-        import json
-        try:
-            return json.loads(self.ifs or "[]")
-        except (json.JSONDecodeError, TypeError):
-            return []
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "run_flow_id": self.run_flow_id,
-            "name": self.name,
-            "position": self.position,
-            "content": self.content,
-            "gates": self.get_gates(),
-            "ifs": self.get_ifs(),
-            "agent_alias": self.agent_alias or "standard",
-            "allow_max": bool(self.allow_max),
-            "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 3,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -308,7 +211,7 @@ class TaskRun(Base):
     project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
     task_id: str = Column(String(6), ForeignKey("tasks.id"), nullable=False)
     flow_name: str = Column(String(255), nullable=True, default=None)
-    run_flow_id: str = Column(String(6), ForeignKey("run_flows.id"), nullable=True)
+    flow_snapshot: str = Column(Text, nullable=True)
     current_step: str = Column(String(255), default="")
     outcome: str = Column(String(50), nullable=True)
     log_path: str = Column(Text, default="")
@@ -325,8 +228,6 @@ class TaskRun(Base):
     completed_at: datetime = Column(DateTime, nullable=True)
 
     task = relationship("Task", back_populates="runs")
-    run_flow = relationship("RunFlow", back_populates="run", uselist=False, cascade="all, delete-orphan",
-                             foreign_keys="[RunFlow.run_id]")
     step_runs = relationship("StepRun", back_populates="run", cascade="all, delete-orphan",
                              order_by="StepRun.step_position")
 
@@ -348,7 +249,6 @@ class TaskRun(Base):
             "project_id": self.project_id,
             "task_id": self.task_id,
             "flow_name": self.flow_name,
-            "run_flow_id": self.run_flow_id,
             "current_step": self.current_step,
             "status": self.status,
             "outcome": self.outcome,
@@ -380,7 +280,6 @@ class StepRun(Base):
     log_path: str = Column(Text, default="")
     prompt: str = Column(Text, default="")
     outcome: str = Column(String(50), nullable=True)
-    retry_count: int = Column(Integer, nullable=False, default=0)
     attempt: int = Column(Integer, nullable=False, default=1)
     gate_failures: str = Column(Text, default="")
     started_at: datetime = Column(DateTime, nullable=True)
@@ -416,7 +315,6 @@ class StepRun(Base):
             "prompt": self.prompt,
             "status": self.status,
             "outcome": self.outcome,
-            "retry_count": self.retry_count or 0,
             "attempt": self.attempt or 1,
             "gate_failures": gf,
             "started_at": self.started_at.isoformat() if self.started_at else None,
