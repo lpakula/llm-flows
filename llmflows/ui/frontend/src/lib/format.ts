@@ -7,8 +7,13 @@ export function duration(startedAt: string | null, completedAt: string | null): 
   const start = new Date(asUTC(startedAt));
   const end = completedAt ? new Date(asUTC(completedAt)) : new Date();
   const ms = end.getTime() - start.getTime();
-  if (ms < 1000) return "<1s";
-  const s = Math.floor(ms / 1000);
+  return formatSeconds(ms / 1000);
+}
+
+export function formatSeconds(totalSeconds: number | null | undefined): string {
+  if (totalSeconds == null) return "-";
+  if (totalSeconds < 1) return "<1s";
+  const s = Math.floor(totalSeconds);
   if (s < 60) return s + "s";
   const m = Math.floor(s / 60);
   const rs = s % 60;

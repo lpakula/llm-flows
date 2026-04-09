@@ -243,6 +243,18 @@ class TaskRun(Base):
             return "running"
         return "queued"
 
+    @property
+    def duration_seconds(self) -> float | None:
+        if not self.step_runs:
+            if not self.started_at:
+                return None
+            end = self.completed_at or datetime.now(timezone.utc)
+            start = self.started_at if self.started_at.tzinfo else self.started_at.replace(tzinfo=timezone.utc)
+            end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
+            return (end - start).total_seconds()
+        total = sum(sr.duration_seconds for sr in self.step_runs if sr.duration_seconds is not None)
+        return total or None
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -264,6 +276,7 @@ class TaskRun(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "duration_seconds": self.duration_seconds,
         }
 
 
@@ -295,6 +308,15 @@ class StepRun(Base):
             return "running"
         return "pending"
 
+    @property
+    def duration_seconds(self) -> float | None:
+        if not self.started_at:
+            return None
+        end = self.completed_at or datetime.now(timezone.utc)
+        start = self.started_at if self.started_at.tzinfo else self.started_at.replace(tzinfo=timezone.utc)
+        end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
+        return (end - start).total_seconds()
+
     def to_dict(self) -> dict:
         import json as _json
         gf = []
@@ -319,4 +341,5 @@ class StepRun(Base):
             "gate_failures": gf,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "duration_seconds": self.duration_seconds,
         }

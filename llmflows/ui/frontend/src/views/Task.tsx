@@ -11,7 +11,7 @@ import { LogViewer } from "@/components/LogViewer";
 import { RunModal } from "@/components/RunModal";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
-import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
+import { statusBadge, displayStatus, duration, formatSeconds, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { marked } from "marked";
 
 const DESC_PREVIEW_LINES = 4;
@@ -55,6 +55,7 @@ export function TaskView() {
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
   const [viewingStepPrompt, setViewingStepPrompt] = useState<string | null>(null);
   const [viewingStepAgentModel, setViewingStepAgentModel] = useState<{ agent: string; model: string } | null>(null);
+  const [viewingStepDuration, setViewingStepDuration] = useState<number | null>(null);
   const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
   const [agentLogExpanded, setAgentLogExpanded] = useState(true);
 
@@ -125,6 +126,7 @@ export function TaskView() {
                 agent: activeStep.step_run.agent || "",
                 model: activeStep.step_run.model || "",
               });
+              setViewingStepDuration(activeStep.step_run.duration_seconds ?? null);
             }
           }
           return;
@@ -149,6 +151,7 @@ export function TaskView() {
       setSelectedAttempt(null);
       setViewingStepPrompt(null);
       setViewingStepAgentModel(null);
+      setViewingStepDuration(null);
       setViewingGateFailures([]);
       setAgentLogExpanded(true);
     } else {
@@ -158,6 +161,7 @@ export function TaskView() {
       setSelectedAttempt(null);
       setViewingStepPrompt(null);
       setViewingStepAgentModel(null);
+      setViewingStepDuration(null);
       setViewingGateFailures([]);
       setAgentLogExpanded(true);
       loadRunSteps(runId);
@@ -182,6 +186,7 @@ export function TaskView() {
       agent: step.step_run.agent || "",
       model: step.step_run.model || "",
     });
+    setViewingStepDuration(step.step_run.duration_seconds ?? null);
     setViewingGateFailures(step.step_run.gate_failures || []);
   };
 
@@ -213,6 +218,7 @@ export function TaskView() {
     setViewingStepName(null);
     setViewingStepPrompt(null);
     setViewingStepAgentModel(null);
+    setViewingStepDuration(null);
     setSelectedAttempt(null);
     setViewingGateFailures([]);
     setAgentLogExpanded(true);
@@ -487,7 +493,9 @@ export function TaskView() {
                           </span>
                         </td>
                         <td className="px-4 py-3 align-top text-gray-400 tabular-nums whitespace-nowrap">
-                          {duration(run.started_at, run.completed_at)}
+                          {run.duration_seconds != null
+                            ? formatSeconds(run.duration_seconds)
+                            : duration(run.started_at, run.completed_at)}
                         </td>
                         <td className="px-4 py-3 align-top text-gray-500 tabular-nums whitespace-nowrap">
                           {formatTaskTimestamp(run.started_at || run.created_at)}
@@ -560,7 +568,7 @@ export function TaskView() {
                                     setSelectedAttempt(attempts.length > 1 ? { stepName: step.name, attemptId: first.id } : null);
                                     setViewingStepPrompt(first.prompt || null);
                                     setViewingStepAgentModel({ agent: first.agent || "", model: first.model || "" });
-                                    // Gate failures are stored on the next attempt (the retry it caused)
+                                    setViewingStepDuration(first.duration_seconds ?? null);
                                     setViewingGateFailures(attempts[1]?.gate_failures || []);
                                   }}
                                   className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : step.status)} ${
@@ -596,6 +604,7 @@ export function TaskView() {
                                           setSelectedAttempt({ stepName: step.name, attemptId: att.id });
                                           setViewingStepPrompt(att.prompt || null);
                                           setViewingStepAgentModel({ agent: att.agent || "", model: att.model || "" });
+                                          setViewingStepDuration(att.duration_seconds ?? null);
                                           // Gate failures are stored on the next attempt.
                                       // Last attempt has no next → it passed (or is running) → no failures to show.
                                       const nextAtt = attempts[j + 2];
@@ -674,6 +683,7 @@ export function TaskView() {
                             setViewingStepName(null);
                             setViewingStepPrompt(null);
                             setViewingStepAgentModel(null);
+                            setViewingStepDuration(null);
                             setSelectedAttempt(null);
                             setViewingGateFailures([]);
                             setAgentLogExpanded(true);
@@ -690,6 +700,17 @@ export function TaskView() {
                             MODEL:{" "}
                             <span className="text-gray-200 font-mono normal-case">
                               {viewingStepAgentModel.agent || "—"}/{viewingStepAgentModel.model || "—"}
+                            </span>
+                          </span>
+                        </div>
+                      ) : null}
+                      {viewingStepDuration != null ? (
+                        <div className="px-5 py-2 flex items-center gap-2 border-b border-gray-800/80">
+                          <span className="w-4 flex justify-center shrink-0" aria-hidden />
+                          <span className="text-[10px] uppercase tracking-wide text-gray-500 truncate">
+                            DURATION:{" "}
+                            <span className="text-gray-200 font-mono normal-case">
+                              {formatSeconds(viewingStepDuration)}
                             </span>
                           </span>
                         </div>

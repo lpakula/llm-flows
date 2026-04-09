@@ -5,7 +5,7 @@ import { useInterval } from "@/hooks/useInterval";
 import { useAutoResize } from "@/hooks/useAutoResize";
 import { useImagePaste } from "@/hooks/useImagePaste";
 import type { Task, Flow } from "@/api/types";
-import { typeColor, statusBadge, statusDot, displayStatus, duration } from "@/lib/format";
+import { typeColor, statusBadge, statusDot, displayStatus, duration, formatSeconds } from "@/lib/format";
 import { RunModal } from "@/components/RunModal";
 
 // ── Status definitions ────────────────────────────────────────────────────────
@@ -121,14 +121,16 @@ function TaskRow({
         {task.last_run_status ? (() => {
           const fakeRun = { status: task.last_run_status!, outcome: task.last_run_outcome };
           const label = displayStatus(fakeRun);
-          const dur = duration(task.last_run_started_at, task.last_run_completed_at);
+          const dur = task.last_run_duration_seconds != null
+            ? formatSeconds(task.last_run_duration_seconds)
+            : duration(task.last_run_started_at, task.last_run_completed_at);
           return (
             <div className="flex items-center gap-1.5">
               <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${statusBadge(label)}`}>
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot(task.last_run_status!, task.last_run_outcome)}`} />
                 {label}
               </span>
-              {dur !== "—" && <span className="text-[10px] text-gray-600 tabular-nums">{dur}</span>}
+              {dur !== "-" && dur !== "—" && <span className="text-[10px] text-gray-600 tabular-nums">{dur}</span>}
             </div>
           );
         })() : <span className="text-gray-700">—</span>}
@@ -206,14 +208,16 @@ function TaskCard({
           {task.last_run_status && (() => {
             const fakeRun = { status: task.last_run_status!, outcome: task.last_run_outcome };
             const label = displayStatus(fakeRun);
-            const dur = duration(task.last_run_started_at, task.last_run_completed_at);
+            const dur = task.last_run_duration_seconds != null
+              ? formatSeconds(task.last_run_duration_seconds)
+              : duration(task.last_run_started_at, task.last_run_completed_at);
             return (
               <>
                 <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${statusBadge(label)}`}>
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot(task.last_run_status!, task.last_run_outcome)}`} />
                   {label}
                 </span>
-                {dur !== "—" && <span className="text-[10px] text-gray-600 tabular-nums">{dur}</span>}
+                {dur !== "-" && dur !== "—" && <span className="text-[10px] text-gray-600 tabular-nums">{dur}</span>}
               </>
             );
           })()}

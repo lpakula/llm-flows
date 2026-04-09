@@ -132,6 +132,7 @@ def _enrich_task(task_dict: dict, project_path: str, session, project: Optional[
     task_dict["last_run_outcome"] = last_run.outcome if last_run else None
     task_dict["last_run_started_at"] = last_run.started_at.isoformat() if last_run and last_run.started_at else None
     task_dict["last_run_completed_at"] = last_run.completed_at.isoformat() if last_run and last_run.completed_at else None
+    task_dict["last_run_duration_seconds"] = last_run.duration_seconds if last_run else None
     if is_git and branch:
         wt_svc = WorktreeService(project_path)
         wt_path = wt_svc.get_worktree_path(branch)

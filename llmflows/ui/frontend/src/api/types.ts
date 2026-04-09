@@ -39,6 +39,7 @@ export interface Task {
   last_run_outcome: string | null;
   last_run_started_at: string | null;
   last_run_completed_at: string | null;
+  last_run_duration_seconds: number | null;
   created_at: string;
 }
 
@@ -61,6 +62,7 @@ export interface TaskRun {
   one_shot: boolean;
   paused_at: string | null;
   resume_prompt: string;
+  duration_seconds: number | null;
   task_name?: string;
   project_name?: string;
 }
@@ -125,6 +127,7 @@ export interface StepRunDetail {
   prompt: string | null;
   started_at: string | null;
   completed_at: string | null;
+  duration_seconds: number | null;
   attempt: number;
   agent: string;
   model: string;
