@@ -634,7 +634,7 @@ export function TaskView() {
                                 </button>
                               )}
                               {/* Play button to resume/re-run from this step */}
-                              {run.completed_at && step.step_run && step.name !== "__summary__" && (
+                              {run.completed_at && step.step_run && step.name !== "__summary__" && task?.task_status !== "completed" && (
                                 <button
                                   onClick={() => openRetryModal(run.id, step.name)}
                                   className={`ml-1 px-1.5 py-1 rounded border text-[10px] whitespace-nowrap cursor-pointer ${
