@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmflows"
-version = "0.4.2"
+version = "0.4.3"
 description = "Agentic workflow orchestrator with kanban UI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -72,4 +72,9 @@ include = [
     "llmflows/**/*.svg",
     "llmflows/**/*.mako",
     "scripts/*.py",
+]
+exclude = [
+    "llmflows/ui/frontend/node_modules/**",
+    "llmflows/ui/frontend/dist/**",
+    "llmflows/ui/static/**",
 ]
