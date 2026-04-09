@@ -502,6 +502,15 @@ export function TaskView() {
                               >
                                 Force Stop
                               </button>
+                            ) : run.started_at ? (
+                              <button
+                                type="button"
+                                onClick={() => forceStopRun(run.id)}
+                                className="text-xs text-gray-600 hover:text-red-400"
+                                title="Kill any lingering agent process for this run"
+                              >
+                                Kill
+                              </button>
                             ) : null}
                             {(run.completed_at || !run.started_at) ? (
                               <button type="button" onClick={() => deleteRun(run.id)} className="text-xs text-gray-600 hover:text-red-400">
@@ -529,13 +538,17 @@ export function TaskView() {
                         {(runSteps[run.id] || []).map((step, i) => {
                           const attempts = step.attempts || [];
                           const stepLabel = step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name;
+                          const isCancelled = displayStatus(run) === "cancelled";
                           // Any attempt that isn't the last one caused a retry → gate failed → red.
                           // The last attempt uses its real status.
+                          // If the run was cancelled, remap failed/error to skipped (grey) — not a real failure.
+                          const resolveStatus = (s: string) =>
+                            isCancelled && (s === "failed" || s === "error") ? "skipped" : s;
                           const attemptStatus = (att: typeof attempts[number], idx: number) =>
-                            idx < attempts.length - 1 ? "failed" : att.status;
+                            resolveStatus(idx < attempts.length - 1 ? "failed" : att.status);
                           return (
                             <div key={i} className="flex items-center">
-                              {i > 0 && <div className={`w-5 h-0.5 ${stepConnectorClass(step.status)}`} />}
+                              {i > 0 && <div className={`w-5 h-0.5 ${stepConnectorClass(resolveStatus(step.status))}`} />}
                               {/* First attempt — the "execute" box */}
                               <div className="relative">
                                 <button
@@ -620,12 +633,16 @@ export function TaskView() {
                                   ■
                                 </button>
                               )}
-                              {/* Play button to retry/resume from this step */}
-                              {run.completed_at && step.status !== "completed" && step.step_run && (
+                              {/* Play button to resume/re-run from this step */}
+                              {run.completed_at && step.step_run && step.name !== "__summary__" && (
                                 <button
                                   onClick={() => openRetryModal(run.id, step.name)}
-                                  className="ml-1 px-1.5 py-1 rounded border border-green-700 bg-green-900/40 text-green-400 text-[10px] whitespace-nowrap cursor-pointer hover:bg-green-800/60"
-                                  title="Retry from this step"
+                                  className={`ml-1 px-1.5 py-1 rounded border text-[10px] whitespace-nowrap cursor-pointer ${
+                                    step.status === "completed"
+                                      ? "border-gray-700 bg-gray-800/40 text-gray-500 hover:border-green-700 hover:bg-green-900/40 hover:text-green-400"
+                                      : "border-green-700 bg-green-900/40 text-green-400 hover:bg-green-800/60"
+                                  }`}
+                                  title={step.status === "completed" ? "Re-run from this step" : "Retry from this step"}
                                 >
                                   ▶
                                 </button>
@@ -685,8 +702,8 @@ export function TaskView() {
                       {viewingStepPrompt && (
                         <CollapsiblePrompt label="Injected context" text={viewingStepPrompt} />
                       )}
-                      {/* Gate failures that triggered this retry */}
-                      {viewingGateFailures.length > 0 && (
+                      {/* Gate failures that triggered this retry — hidden for cancelled runs */}
+                      {viewingGateFailures.length > 0 && displayStatus(run) !== "cancelled" && (
                         <div className="border-b border-gray-800/80">
                           <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3" open>
                             <summary className="text-[10px] uppercase tracking-wide text-orange-600 cursor-pointer select-none hover:text-orange-400 list-none inline-flex w-fit items-center gap-2 rounded-lg -ml-1 pl-1 pr-2 py-0.5">

@@ -99,34 +99,43 @@ class RunService:
     def retry_step(self, run_id: str, step_name: str, prompt: str = "") -> Optional[TaskRun]:
         """Re-activate an interrupted run and re-launch a step from scratch.
 
-        Deletes all previous step_runs for the step and cleans up the
-        corresponding artifact directory so the daemon starts clean.
+        Deletes all StepRuns at or after the retried step's position, and cleans
+        up the corresponding artifact directories so the daemon starts clean.
+        This prevents stale downstream StepRuns from confusing the daemon.
         """
         run = self.session.query(TaskRun).filter_by(id=run_id).first()
         if not run:
             return None
 
-        old_steps = self.session.query(StepRun).filter_by(
+        # Find the position of the step being retried
+        pivot_step = self.session.query(StepRun).filter_by(
             run_id=run_id, step_name=step_name,
+        ).order_by(StepRun.step_position).first()
+        pivot_position = pivot_step.step_position if pivot_step else 0
+
+        # Delete all StepRuns at or after this position (retried step + all downstream)
+        steps_to_delete = self.session.query(StepRun).filter(
+            StepRun.run_id == run_id,
+            StepRun.step_position >= pivot_position,
         ).all()
-        if old_steps and run.task and run.task.project:
+
+        if steps_to_delete and run.task and run.task.project:
             from .context import ContextService
             artifacts_dir = ContextService.get_artifacts_dir(
                 Path(run.task.project.path), run.task_id, run_id,
             )
-            for sr in old_steps:
-                step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{step_name}"
+            for sr in steps_to_delete:
+                step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}"
                 if step_artifact_dir.exists():
                     shutil.rmtree(step_artifact_dir, ignore_errors=True)
 
-        self.session.query(StepRun).filter_by(
-            run_id=run_id, step_name=step_name,
-        ).delete()
+        for sr in steps_to_delete:
+            self.session.delete(sr)
+
         run.completed_at = None
         run.outcome = None
         run.current_step = step_name
-        if prompt:
-            run.resume_prompt = prompt
+        run.resume_prompt = prompt if prompt else ""
         self.session.commit()
         return run
 

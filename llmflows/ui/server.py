@@ -592,6 +592,10 @@ async def stop_run(run_id: str):
             session.commit()
             return {"ok": True, "killed": False, "dequeued": True}
 
+        # Mark cancelled BEFORE killing the agent so the daemon's next poll
+        # always sees completed_at set and skips gate evaluation.
+        run_svc.mark_completed(run_id, outcome="cancelled")
+
         task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
         killed = False
@@ -603,7 +607,6 @@ async def stop_run(run_id: str):
                 task_id="" if is_git else task.id,
             )
 
-        run_svc.mark_completed(run_id, outcome="cancelled")
         return {"ok": True, "killed": killed, "dequeued": False}
     finally:
         session.close()

@@ -283,6 +283,17 @@ class Daemon:
                 "message": f"Step '{step_run.step_name}' must produce output artifacts in {step_artifact_dir}",
             })
 
+        # Re-check cancellation immediately before running gates — the run may have been
+        # cancelled between the agent dying and gate evaluation starting.
+        run_svc.session.refresh(run)
+        if run.completed_at:
+            logger.info(
+                "Task %s run %s was cancelled before gate evaluation for step '%s', skipping",
+                task.id, run.id, step_run.step_name,
+            )
+            run_svc.mark_step_completed(step_run.id, outcome="cancelled")
+            return
+
         if gates:
             failures = evaluate_gates(gates, working_path, timeout=gate_timeout, variables=step_vars)
             if failures:
@@ -292,6 +303,16 @@ class Daemon:
                 ])
                 retry_count = max(0, total_completed - 1)
                 unlimited = max_retries is None or max_retries == 0
+                # Do not retry if the run was cancelled while gates were running.
+                run_svc.session.refresh(run)
+                if run.completed_at:
+                    logger.info(
+                        "Task %s run %s cancelled during gate evaluation for step '%s', skipping retry",
+                        task.id, run.id, step_run.step_name,
+                    )
+                    run_svc.mark_step_completed(step_run.id, outcome="cancelled")
+                    return
+
                 if unlimited or retry_count < max_retries:
                     is_last_retry = not unlimited and (retry_count + 1 >= max_retries)
                     use_max = step_allow_max and is_last_retry
