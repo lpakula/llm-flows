@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1286,10 +1286,25 @@ async def list_models(agent: Optional[str] = None):
     return KNOWN_MODELS
 
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/{path:path}")
 async def spa_fallback(path: str):
     """Serve index.html for any non-API path (SPA client-side routing)."""
-    return FileResponse(STATIC_DIR / "index.html")
+    index = STATIC_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return HTMLResponse(
+        content=(
+            "<html><body style='font-family:monospace;padding:2rem'>"
+            "<h2>UI not built</h2>"
+            "<p>The React frontend was not compiled during installation.</p>"
+            "<p>Run the following inside the package source directory to build it:</p>"
+            "<pre>cd llmflows/ui/frontend && npm install && npm run build</pre>"
+            "<p>Or reinstall with Node.js available so the build hook can run automatically.</p>"
+            "</body></html>"
+        ),
+        status_code=503,
+    )

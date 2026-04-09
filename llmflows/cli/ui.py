@@ -2,6 +2,8 @@
 
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +12,44 @@ import click
 from ..config import load_system_config
 
 FRONTEND_DIR = Path(__file__).parent.parent / "ui" / "frontend"
+STATIC_DIR = Path(__file__).parent.parent / "ui" / "static"
+
+
+def _ensure_frontend_built() -> bool:
+    """Build the React frontend if the static directory is missing. Returns True if ready."""
+    if (STATIC_DIR / "index.html").is_file():
+        return True
+
+    click.echo("  Frontend:        static files not found, attempting to build...")
+
+    npm = shutil.which("npm")
+    if not npm:
+        click.echo(
+            "  Frontend:        npm not found — cannot build automatically.\n"
+            "\n"
+            "  To fix, install Node.js and run:\n"
+            "    cd " + str(FRONTEND_DIR) + "\n"
+            "    npm install && npm run build\n"
+            "\n"
+            "  Or install Node.js so llmflows can build it for you on next start.",
+            err=True,
+        )
+        return False
+
+    if not FRONTEND_DIR.exists():
+        click.echo(f"  Frontend:        source directory not found at {FRONTEND_DIR}", err=True)
+        return False
+
+    try:
+        click.echo("  Frontend:        running npm install...")
+        subprocess.run([npm, "install"], cwd=str(FRONTEND_DIR), check=True, capture_output=True)
+        click.echo("  Frontend:        running npm run build...")
+        subprocess.run([npm, "run", "build"], cwd=str(FRONTEND_DIR), check=True, capture_output=True)
+        click.echo("  Frontend:        build complete.")
+        return True
+    except subprocess.CalledProcessError as e:
+        click.echo(f"  Frontend:        build failed — {e}", err=True)
+        return False
 
 
 def _ensure_daemon_running() -> None:
@@ -169,6 +209,8 @@ def ui(port, host, reload, dev):
     import uvicorn
 
     click.echo(f"llmflows UI: http://{host}:{port}")
+    if not _ensure_frontend_built():
+        sys.exit(1)
     _ensure_daemon_running()
     kwargs = dict(host=host, port=port, log_level="warning")
     if reload:
