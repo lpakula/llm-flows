@@ -570,7 +570,7 @@ export function TaskView() {
                                   } ${attempts[0] ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                                 >
                                   {stepLabel}
-                                  {step.has_ifs && " \u24d8"}
+                                  {step.has_ifs && <span className="ml-1 text-purple-400 font-medium">if</span>}
                                 </button>
                                 {attempts[0] && attempts[0].status !== "completed" && attempts[0].status !== "running" && attempts.length === 1 && (
                                   <button
