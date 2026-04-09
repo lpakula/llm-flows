@@ -10,6 +10,7 @@ import { ProjectFlowsView } from "@/views/Flows";
 import { FlowEditorView } from "@/views/FlowEditor";
 import { AgentsView } from "@/views/Agents";
 import { SettingsView } from "@/views/Settings";
+import { ProjectSettingsView } from "@/views/ProjectSettings";
 
 interface AppContextType {
   projects: Project[];
@@ -48,6 +49,10 @@ function AppInner() {
     return m ? m[1] : null;
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (urlProjectId) setManualProjectId(urlProjectId);
+  }, [urlProjectId]);
+
   const selectedProjectId = urlProjectId || manualProjectId;
 
   return (
@@ -58,6 +63,7 @@ function AppInner() {
           <Route path="/project/:projectId" element={<ProjectView />} />
           <Route path="/project/:projectId/flows" element={<ProjectFlowsView />} />
           <Route path="/project/:projectId/task/:taskId" element={<TaskView />} />
+          <Route path="/project/:projectId/settings" element={<ProjectSettingsView />} />
           <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />
           <Route path="/settings" element={<SettingsView />} />

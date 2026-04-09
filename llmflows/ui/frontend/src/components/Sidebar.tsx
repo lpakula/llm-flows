@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { CheckSquare, Workflow, Settings, Bot, SlidersHorizontal } from "lucide-react";
 import { useApp } from "@/App";
 import { DaemonWidget } from "./DaemonWidget";
 
 function navClass({ isActive }: { isActive: boolean }) {
-  return `w-full text-left px-3 py-1.5 rounded-lg text-sm transition block truncate ${
+  return `w-full text-left px-3 py-1.5 rounded-lg text-sm transition flex items-center gap-2.5 ${
     isActive ? "bg-gray-800 text-white" : "text-gray-400 hover:text-gray-200 hover:bg-gray-800/50"
   }`;
 }
@@ -43,7 +44,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800 flex-shrink-0">
         <NavLink to="/" className="text-lg font-semibold tracking-tight hover:text-blue-400 transition">
-          llmflows
+          llm flows
         </NavLink>
       </div>
 
@@ -109,10 +110,16 @@ export function Sidebar() {
         {selectedProject && (
           <>
             <NavLink to={`/project/${selectedProject.id}`} end className={navClass}>
+              <CheckSquare size={14} className="flex-shrink-0" />
               Tasks
             </NavLink>
             <NavLink to={`/project/${selectedProject.id}/flows`} className={navClass}>
+              <Workflow size={14} className="flex-shrink-0" />
               Flows
+            </NavLink>
+            <NavLink to={`/project/${selectedProject.id}/settings`} className={navClass}>
+              <Settings size={14} className="flex-shrink-0" />
+              Settings
             </NavLink>
           </>
         )}
@@ -124,9 +131,11 @@ export function Sidebar() {
         </div>
         <nav className="px-2 space-y-0.5 pb-2">
           <NavLink to="/agents" className={navClass}>
+            <Bot size={14} className="flex-shrink-0" />
             Agents
           </NavLink>
           <NavLink to="/settings" className={navClass}>
+            <SlidersHorizontal size={14} className="flex-shrink-0" />
             Settings
           </NavLink>
         </nav>
