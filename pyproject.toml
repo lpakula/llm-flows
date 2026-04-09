@@ -76,5 +76,4 @@ include = [
 exclude = [
     "llmflows/ui/frontend/node_modules/**",
     "llmflows/ui/frontend/dist/**",
-    "llmflows/ui/static/**",
 ]
