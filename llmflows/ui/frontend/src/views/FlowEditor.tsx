@@ -123,6 +123,35 @@ function StepEditForm({
         onChange={(gates) => onChange({ gates })}
       />
 
+      {form.gates.length > 0 && (
+        <div className="pl-3 border-l border-gray-700 space-y-3">
+            <div>
+              <label className="text-xs text-gray-400 font-medium block mb-1">Max Retries</label>
+              <input
+                type="number"
+                value={form.max_gate_retries}
+                onChange={(e) => onChange({ max_gate_retries: parseInt(e.target.value) || 0 })}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                If a gate fails, the step is re-run by the agent. This sets how many times that cycle repeats before the run is marked as failed.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-400">
+              <input
+                type="checkbox"
+                checked={form.allow_max}
+                onChange={(e) => onChange({ allow_max: e.target.checked })}
+                className="rounded"
+              />
+              Allow max
+            </label>
+          <p className="text-xs text-gray-600">
+            On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center gap-4">
         <div>
           <label className="text-xs text-gray-400 font-medium block mb-1">Agent Alias</label>
@@ -137,29 +166,6 @@ function StepEditForm({
               </option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 font-medium block mb-1">Max Retries</label>
-          <input
-            type="number"
-            value={form.max_gate_retries}
-            onChange={(e) => onChange({ max_gate_retries: parseInt(e.target.value) || 0 })}
-            className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
-          />
-        </div>
-        <div className="mt-4">
-          <label className="flex items-center gap-2 text-sm text-gray-400">
-            <input
-              type="checkbox"
-              checked={form.allow_max}
-              onChange={(e) => onChange({ allow_max: e.target.checked })}
-              className="rounded"
-            />
-            Allow max
-          </label>
-          <p className="text-xs text-gray-600 mt-1 ml-5">
-            On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
-          </p>
         </div>
       </div>
 
@@ -453,8 +459,8 @@ export function FlowEditorView() {
                       {step.agent_alias && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>
                       )}
-                      {step.allow_max && <span className="text-[10px] text-yellow-400">max</span>}
-                      {step.max_gate_retries !== 3 && (
+                      {step.gates?.length > 0 && step.allow_max && <span className="text-[10px] text-yellow-400">max</span>}
+                      {step.gates?.length > 0 && step.max_gate_retries !== 5 && (
                         <span className="text-[10px] text-gray-500">retries:{step.max_gate_retries}</span>
                       )}
                       {step.gates?.length > 0 && <span className="text-[10px] text-orange-400">gates</span>}
