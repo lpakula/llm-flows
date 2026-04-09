@@ -79,17 +79,15 @@ export function ProjectFlowsView() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(`/project/${projectId}`)} className="text-xs text-gray-500 hover:text-gray-300">
-            &larr; {project?.name}
-          </button>
-          <h2 className="text-xl font-semibold">Flows</h2>
-        </div>
+        <h2 className="text-xl font-semibold">Flows</h2>
         <div className="flex items-center gap-2">
-          <button onClick={exportFlows} className="text-xs text-gray-500 hover:text-gray-300 transition">
+          <button
+            onClick={exportFlows}
+            className="border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white text-sm px-4 py-1.5 rounded-lg transition"
+          >
             Export
           </button>
-          <label className="text-xs text-gray-500 hover:text-gray-300 transition cursor-pointer">
+          <label className="border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white text-sm px-4 py-1.5 rounded-lg transition cursor-pointer">
             Import
             <input type="file" accept=".json" onChange={importFlows} className="hidden" />
           </label>
@@ -103,7 +101,7 @@ export function ProjectFlowsView() {
       </div>
 
       {showCreate && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4 space-y-3">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6 space-y-3">
           <input
             value={newFlow.name}
             onChange={(e) => setNewFlow({ ...newFlow, name: e.target.value })}
@@ -130,7 +128,11 @@ export function ProjectFlowsView() {
             ))}
           </select>
           <div className="flex gap-2">
-            <button onClick={createFlow} disabled={!newFlow.name.trim()} className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40">
+            <button
+              onClick={createFlow}
+              disabled={!newFlow.name.trim()}
+              className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+            >
               Create
             </button>
             <button onClick={() => setShowCreate(false)} className="text-xs text-gray-500 hover:text-gray-300">
@@ -140,34 +142,52 @@ export function ProjectFlowsView() {
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-4">
         {flows.map((flow) => (
           <div
             key={flow.id}
-            className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 flex items-center justify-between hover:border-gray-600 transition"
+            className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition flex flex-col"
           >
-            <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/flow-editor/${flow.id}`)}>
-              <h3 className="text-sm font-medium text-white">{flow.name}</h3>
-              <span className="text-xs text-gray-500">{flow.step_count} steps</span>
-              {flow.description && <span className="text-xs text-gray-600 truncate max-w-xs">{flow.description}</span>}
+            <div
+              className="flex-1 cursor-pointer"
+              onClick={() => navigate(`/flow-editor/${flow.id}`)}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-white">{flow.name}</h3>
+                  {flow.name === "default" && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">
+                      DEFAULT
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-500">{flow.step_count} steps</span>
+              </div>
+              {flow.description && (
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">{flow.description}</p>
+              )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3 mt-4">
               <button
                 onClick={() => navigate(`/flow-editor/${flow.id}`)}
                 className="text-xs text-blue-400 hover:text-blue-300"
               >
                 Edit
               </button>
-              <button
-                onClick={() => deleteFlow(flow.id)}
-                className="text-xs text-gray-600 hover:text-red-400"
-              >
-                Delete
-              </button>
+              {flow.name !== "default" && (
+                <button
+                  onClick={() => deleteFlow(flow.id)}
+                  className="text-xs text-red-500 hover:text-red-400"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         ))}
-        {flows.length === 0 && <div className="text-gray-500 text-center py-8">No flows</div>}
+        {flows.length === 0 && (
+          <div className="col-span-3 text-gray-500 text-center py-12">No flows</div>
+        )}
       </div>
     </div>
   );

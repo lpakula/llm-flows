@@ -118,5 +118,13 @@ This file is the primary way context is passed to subsequent steps. Include:
 
 You may also save additional files (data, configs, test output) to `{{ artifacts_output_dir }}/`.
 {%- endif %}
+{%- if resume_prompt %}
+
+---
+
+## Additional Context
+
+{{ resume_prompt }}
+{%- endif %}
 
 **When you have completed the instructions above, stop. Do not continue or run additional commands.**

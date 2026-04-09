@@ -171,15 +171,35 @@ Step content, gate commands, gate messages, and IF commands support template var
 - `{{run.id}}` — current run ID
 - `{{task.id}}` — current task ID
 - `{{flow.name}}` — current flow name
+- `{{artifacts_output_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
+
+Artifacts from completed steps are automatically collected and passed as context to subsequent steps.
 
 Example usage in a gate:
 
 ```json
 {
-  "command": "ls .llmflows/screenshots/{{run.id}}/*.png 2>/dev/null | grep -q .",
-  "message": "No screenshots found in .llmflows/screenshots/{{run.id}}/"
+  "command": "ls {{artifacts_output_dir}}/*.png 2>/dev/null | grep -q .",
+  "message": "No screenshots found. Save at least one .png to {{artifacts_output_dir}}/ before advancing."
 }
 ```
+
+## Step Fields
+
+Each step supports these fields in the JSON format:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `name` | required | Step identifier |
+| `position` | required | Sequential index starting at 0 |
+| `content` | required | Markdown prompt |
+| `agent_alias` | `"standard"` | Which agent config to use (e.g. `"fast"`, `"standard"`, `"high"`) |
+| `allow_max` | `false` | On the last gate retry, escalate to max-capability model |
+| `max_gate_retries` | `3` | How many times to retry a failed gate before failing the step |
+| `gates` | `[]` | Shell commands that must pass to advance |
+| `ifs` | `[]` | Shell commands that must pass to enter the step |
+
+**Agent aliases** map to agent configurations defined in Settings. Use `"fast"` for simple steps (init, commit), `"standard"` for most steps, `"high"` for complex reasoning steps (brainstorm, plan, execute). Enable `allow_max` on execute/test steps where a final escalation attempt is worth it.
 
 ## Flow JSON Format
 
@@ -196,6 +216,9 @@ The export/import format. One file can contain multiple flows.
         {
           "name": "step-name",
           "position": 0,
+          "agent_alias": "standard",
+          "allow_max": false,
+          "max_gate_retries": 3,
           "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
           "gates": [],
           "ifs": []
@@ -206,7 +229,7 @@ The export/import format. One file can contain multiple flows.
 }
 ```
 
-Positions must be sequential starting at 0. Gates and IFs are optional (omit or use `[]`).
+Positions must be sequential starting at 0. Fields at their default values can be omitted.
 
 ## Best Practices
 
@@ -224,6 +247,10 @@ Positions must be sequential starting at 0. Gates and IFs are optional (omit or 
 **Use gates for deterministic checks** — builds, test suites, file existence, commit status. Don't use gates for subjective checks.
 
 **Use IFs for conditional steps** — skip language-specific steps when that language isn't present, skip screenshot steps when there's no UI.
+
+**Match agent alias to step complexity** — `"fast"` for trivial steps (init, commit), `"standard"` for most steps, `"high"` for steps requiring deep reasoning (brainstorm, plan, complex execute).
+
+**Enable `allow_max` on steps that retry gates** — only useful when `max_gate_retries > 1`. On the last retry the daemon escalates to max capability, giving the agent one final strong attempt to fix the problem. Typically set on execute and test steps.
 
 ## Creating a New Flow (step by step)
 

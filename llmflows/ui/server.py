@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -10,8 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import os
-
+from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
 from ..db.models import ProjectSettings, TaskType
@@ -24,7 +24,7 @@ from ..services.worktree import WorktreeService
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="llmflows", version="0.0.1")
+app = FastAPI(title="llmflows", version=__version__)
 
 
 # --- Pydantic models ---
@@ -34,12 +34,14 @@ class TaskCreate(BaseModel):
     description: str = ""
     type: str = "feature"
     default_flow_name: Optional[str] = None
+    task_status: str = "backlog"
 
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     default_flow_name: Optional[str] = None
+    task_status: Optional[str] = None
 
 
 class FlowCreate(BaseModel):
@@ -129,6 +131,9 @@ def _enrich_task(task_dict: dict, project_path: str, session, project_settings: 
     task_dict["current_step"] = active_run.current_step if active_run else None
     task_dict["run_id"] = active_run.id if active_run else None
     task_dict["run_count"] = len(all_runs)
+    last_run = all_runs[0] if all_runs else None
+    task_dict["last_run_status"] = last_run.status if last_run else None
+    task_dict["last_run_outcome"] = last_run.outcome if last_run else None
     if is_git and branch:
         wt_svc = WorktreeService(project_path)
         wt_path = wt_svc.get_worktree_path(branch)
@@ -156,7 +161,6 @@ async def daemon_status():
 
 @app.get("/api/daemon/logs")
 async def daemon_logs(lines: int = 200):
-    import os
     log_path = os.path.expanduser("~/.llmflows/daemon.log")
     if not os.path.exists(log_path):
         return {"lines": []}
@@ -191,7 +195,6 @@ async def update_daemon_config(body: DaemonConfigBody):
 
 @app.post("/api/daemon/stop")
 async def stop_daemon():
-    import os
     import signal
     from ..services.daemon import read_pid_file, remove_pid_file
 
@@ -404,6 +407,8 @@ async def update_task(task_id: str, body: TaskUpdate):
             updates["description"] = body.description
         if body.default_flow_name is not None:
             updates["default_flow_name"] = body.default_flow_name or None
+        if body.task_status is not None:
+            updates["task_status"] = body.task_status
         if updates:
             task = task_svc.update(task_id, **updates)
 
@@ -441,6 +446,7 @@ async def start_task(task_id: str, body: TaskStartBody):
             user_prompt=body.user_prompt or task.description or "",
             one_shot=body.one_shot,
         )
+        task_svc.update(task_id, task_status="queue")
 
         project = project_svc.get(task.project_id)
         task = task_svc.get(task_id)

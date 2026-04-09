@@ -83,6 +83,11 @@ class Daemon:
         return _Defaults()
 
     @staticmethod
+    def _set_task_status(task_id: str, status: str, run_svc: RunService) -> None:
+        """Update a task's status using the run service's session."""
+        TaskService(run_svc.session).update(task_id, task_status=status)
+
+    @staticmethod
     def _build_execution_history(run_svc: RunService, task_id: str, current_run_id: str) -> list[dict]:
         """Build execution history from previous completed runs for the same task."""
         history = run_svc.get_history(task_id)
@@ -136,7 +141,7 @@ class Daemon:
                 if not run.current_step:
                     self._launch_first_step(
                         run, task, project, working_path,
-                        is_git, use_task_subdir, run_svc, flow_svc,
+                        is_git, use_task_subdir, run_svc, flow_svc, task_svc,
                     )
                 else:
                     self._relaunch_current_step(
@@ -211,10 +216,21 @@ class Daemon:
                     )
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     run_svc.mark_completed(run.id, outcome="timeout")
+                    task_svc.update(run.task_id, task_status="stopped")
             return
 
         run_svc.session.refresh(step_run)
         if step_run.completed_at:
+            return
+
+        # Refresh run to detect a cancellation that raced with the agent dying.
+        run_svc.session.refresh(run)
+        if run.completed_at:
+            logger.info(
+                "Task %s run %s was cancelled while step '%s' was stopping, skipping gate evaluation",
+                task.id, run.id, step_run.step_name,
+            )
+            run_svc.mark_step_completed(step_run.id, outcome="cancelled")
             return
 
         run_svc.mark_step_completed(step_run.id, outcome="completed")
@@ -231,6 +247,7 @@ class Daemon:
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Task %s run %s one-shot completed", task.id, run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            task_svc.update(run.task_id, task_status="completed")
             return
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
@@ -331,6 +348,7 @@ class Daemon:
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Task %s run %s completed", task.id, run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            task_svc.update(run.task_id, task_status="completed")
             return
 
         next_flow = current_flow
@@ -345,7 +363,7 @@ class Daemon:
         if not next_step_name:
             self._launch_summary_step(
                 run, task, working_path, use_task_subdir,
-                next_position, run_svc, flow_svc,
+                next_position, run_svc, flow_svc, task_svc,
             )
             return
 
@@ -376,7 +394,7 @@ class Daemon:
         if not next_step_name:
             self._launch_summary_step(
                 run, task, working_path, use_task_subdir,
-                next_position, run_svc, flow_svc,
+                next_position, run_svc, flow_svc, task_svc,
             )
             return
 
@@ -389,7 +407,7 @@ class Daemon:
     def _launch_first_step(
         self, run, task, project, working_path: Path,
         is_git: bool, use_task_subdir: bool,
-        run_svc: RunService, flow_svc: FlowService,
+        run_svc: RunService, flow_svc: FlowService, task_svc: TaskService,
     ) -> None:
         """Launch the first step of a run that has been started but has no steps yet."""
         # No flow selected -- run as one-shot prompt-only
@@ -413,6 +431,7 @@ class Daemon:
             if not run_flow:
                 logger.error("Flow '%s' not found for task %s run %s", run.flow_name, task.id, run.id)
                 run_svc.mark_completed(run.id, outcome="error")
+                self._set_task_status(task.id, "stopped", run_svc)
                 return
             run.run_flow_id = run_flow.id
             run_svc.session.commit()
@@ -424,6 +443,7 @@ class Daemon:
         if not steps:
             logger.error("Flow '%s' has no steps for task %s run %s", run.flow_name, task.id, run.id)
             run_svc.mark_completed(run.id, outcome="error")
+            self._set_task_status(task.id, "stopped", run_svc)
             return
 
         first_step = steps[0]
@@ -445,7 +465,7 @@ class Daemon:
         if not first_step:
             self._launch_summary_step(
                 run, task, working_path, use_task_subdir,
-                position, run_svc, flow_svc,
+                position, run_svc, flow_svc, task_svc,
             )
             return
 
@@ -558,6 +578,7 @@ class Daemon:
             logger.error("Failed to launch one-shot agent for task %s run %s", task.id, run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
             run_svc.mark_completed(run.id, outcome="error")
+            self._set_task_status(task.id, "stopped", run_svc)
 
     @staticmethod
     def _get_previous_step_log(run_svc: RunService, run_id: str) -> str:
@@ -635,6 +656,11 @@ class Daemon:
         execution_history = self._build_execution_history(run_svc, task.id, run.id)
         previous_step_log = self._get_previous_step_log(run_svc, run.id)
 
+        resume_prompt = run.resume_prompt or ""
+        if resume_prompt:
+            run.resume_prompt = ""
+            run_svc.session.commit()
+
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
             task_id=task.id,
@@ -650,6 +676,7 @@ class Daemon:
             use_task_subdir=use_task_subdir,
             execution_history=execution_history,
             previous_step_log=previous_step_log,
+            resume_prompt=resume_prompt,
         )
 
         if launched:
@@ -669,10 +696,12 @@ class Daemon:
             )
             run_svc.mark_step_completed(step_run.id, outcome="error")
             run_svc.mark_completed(run.id, outcome="error")
+            self._set_task_status(task.id, "stopped", run_svc)
 
     def _launch_summary_step(
         self, run, task, working_path: Path, use_task_subdir: bool,
         step_position: int, run_svc: RunService, flow_svc: FlowService,
+        task_svc: TaskService,
     ) -> None:
         """Launch the auto-appended summary step."""
         project_root = Path(task.project.path)
@@ -731,6 +760,7 @@ class Daemon:
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            task_svc.update(task.id, task_status="completed")
 
     def _start_run(
         self, run, task_svc: TaskService, run_svc: RunService,
@@ -760,6 +790,7 @@ class Daemon:
                 if not success:
                     logger.error("Failed to create worktree for task %s: %s", task.id, msg)
                     run_svc.mark_completed(run.id, outcome="error")
+                    task_svc.update(task.id, task_status="stopped")
                     return
                 task_svc.update(task.id, worktree_branch=branch)
                 wt_path = wt_svc.get_worktree_path(branch)
@@ -767,9 +798,11 @@ class Daemon:
             if not wt_path:
                 logger.error("Worktree path not found for task %s branch %s", task.id, branch)
                 run_svc.mark_completed(run.id, outcome="error")
+                task_svc.update(task.id, task_status="stopped")
                 return
 
         run_svc.mark_started(run.id)
+        task_svc.update(run.task_id, task_status="in_progress")
 
 
 def write_pid_file(pid: int) -> Path:

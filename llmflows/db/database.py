@@ -84,6 +84,11 @@ def init_db() -> Path:
 
     # Task migrations
     _add_column_if_missing(engine, inspector, "tasks", "default_flow_name", "VARCHAR(255)")
+    _add_column_if_missing(engine, inspector, "tasks", "task_status", "VARCHAR(50) DEFAULT 'backlog'")
+    # Migrate legacy status values to current set
+    with engine.connect() as conn:
+        conn.execute(text("UPDATE tasks SET task_status = 'in_progress' WHERE task_status IN ('failed', 'stopped')"))
+        conn.commit()
 
     # StepRun migrations
     _add_column_if_missing(engine, inspector, "step_runs", "attempt", "INTEGER NOT NULL DEFAULT 1")

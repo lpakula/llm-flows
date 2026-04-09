@@ -122,6 +122,7 @@ class Task(Base):
     description: str = Column(Text, default="")
     type: TaskType = Column(SQLEnum(TaskType), default=TaskType.FEATURE)
     default_flow_name: str = Column(String(255), nullable=True, default=None)
+    task_status: str = Column(String(50), default="backlog")
     worktree_branch: str = Column(String(255), default="")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -137,6 +138,7 @@ class Task(Base):
             "description": self.description,
             "type": self.type.value,
             "default_flow_name": self.default_flow_name,
+            "task_status": self.task_status or "backlog",
             "worktree_branch": self.worktree_branch,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

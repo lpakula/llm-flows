@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Abort push if frontend source changed but static build wasn't updated.
+# Setup: git config core.hooksPath .githooks
+
+while IFS=' ' read -r _ local_sha _ remote_sha; do
+    [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]] && range="$local_sha" || range="${remote_sha}..${local_sha}"
+    files="$(git log --name-only --pretty=format: "$range" 2>/dev/null | grep -v '^$')"
+
+    if echo "$files" | grep -q "^llmflows/ui/frontend/src/" && ! echo "$files" | grep -q "^llmflows/ui/static/"; then
+        echo "ERROR: frontend/src changed but static build not included. Run: cd llmflows/ui/frontend && npm run build"
+        exit 1
+    fi
+done

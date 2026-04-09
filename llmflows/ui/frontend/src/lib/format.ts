@@ -38,7 +38,7 @@ export function statusDot(status: string, outcome?: string | null): string {
   if (status === "running") return "bg-yellow-400 animate-pulse";
   if (status === "paused") return "bg-purple-400";
   if (status === "queued") return "bg-blue-400";
-  if (status === "interrupted" || status === "error") return "bg-red-500";
+  if (status === "interrupted" || status === "error" || status === "cancelled") return "bg-red-500";
   if (status === "timeout") return "bg-orange-400";
   if (status === "completed") {
     if (outcome === "failed") return "bg-red-500";

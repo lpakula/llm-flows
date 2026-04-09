@@ -239,14 +239,10 @@ export function TaskView() {
 
   const submitRunModal = async () => {
     if (!task) return;
-    let prompt = runModalPrompt;
-    if (runs.length === 0 && runModalPrompt.trim()) {
-      const desc = (task.description || "").trim();
-      prompt = desc ? desc + "\n\n" + runModalPrompt.trim() : runModalPrompt.trim();
-    }
+    if (runs.length > 0 && !runModalPrompt.trim()) return;
     await api.startTask(task.id, {
       flow: runModalFlow || null,
-      user_prompt: prompt,
+      user_prompt: runModalPrompt.trim(),
       one_shot: runModalOneShot,
     });
     setRunModal(false);
@@ -453,8 +449,8 @@ export function TaskView() {
                           {run.flow_name || <span className="text-gray-500 font-normal italic">prompt-only</span>}
                         </td>
                         <td className="px-4 py-3 align-top text-gray-500 min-w-0">
-                          <span className="block truncate" title={(run.prompt || run.user_prompt || "").trim() || undefined}>
-                            {truncateOneLine((run.prompt || run.user_prompt || "").trim() || "—", 120)}
+                          <span className="block truncate" title={(run.user_prompt || "").trim() || undefined}>
+                            {truncateOneLine((run.user_prompt || "").trim() || "—", 120)}
                           </span>
                         </td>
                         <td className="px-4 py-3 align-top text-gray-400 tabular-nums whitespace-nowrap">
@@ -474,7 +470,7 @@ export function TaskView() {
                                 Force Stop
                               </button>
                             ) : null}
-                            {run.completed_at ? (
+                            {(run.completed_at || !run.started_at) ? (
                               <button type="button" onClick={() => deleteRun(run.id)} className="text-xs text-gray-600 hover:text-red-400">
                                 Delete
                               </button>
@@ -487,9 +483,6 @@ export function TaskView() {
                         <tr className="bg-gray-950/50">
                           <td colSpan={6} className="p-0 border-b border-gray-800">
                             <div className="border-t border-gray-800">
-                  {/* Run summary */}
-                  {run.summary ? <RunSummarySection summary={run.summary} /> : null}
-
                   {/* Run prompt */}
                   {(run.user_prompt || "").trim() ? (
                     <RunPromptCollapsible text={(run.user_prompt || "").trim()} />
@@ -665,6 +658,9 @@ export function TaskView() {
                       </div>
                     </div>
                   )}
+
+                  {/* Run summary */}
+                  {run.summary ? <RunSummarySection summary={run.summary} /> : null}
                             </div>
                           </td>
                         </tr>
@@ -682,85 +678,75 @@ export function TaskView() {
       {/* Run Modal */}
       {runModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setRunModal(false)}>
-          <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-sm font-semibold mb-4">{runs.length === 0 ? "New Run" : "Start Run"}</h2>
-            <div className="space-y-3">
+          <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-semibold mb-5">New Run</h2>
+
+            <div className="space-y-5">
+              {/* Flow pill selector */}
               <div>
-                <label className="text-xs text-gray-500 block mb-1">{runs.length === 0 ? "Alias" : "Flow"}</label>
-                <select
-                  value={runModalFlow}
-                  onChange={(e) => setRunModalFlow(e.target.value)}
-                  className={
-                    runs.length === 0
-                      ? "w-full bg-gray-800 border-2 border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      : "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
-                  }
-                >
-                  <option value="">No flow (prompt only)</option>
+                <label className="text-sm text-gray-400 block mb-2">Flow</label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setRunModalFlow("")}
+                    className={`px-3 py-1 rounded-lg text-sm font-mono transition ${
+                      runModalFlow === ""
+                        ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10"
+                        : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"
+                    }`}
+                  >
+                    none
+                  </button>
                   {flows.map((f) => (
-                    <option key={f.id} value={f.name}>
-                      {f.name} ({f.step_count} steps)
-                    </option>
+                    <button
+                      key={f.id}
+                      onClick={() => setRunModalFlow(f.name)}
+                      className={`px-3 py-1 rounded-lg text-sm font-mono transition ${
+                        runModalFlow === f.name
+                          ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10"
+                          : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"
+                      }`}
+                    >
+                      {f.name}
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
-              {runs.length === 0 ? (
-                <>
-                  <div>
-                    <label className="text-xs text-gray-500 block mb-1">Prompt</label>
-                    <p className="text-[10px] uppercase tracking-wide text-gray-600 mb-1.5">
+
+              {/* Prompt */}
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">Prompt</label>
+                {runs.length === 0 && (
+                  <>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
                       Task description (included automatically)
                     </p>
-                    <textarea
-                      readOnly
-                      value={(task?.description || "").trim() || ""}
-                      placeholder="No task description yet — edit the task above or add instructions below."
-                      rows={6}
-                      className="w-full bg-gray-800/90 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 resize-y min-h-[120px] cursor-default"
-                    />
-                  </div>
-                  <div>
-                    <textarea
-                      value={runModalPrompt}
-                      onChange={(e) => setRunModalPrompt(e.target.value)}
-                      rows={4}
-                      placeholder="Additional instructions (optional)"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 placeholder:text-gray-600 resize-y min-h-[96px] focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                    />
-                  </div>
-                </>
-              ) : (
-                <div>
-                  <label className="text-xs text-gray-500 block mb-1">Additional prompt (optional)</label>
-                  <textarea
-                    value={runModalPrompt}
-                    onChange={(e) => setRunModalPrompt(e.target.value)}
-                    rows={3}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none"
-                  />
-                </div>
-              )}
-              {runModalFlow && (
-                <label className="flex items-center gap-2 text-sm text-gray-400">
-                  <input
-                    type="checkbox"
-                    checked={runModalOneShot}
-                    onChange={(e) => setRunModalOneShot(e.target.checked)}
-                    className="rounded"
-                  />
-                  One-shot mode (skip flow steps, use prompt only)
-                </label>
-              )}
+                    <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono min-h-[36px] mb-3">
+                      {(task?.description || "").trim() || (
+                        <span className="text-gray-600 italic">No description</span>
+                      )}
+                    </div>
+                  </>
+                )}
+                <textarea
+                  value={runModalPrompt}
+                  onChange={(e) => setRunModalPrompt(e.target.value)}
+                  rows={4}
+                  placeholder={runs.length === 0 ? "Additional instructions (optional)" : "What should the agent do?"}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 placeholder:text-gray-600 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                />
+              </div>
             </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setRunModal(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200">
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => setRunModal(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">
                 Cancel
               </button>
               <button
                 onClick={submitRunModal}
-                className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+                disabled={runs.length > 0 && !runModalPrompt.trim()}
+                className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {runs.length === 0 ? "Run" : "Start"}
+                Run
               </button>
             </div>
           </div>

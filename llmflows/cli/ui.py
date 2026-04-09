@@ -9,6 +9,35 @@ from ..config import load_system_config
 FRONTEND_DIR = Path(__file__).parent.parent / "ui" / "frontend"
 
 
+def _free_port(port: int) -> None:
+    """Kill any process currently listening on *port*."""
+    import signal
+    import socket
+    import subprocess
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("127.0.0.1", port)) != 0:
+            return
+
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f"tcp:{port}"],
+            capture_output=True,
+            text=True,
+        )
+        pids = result.stdout.strip().split()
+        for pid in pids:
+            if pid:
+                try:
+                    import os
+                    os.kill(int(pid), signal.SIGTERM)
+                    click.echo(f"Freed port {port} (killed PID {pid})")
+                except (ProcessLookupError, ValueError):
+                    pass
+    except FileNotFoundError:
+        pass
+
+
 def _run_dev_mode(host: str, port: int):
     """Start Vite dev server + FastAPI backend concurrently."""
     import os
@@ -27,6 +56,8 @@ def _run_dev_mode(host: str, port: int):
         subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True)
 
     vite_port = 5173
+    _free_port(port)
+    _free_port(vite_port)
     click.echo(f"llmflows UI (dev): http://{host}:{vite_port}")
     click.echo(f"  Vite dev server: :{vite_port}  (open this in browser)")
     click.echo(f"  FastAPI backend:  :{port}")

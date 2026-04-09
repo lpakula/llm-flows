@@ -50,6 +50,7 @@ class AgentService:
         use_task_subdir: bool = False,
         execution_history: Optional[list[dict]] = None,
         previous_step_log: str = "",
+        resume_prompt: str = "",
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -88,6 +89,7 @@ class AgentService:
             "gate_failures": gate_failures,
             "execution_history": execution_history,
             "previous_step_log": previous_step_log,
+            "resume_prompt": resume_prompt,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
 

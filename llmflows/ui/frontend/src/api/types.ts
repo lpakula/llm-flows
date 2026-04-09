@@ -26,6 +26,7 @@ export interface Task {
   description: string;
   type: string;
   default_flow_name: string | null;
+  task_status: string;
   status: string;
   worktree_branch: string;
   worktree_path: string | null;
@@ -34,6 +35,8 @@ export interface Task {
   current_step: string | null;
   run_id: string | null;
   run_count: number;
+  last_run_status: string | null;
+  last_run_outcome: string | null;
   created_at: string;
 }
 

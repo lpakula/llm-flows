@@ -1,3 +1,8 @@
 """llmflows -- agentic workflow orchestrator."""
 
-__version__ = "0.3.2"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("llmflows")
+except PackageNotFoundError:
+    __version__ = "unknown"
