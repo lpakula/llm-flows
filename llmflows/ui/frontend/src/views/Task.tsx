@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
+import type { ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -41,6 +42,7 @@ export function TaskView() {
 
   const [runModal, setRunModal] = useState(false);
   const [flows, setFlows] = useState<Flow[]>([]);
+
 
   // Retry modal
   const [retryModal, setRetryModal] = useState<{ runId: string; stepName: string } | null>(null);
@@ -95,6 +97,8 @@ export function TaskView() {
           setTask(found);
           const r = await api.listTaskRuns(taskId);
           setRuns(r);
+          const fl = await api.listFlows(found.project_id);
+          setFlows(fl);
           const activeRun = r.find((run) => isRunActive(run));
           if (activeRun) {
             setExpandedRun(activeRun.id);
@@ -226,9 +230,18 @@ export function TaskView() {
 
   const openRunModal = async () => {
     if (!task) return;
-    const fl = await api.listFlows(task.project_id);
-    setFlows(fl);
+    if (flows.length === 0) {
+      const fl = await api.listFlows(task.project_id);
+      setFlows(fl);
+    }
     setRunModal(true);
+  };
+
+  const updateField = async (field: string, value: string) => {
+    if (!task) return;
+    const body: Record<string, string> = { [field]: value };
+    const updated = await api.updateTask(task.id, body);
+    setTask(updated);
   };
 
   const submitRunModal = async (_taskId: string, { flow, prompt, one_shot }: { flow: string; prompt: string; one_shot: boolean }) => {
@@ -255,6 +268,7 @@ export function TaskView() {
 
   return (
     <div className="flex-1 overflow-y-auto">
+
       {/* Header */}
       <header className="border-b border-gray-800 px-6 py-4">
         <button
@@ -263,110 +277,136 @@ export function TaskView() {
         >
           &larr; Back
         </button>
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 gap-y-1">
-              <h1 className="text-xl font-semibold text-white tracking-tight">{task?.name || "Loading..."}</h1>
-              {headlineRun && (
-                <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${statusBadge(displayStatus(headlineRun))}`}>
-                  {displayStatus(headlineRun)}
-                </span>
-              )}
-              {task?.agent_active ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
-                  <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                  Agent active
-                </span>
-              ) : null}
-            </div>
-            {task ? (
-              <p className="text-[11px] text-gray-600 font-mono mt-1.5">
-                Task ID: <span className="text-gray-500">{task.id}</span>
-              </p>
+        <div className="mt-3">
+          <div className="flex flex-wrap items-center gap-2 gap-y-1">
+            <h1 className="text-xl font-semibold text-white tracking-tight">{task?.name || "Loading..."}</h1>
+            {headlineRun && (
+              <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${statusBadge(displayStatus(headlineRun))}`}>
+                {displayStatus(headlineRun)}
+              </span>
+            )}
+            {task?.agent_active ? (
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                Agent active
+              </span>
             ) : null}
+          </div>
 
-            {task && !editingDesc ? (
-              <div className="mt-3">
-                {descPlain ? (
-                  <div
-                    className={`text-sm text-gray-400 whitespace-pre-wrap ${!descExpanded && descNeedsClamp ? "line-clamp-4" : ""}`}
-                  >
-                    {task.description}
-                  </div>
-                ) : (
-                  <p className="text-sm italic text-gray-600">No description</p>
-                )}
-                <div className="flex flex-wrap items-center gap-3 mt-2">
-                  {descNeedsClamp ? (
-                    <button
-                      type="button"
-                      onClick={() => setDescExpanded((e) => !e)}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      {descExpanded ? "Show less" : "Show more"}
-                    </button>
-                  ) : null}
+          {task && !editingDesc ? (
+            <div className="mt-3">
+              {descPlain ? (
+                <div
+                  className={`text-sm text-gray-400 whitespace-pre-wrap ${!descExpanded && descNeedsClamp ? "line-clamp-4" : ""}`}
+                >
+                  {task.description}
+                </div>
+              ) : (
+                <p className="text-sm italic text-gray-600">No description</p>
+              )}
+              <div className="flex flex-wrap items-center gap-3 mt-2">
+                {descNeedsClamp ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditDescText(task.description || "");
-                      setEditingDesc(true);
-                    }}
+                    onClick={() => setDescExpanded((e) => !e)}
                     className="text-xs text-blue-400 hover:text-blue-300"
                   >
-                    Edit
+                    {descExpanded ? "Show less" : "Show more"}
                   </button>
-                </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditDescText(task.description || "");
+                    setEditingDesc(true);
+                  }}
+                  className="text-xs text-gray-600 hover:text-gray-300"
+                >
+                  Edit description
+                </button>
               </div>
-            ) : null}
-            {task && editingDesc ? (
-              <div className="mt-3 space-y-2">
-                <textarea
-                  value={editDescText}
-                  onChange={(e) => setEditDescText(e.target.value)}
-                  rows={4}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <button type="button" onClick={saveDescription} className="text-xs text-blue-400 hover:text-blue-300">
-                    Save
-                  </button>
-                  <button type="button" onClick={() => setEditingDesc(false)} className="text-xs text-gray-500 hover:text-gray-300">
-                    Cancel
-                  </button>
-                </div>
+            </div>
+          ) : null}
+          {task && editingDesc ? (
+            <div className="mt-3 space-y-2">
+              <textarea
+                value={editDescText}
+                onChange={(e) => setEditDescText(e.target.value)}
+                rows={4}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <button type="button" onClick={saveDescription} className="text-xs text-blue-400 hover:text-blue-300">
+                  Save
+                </button>
+                <button type="button" onClick={() => setEditingDesc(false)} className="text-xs text-gray-500 hover:text-gray-300">
+                  Cancel
+                </button>
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
+
+          {/* Properties */}
+          {task ? (
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-3">
+              <PropField label="ID">
+                <span className="text-sm font-mono text-gray-400">{task.id}</span>
+              </PropField>
+
+              <PropField label="Status">
+                <select
+                  value={task.task_status}
+                  onChange={(e) => updateField("task_status", e.target.value)}
+                  className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer hover:text-white"
+                >
+                  <option value="backlog">Backlog</option>
+                  <option value="queue">Queue</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </PropField>
+
+              <PropField label="Type">
+                <select
+                  value={task.type}
+                  onChange={(e) => updateField("type", e.target.value)}
+                  className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer hover:text-white capitalize"
+                >
+                  <option value="feature">Feature</option>
+                  <option value="fix">Fix</option>
+                  <option value="refactor">Refactor</option>
+                  <option value="chore">Chore</option>
+                </select>
+              </PropField>
+
+              <PropField label="Default Flow">
+                <select
+                  value={task.default_flow_name ?? ""}
+                  onChange={(e) => updateField("default_flow_name", e.target.value)}
+                  className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer hover:text-white"
+                >
+                  <option value="">None</option>
+                  {flows.map((f) => (
+                    <option key={f.id} value={f.name}>{f.name}</option>
+                  ))}
+                </select>
+              </PropField>
+
+              {task.worktree_branch ? (
+                <PropField label="Branch">
+                  <span className="text-sm font-mono text-gray-400">{task.worktree_branch}</span>
+                </PropField>
+              ) : null}
+
+              <PropField label="Created">
+                <span className="text-sm text-gray-400 tabular-nums">{formatTaskTimestamp(task.created_at)}</span>
+              </PropField>
+
+            </div>
+          ) : null}
         </div>
       </header>
-
-      {/* Task metadata */}
-      {task ? (
-        <div className="px-6 py-4 border-b border-gray-800">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
-              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Type</div>
-              <div className="text-sm text-gray-200 mt-1 capitalize">{task.type}</div>
-            </div>
-            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
-              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Branch</div>
-              <div className="text-sm mt-1">
-                {task.worktree_branch ? (
-                  <span className="text-gray-200 font-mono text-xs">{task.worktree_branch}</span>
-                ) : (
-                  <span className="text-blue-400">—</span>
-                )}
-              </div>
-            </div>
-            <div className="bg-gray-900/80 border border-gray-800 rounded-xl px-4 py-3">
-              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">Created</div>
-              <div className="text-sm text-gray-200 mt-1 tabular-nums">{formatTaskTimestamp(task.created_at)}</div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {/* Runs */}
       <div className="p-6">
@@ -484,28 +524,39 @@ export function TaskView() {
                         {(runSteps[run.id] || []).map((step, i) => {
                           const attempts = step.attempts || [];
                           const stepLabel = step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name;
+                          // Any attempt that isn't the last one caused a retry → gate failed → red.
+                          // The last attempt uses its real status.
+                          const attemptStatus = (att: typeof attempts[number], idx: number) =>
+                            idx < attempts.length - 1 ? "failed" : att.status;
                           return (
                             <div key={i} className="flex items-center">
                               {i > 0 && <div className={`w-5 h-0.5 ${stepConnectorClass(step.status)}`} />}
+                              {/* First attempt — the "execute" box */}
                               <div className="relative">
                                 <button
                                   onClick={() => {
-                                    if (!step.step_run) return;
-                                    viewStepLogs(step);
-                                    setSelectedAttempt(null);
+                                    if (!attempts[0]) return;
+                                    const first = attempts[0];
+                                    setLogUrl(`/api/step-runs/${first.id}/logs`);
+                                    setViewingStepName(stepLabel);
+                                    setSelectedAttempt(attempts.length > 1 ? { stepName: step.name, attemptId: first.id } : null);
+                                    setViewingStepPrompt(first.prompt || null);
+                                    setViewingStepAgentModel({ agent: first.agent || "", model: first.model || "" });
+                                    // Gate failures are stored on the next attempt (the retry it caused)
+                                    setViewingGateFailures(attempts[1]?.gate_failures || []);
                                   }}
-                                  className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(step.status)} ${
-                                    viewingStepName === stepLabel && !selectedAttempt
+                                  className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : step.status)} ${
+                                    viewingStepName === stepLabel && (!selectedAttempt || selectedAttempt.attemptId === attempts[0]?.id)
                                       ? "border-2"
                                       : "border"
-                                  } ${step.step_run ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                                  } ${attempts[0] ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                                 >
                                   {stepLabel}
                                   {step.has_ifs && " \u24d8"}
                                 </button>
-                                {step.step_run && step.status !== "completed" && step.status !== "running" && (
+                                {attempts[0] && attempts[0].status !== "completed" && attempts[0].status !== "running" && attempts.length === 1 && (
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); completeStep(step.step_run!.id); }}
+                                    onClick={(e) => { e.stopPropagation(); completeStep(attempts[0].id); }}
                                     className="absolute -bottom-2 -right-2 bg-green-700 text-white text-[8px] px-1 rounded hover:bg-green-600"
                                     title="Mark as completed"
                                   >
@@ -513,7 +564,48 @@ export function TaskView() {
                                   </button>
                                 )}
                               </div>
-                              {/* Stop button next to running step (not on summary) */}
+                              {/* Subsequent retry attempts (oldest → newest, left → right) */}
+                              {attempts.slice(1).map((att, j) => {
+                                const isLast = j === attempts.length - 2;
+                                return (
+                                  <div key={att.id} className="flex items-center gap-1">
+                                    <div className="w-3 h-0.5 bg-orange-800" />
+                                    <div className="relative">
+                                      <button
+                                        onClick={() => {
+                                          setLogUrl(`/api/step-runs/${att.id}/logs`);
+                                          setViewingStepName(`${stepLabel} #${j + 2}`);
+                                          setSelectedAttempt({ stepName: step.name, attemptId: att.id });
+                                          setViewingStepPrompt(att.prompt || null);
+                                          setViewingStepAgentModel({ agent: att.agent || "", model: att.model || "" });
+                                          // Gate failures are stored on the next attempt.
+                                      // Last attempt has no next → it passed (or is running) → no failures to show.
+                                      const nextAtt = attempts[j + 2];
+                                      setViewingGateFailures(nextAtt?.gate_failures || []);
+                                        }}
+                                        className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
+                                          selectedAttempt?.attemptId === att.id
+                                            ? "border-2 " + stepBoxClass(attemptStatus(att, j + 1))
+                                            : "border " + stepBoxClass(attemptStatus(att, j + 1))
+                                        }`}
+                                        title={`Retry #${j + 2}`}
+                                      >
+                                        ↻
+                                      </button>
+                                      {isLast && att.status !== "completed" && att.status !== "running" && (
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); completeStep(att.id); }}
+                                          className="absolute -bottom-2 -right-2 bg-green-700 text-white text-[8px] px-1 rounded hover:bg-green-600"
+                                          title="Mark as completed"
+                                        >
+                                          ✓
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {/* Stop button — next to the last (rightmost/active) block */}
                               {step.status === "running" && isRunActive(run) && step.name !== "__summary__" && (
                                 <button
                                   onClick={() => forceStopRun(run.id)}
@@ -533,33 +625,6 @@ export function TaskView() {
                                   ▶
                                 </button>
                               )}
-                              {/* Gate retry blocks */}
-                              {attempts.length > 1 && attempts.slice(0, -1).map((att, j) => (
-                                <div key={att.id} className="flex items-center gap-1">
-                                  <div className="w-3 h-0.5 bg-orange-800" />
-                                  <button
-                                    onClick={() => {
-                                      setLogUrl(`/api/step-runs/${att.id}/logs`);
-                                      setViewingStepName(`${stepLabel} #${j + 1}`);
-                                      setSelectedAttempt({ stepName: step.name, attemptId: att.id });
-                                      setViewingStepPrompt(att.prompt || null);
-                                      setViewingStepAgentModel({
-                                        agent: att.agent || "",
-                                        model: att.model || "",
-                                      });
-                                      setViewingGateFailures(att.gate_failures || []);
-                                    }}
-                                    className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
-                                      selectedAttempt?.attemptId === att.id
-                                        ? "border-2 bg-orange-900/50 border-orange-500 text-orange-300"
-                                        : "border bg-orange-900/30 border-orange-800 text-orange-500"
-                                    }`}
-                                    title={`Retry #${j + 1}`}
-                                  >
-                                    ↻
-                                  </button>
-                                </div>
-                              ))}
                             </div>
                           );
                         })}
@@ -617,19 +682,21 @@ export function TaskView() {
                       )}
                       {/* Gate failures that triggered this retry */}
                       {viewingGateFailures.length > 0 && (
-                        <div className="px-5 mb-2">
-                          <details className="group" open>
-                            <summary className="text-[10px] uppercase tracking-wide text-orange-600 cursor-pointer select-none hover:text-orange-400 list-none flex items-center gap-1">
-                              <span className="text-orange-700 group-open:rotate-90 transition-transform inline-block">▶</span>
+                        <div className="border-b border-gray-800/80">
+                          <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3" open>
+                            <summary className="text-[10px] uppercase tracking-wide text-orange-600 cursor-pointer select-none hover:text-orange-400 list-none inline-flex w-fit items-center gap-2 rounded-lg -ml-1 pl-1 pr-2 py-0.5">
+                              <span className="w-4 flex justify-center items-center shrink-0 leading-none">
+                                <span className="text-orange-700 group-open:rotate-90 transition-transform inline-block text-[9px]">▶</span>
+                              </span>
                               Gate failures ({viewingGateFailures.length})
                             </summary>
                             <div className="mt-1 space-y-1.5">
                               {viewingGateFailures.map((gf, i) => (
                                 <div key={i} className="bg-red-900/20 border border-red-900/50 rounded-lg p-2 text-[11px]">
-                                  <div className="font-mono text-red-400">{gf.command}</div>
+                                  <code className="font-mono text-red-400 break-all">{gf.command}</code>
                                   <div className="text-gray-400 mt-0.5">{gf.message}</div>
                                   {gf.output && (
-                                    <pre className="text-gray-500 mt-1 text-[10px] whitespace-pre-wrap">{gf.output}</pre>
+                                    <pre className="text-gray-500 mt-1 text-[10px] whitespace-pre-wrap break-all">{gf.output}</pre>
                                   )}
                                 </div>
                               ))}
@@ -701,6 +768,15 @@ export function TaskView() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PropField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="text-[10px] uppercase tracking-wide text-gray-600 font-medium">{label}</div>
+      {children}
     </div>
   );
 }

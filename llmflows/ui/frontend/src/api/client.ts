@@ -69,7 +69,7 @@ export const api = {
   listTasks: (projectId: string) => get<Task[]>(`/api/projects/${projectId}/tasks`),
   createTask: (projectId: string, body: { title: string; description: string; type: string; default_flow_name?: string }) =>
     post<Task>(`/api/projects/${projectId}/tasks`, body),
-  updateTask: (id: string, body: Partial<{ title: string; description: string; default_flow_name: string; task_status: string }>) =>
+  updateTask: (id: string, body: Partial<{ title: string; description: string; default_flow_name: string; task_status: string; type: string }>) =>
     patch<Task>(`/api/tasks/${id}`, body),
   deleteTask: (id: string) => del<{ ok: boolean }>(`/api/tasks/${id}`),
   startTask: (

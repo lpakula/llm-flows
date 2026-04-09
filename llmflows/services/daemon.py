@@ -160,7 +160,7 @@ class Daemon:
 
         pending = run_svc.get_pending(project.id)
         if pending:
-            self._start_run(pending, task_svc, run_svc, flow_svc, project, settings)
+            self._start_run(pending, task_svc, run_svc, flow_svc, project)
 
     def _relaunch_current_step(
         self, run, task, working_path: Path, use_task_subdir: bool,
@@ -682,6 +682,7 @@ class Daemon:
             execution_history=execution_history,
             previous_step_log=previous_step_log,
             resume_prompt=resume_prompt,
+            attempt=attempt,
         )
 
         if launched:
@@ -717,7 +718,7 @@ class Daemon:
         })
 
         try:
-            resolved_agent, resolved_model = resolve_alias(run_svc.session, "standard")
+            resolved_agent, resolved_model = resolve_alias(run_svc.session, "low")
         except ValueError:
             resolved_agent, resolved_model = "cursor", ""
 
@@ -769,7 +770,7 @@ class Daemon:
 
     def _start_run(
         self, run, task_svc: TaskService, run_svc: RunService,
-        flow_svc: FlowService, project, settings=None,
+        flow_svc: FlowService, project,
     ) -> None:
         """Set up worktree (if enabled) and mark run as started for step orchestration."""
         task = task_svc.get(run.task_id)

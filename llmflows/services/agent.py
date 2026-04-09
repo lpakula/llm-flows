@@ -51,6 +51,7 @@ class AgentService:
         execution_history: Optional[list[dict]] = None,
         previous_step_log: str = "",
         resume_prompt: str = "",
+        attempt: int = 1,
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -98,7 +99,8 @@ class AgentService:
         prompt_md = prompts_dir / f"{task_id}-{run_id}-{step_position:02d}-{step_name}.md"
         prompt_md.write_text(prompt_content)
 
-        log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}.log"
+        attempt_suffix = f"-a{attempt}" if attempt and attempt > 1 else ""
+        log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}{attempt_suffix}.log"
         pid_file = wt_llmflows / "agent.pid"
         launched = self._launch_agent(
             self.worktree_path, prompt_md, log_file, pid_file,

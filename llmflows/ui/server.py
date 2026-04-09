@@ -42,6 +42,7 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     default_flow_name: Optional[str] = None
     task_status: Optional[str] = None
+    type: Optional[str] = None
 
 
 class FlowCreate(BaseModel):
@@ -128,6 +129,8 @@ def _enrich_task(task_dict: dict, project_path: str, session, project: Optional[
     last_run = all_runs[0] if all_runs else None
     task_dict["last_run_status"] = last_run.status if last_run else None
     task_dict["last_run_outcome"] = last_run.outcome if last_run else None
+    task_dict["last_run_started_at"] = last_run.started_at.isoformat() if last_run and last_run.started_at else None
+    task_dict["last_run_completed_at"] = last_run.completed_at.isoformat() if last_run and last_run.completed_at else None
     if is_git and branch:
         wt_svc = WorktreeService(project_path)
         wt_path = wt_svc.get_worktree_path(branch)
@@ -396,6 +399,11 @@ async def update_task(task_id: str, body: TaskUpdate):
             updates["default_flow_name"] = body.default_flow_name or None
         if body.task_status is not None:
             updates["task_status"] = body.task_status
+        if body.type is not None:
+            try:
+                updates["type"] = TaskType(body.type)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid type: {body.type}")
         if updates:
             task = task_svc.update(task_id, **updates)
 
@@ -540,7 +548,7 @@ async def complete_step_manually(step_run_id: str):
 
 @app.post("/api/runs/{run_id}/stop")
 async def stop_run(run_id: str):
-    """Force-stop an active run by killing the agent process."""
+    """Stop or dequeue a run. If not yet started, deletes the run and returns the task to backlog."""
     session, project_svc, task_svc = _get_services()
     try:
         run_svc = RunService(session)
@@ -549,6 +557,13 @@ async def stop_run(run_id: str):
             raise HTTPException(status_code=404, detail="Run not found")
         if run.completed_at:
             raise HTTPException(status_code=400, detail="Run is already completed")
+
+        # Queued but not yet picked up — just remove it and return task to backlog
+        if not run.started_at:
+            task_svc.update(run.task_id, task_status="backlog")
+            session.delete(run)
+            session.commit()
+            return {"ok": True, "killed": False, "dequeued": True}
 
         task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
@@ -562,7 +577,7 @@ async def stop_run(run_id: str):
             )
 
         run_svc.mark_completed(run_id, outcome="cancelled")
-        return {"ok": True, "killed": killed}
+        return {"ok": True, "killed": killed, "dequeued": False}
     finally:
         session.close()
 
@@ -658,7 +673,7 @@ async def get_run_steps(run_id: str):
             step_name = step_src["name"]
             has_ifs = bool(step_src.get("ifs"))
             sr = step_run_map.get(step_name)
-            attempts = [s.to_dict() for s in step_runs_by_name.get(step_name, [])]
+            attempts = [s.to_dict() for s in sorted(step_runs_by_name.get(step_name, []), key=lambda s: s.attempt or 0)]
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()

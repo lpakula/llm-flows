@@ -37,6 +37,8 @@ export interface Task {
   run_count: number;
   last_run_status: string | null;
   last_run_outcome: string | null;
+  last_run_started_at: string | null;
+  last_run_completed_at: string | null;
   created_at: string;
 }
 
