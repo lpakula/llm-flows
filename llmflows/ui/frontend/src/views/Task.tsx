@@ -5,6 +5,7 @@ import { useInterval } from "@/hooks/useInterval";
 import { useLogStream } from "@/hooks/useEventSource";
 import { useApp } from "@/App";
 import { LogViewer } from "@/components/LogViewer";
+import { RunModal } from "@/components/RunModal";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
 import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { marked } from "marked";
@@ -38,11 +39,7 @@ export function TaskView() {
   const [logUrl, setLogUrl] = useState<string | null>(null);
   const [viewingStepName, setViewingStepName] = useState<string | null>(null);
 
-  // Run modal state
   const [runModal, setRunModal] = useState(false);
-  const [runModalFlow, setRunModalFlow] = useState<string>("");
-  const [runModalPrompt, setRunModalPrompt] = useState("");
-  const [runModalOneShot, setRunModalOneShot] = useState(false);
   const [flows, setFlows] = useState<Flow[]>([]);
 
   // Retry modal
@@ -229,23 +226,14 @@ export function TaskView() {
 
   const openRunModal = async () => {
     if (!task) return;
-    setRunModalPrompt("");
-    setRunModalOneShot(false);
     const fl = await api.listFlows(task.project_id);
     setFlows(fl);
-    setRunModalFlow(task.default_flow_name || "");
     setRunModal(true);
   };
 
-  const submitRunModal = async () => {
+  const submitRunModal = async (_taskId: string, { flow, prompt, one_shot }: { flow: string; prompt: string; one_shot: boolean }) => {
     if (!task) return;
-    if (runs.length > 0 && !runModalPrompt.trim()) return;
-    await api.startTask(task.id, {
-      flow: runModalFlow || null,
-      user_prompt: runModalPrompt.trim(),
-      one_shot: runModalOneShot,
-    });
-    setRunModal(false);
+    await api.startTask(task.id, { flow: flow || null, user_prompt: prompt, one_shot });
     setRuns(await api.listTaskRuns(task.id));
   };
 
@@ -676,81 +664,13 @@ export function TaskView() {
       </div>
 
       {/* Run Modal */}
-      {runModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setRunModal(false)}>
-          <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-base font-semibold mb-5">New Run</h2>
-
-            <div className="space-y-5">
-              {/* Flow pill selector */}
-              <div>
-                <label className="text-sm text-gray-400 block mb-2">Flow</label>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setRunModalFlow("")}
-                    className={`px-3 py-1 rounded-lg text-sm font-mono transition ${
-                      runModalFlow === ""
-                        ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10"
-                        : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"
-                    }`}
-                  >
-                    none
-                  </button>
-                  {flows.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => setRunModalFlow(f.name)}
-                      className={`px-3 py-1 rounded-lg text-sm font-mono transition ${
-                        runModalFlow === f.name
-                          ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10"
-                          : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"
-                      }`}
-                    >
-                      {f.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Prompt */}
-              <div>
-                <label className="text-sm text-gray-400 block mb-2">Prompt</label>
-                {runs.length === 0 && (
-                  <>
-                    <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
-                      Task description (included automatically)
-                    </p>
-                    <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono min-h-[36px] mb-3">
-                      {(task?.description || "").trim() || (
-                        <span className="text-gray-600 italic">No description</span>
-                      )}
-                    </div>
-                  </>
-                )}
-                <textarea
-                  value={runModalPrompt}
-                  onChange={(e) => setRunModalPrompt(e.target.value)}
-                  rows={4}
-                  placeholder={runs.length === 0 ? "Additional instructions (optional)" : "What should the agent do?"}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 placeholder:text-gray-600 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setRunModal(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">
-                Cancel
-              </button>
-              <button
-                onClick={submitRunModal}
-                disabled={runs.length > 0 && !runModalPrompt.trim()}
-                className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Run
-              </button>
-            </div>
-          </div>
-        </div>
+      {runModal && task && (
+        <RunModal
+          task={task}
+          flows={flows}
+          onClose={() => setRunModal(false)}
+          onSubmit={submitRunModal}
+        />
       )}
 
       {/* Retry Step Modal */}

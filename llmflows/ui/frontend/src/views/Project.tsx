@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import type { Task, Flow } from "@/api/types";
 import { typeColor, statusBadge, statusDot, displayStatus } from "@/lib/format";
+import { RunModal } from "@/components/RunModal";
 
 // ── Status definitions ────────────────────────────────────────────────────────
 
@@ -69,94 +70,6 @@ function StatusPicker({
   );
 }
 
-// ── Run modal ─────────────────────────────────────────────────────────────────
-
-function RunModal({
-  task,
-  flows,
-  onClose,
-  onSubmit,
-}: {
-  task: Task;
-  flows: Flow[];
-  onClose: () => void;
-  onSubmit: (taskId: string, flow: string, prompt: string) => Promise<void>;
-}) {
-  const [flow, setFlow] = useState(task.default_flow_name || "");
-  const [prompt, setPrompt] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const hasRuns = task.run_count > 0;
-
-  const submit = async () => {
-    setSubmitting(true);
-    try {
-      await onSubmit(task.id, flow, prompt.trim());
-      onClose();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-base font-semibold mb-1">New Run</h2>
-        <p className="text-xs text-gray-500 mb-5">{task.name}</p>
-
-        <div className="space-y-5">
-          <div>
-            <label className="text-sm text-gray-400 block mb-2">Flow</label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setFlow("")}
-                className={`px-3 py-1 rounded-lg text-sm font-mono transition ${flow === "" ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10" : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"}`}
-              >
-                none
-              </button>
-              {flows.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFlow(f.name)}
-                  className={`px-3 py-1 rounded-lg text-sm font-mono transition ${flow === f.name ? "border-2 border-blue-500 text-blue-300 bg-blue-500/10" : "border border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-200"}`}
-                >
-                  {f.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-sm text-gray-400 block mb-2">Prompt</label>
-            {!hasRuns && (
-              <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono min-h-[36px] mb-3">
-                {(task.description || "").trim() || <span className="text-gray-600 italic">No description</span>}
-              </div>
-            )}
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={4}
-              autoFocus
-              placeholder={hasRuns ? "What should the agent do?" : "Additional instructions (optional)"}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-gray-200 placeholder:text-gray-600 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">Cancel</button>
-          <button
-            onClick={submit}
-            disabled={submitting || (hasRuns && !prompt.trim())}
-            className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {submitting ? "Starting…" : "Run"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Task row (list view) ──────────────────────────────────────────────────────
 
@@ -398,8 +311,8 @@ export function ProjectView() {
     setRunModalTask(task);
   };
 
-  const submitRun = async (taskId: string, flow: string, prompt: string) => {
-    await api.startTask(taskId, { flow: flow || null, user_prompt: prompt, one_shot: false });
+  const submitRun = async (taskId: string, { flow, prompt, one_shot }: { flow: string; prompt: string; one_shot: boolean }) => {
+    await api.startTask(taskId, { flow: flow || null, user_prompt: prompt, one_shot });
     load();
   };
 

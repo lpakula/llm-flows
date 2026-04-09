@@ -528,11 +528,8 @@ class Daemon:
             "gates": [],
         })
 
-        # Resolve agent/model from standard alias
-        try:
-            resolved_agent, resolved_model = resolve_alias(run_svc.session, "standard")
-        except ValueError:
-            resolved_agent, resolved_model = "cursor", ""
+        # One-shot always uses the max alias — no fallback
+        resolved_agent, resolved_model = resolve_alias(run_svc.session, "max")
 
         step_run = run_svc.create_step_run(
             run_id=run.id,
