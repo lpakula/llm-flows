@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
+import { useAutoResize } from "@/hooks/useAutoResize";
+import { useImagePaste } from "@/hooks/useImagePaste";
 import type { ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
@@ -7,6 +9,7 @@ import { useLogStream } from "@/hooks/useEventSource";
 import { useApp } from "@/App";
 import { LogViewer } from "@/components/LogViewer";
 import { RunModal } from "@/components/RunModal";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
 import { statusBadge, displayStatus, duration, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { marked } from "marked";
@@ -58,6 +61,8 @@ export function TaskView() {
   // Description editing
   const [editingDesc, setEditingDesc] = useState(false);
   const [editDescText, setEditDescText] = useState("");
+  const editDescRef = useAutoResize(editDescText);
+  const onEditDescPaste = useImagePaste(task?.id, setEditDescText);
   const [descExpanded, setDescExpanded] = useState(false);
 
   const worktreePrefix = task?.worktree_path ? task.worktree_path + "/" : null;
@@ -296,10 +301,8 @@ export function TaskView() {
           {task && !editingDesc ? (
             <div className="mt-3">
               {descPlain ? (
-                <div
-                  className={`text-sm text-gray-400 whitespace-pre-wrap ${!descExpanded && descNeedsClamp ? "line-clamp-4" : ""}`}
-                >
-                  {task.description}
+                <div className={!descExpanded && descNeedsClamp ? "line-clamp-4 overflow-hidden" : ""}>
+                  <MarkdownContent text={task.description} />
                 </div>
               ) : (
                 <p className="text-sm italic text-gray-600">No description</p>
@@ -330,10 +333,12 @@ export function TaskView() {
           {task && editingDesc ? (
             <div className="mt-3 space-y-2">
               <textarea
+                ref={editDescRef}
                 value={editDescText}
                 onChange={(e) => setEditDescText(e.target.value)}
+                onPaste={onEditDescPaste}
                 rows={4}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
                 autoFocus
               />
               <div className="flex gap-2">

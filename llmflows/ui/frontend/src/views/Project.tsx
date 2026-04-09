@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
+import { useAutoResize } from "@/hooks/useAutoResize";
+import { useImagePaste } from "@/hooks/useImagePaste";
 import type { Task, Flow } from "@/api/types";
 import { typeColor, statusBadge, statusDot, displayStatus, duration } from "@/lib/format";
 import { RunModal } from "@/components/RunModal";
@@ -251,6 +253,12 @@ export function ProjectView() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", type: "feature", default_flow_name: "", task_status: "backlog" as TaskStatusKey });
+  const newTaskDescRef = useAutoResize(newTask.description);
+  const newTaskSessionId = useMemo(() => crypto.randomUUID(), []);
+  const setNewTaskDescription = useCallback((v: React.SetStateAction<string>) => {
+    setNewTask((prev) => ({ ...prev, description: typeof v === "function" ? v(prev.description) : v }));
+  }, []);
+  const onNewTaskDescPaste = useImagePaste(newTaskSessionId, setNewTaskDescription);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>(() => (localStorage.getItem("tasks-view") as ViewMode) ?? "list");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ completed: true });
@@ -384,11 +392,13 @@ export function ProjectView() {
             onKeyDown={(e) => e.key === "Escape" && setShowCreate(false)}
           />
           <textarea
+            ref={newTaskDescRef}
             value={newTask.description}
             onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+            onPaste={onNewTaskDescPaste}
             placeholder="Task description"
             rows={3}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
           />
           <div className="flex gap-2 flex-wrap">
             <select

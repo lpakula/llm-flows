@@ -65,6 +65,16 @@ export const api = {
     patch<AgentAlias>(`/api/agent-aliases/${id}`, body),
   deleteAgentAlias: (id: string) => del<{ ok: boolean }>(`/api/agent-aliases/${id}`),
 
+  // Attachments
+  uploadAttachment: (taskId: string, file: File): Promise<{ url: string; filename: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return fetch(`/api/tasks/${taskId}/attachments`, { method: "POST", body: formData }).then((r) => {
+      if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
+      return r.json();
+    });
+  },
+
   // Tasks
   listTasks: (projectId: string) => get<Task[]>(`/api/projects/${projectId}/tasks`),
   createTask: (projectId: string, body: { title: string; description: string; type: string; default_flow_name?: string }) =>

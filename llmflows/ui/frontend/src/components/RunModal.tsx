@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Task, Flow } from "@/api/types";
+import { MarkdownContent } from "@/components/MarkdownContent";
 
 export function RunModal({
   task,
@@ -74,9 +75,11 @@ export function RunModal({
                 <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
                   Task description (included automatically)
                 </p>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 font-mono min-h-[36px] max-h-48 overflow-y-auto mb-3">
-                  {(task.description || "").trim() || (
-                    <span className="text-gray-600 italic">No description</span>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 min-h-[36px] max-h-48 overflow-y-auto mb-3">
+                  {(task.description || "").trim() ? (
+                    <MarkdownContent text={(task.description || "").trim()} />
+                  ) : (
+                    <span className="text-sm text-gray-600 italic">No description</span>
                   )}
                 </div>
               </>

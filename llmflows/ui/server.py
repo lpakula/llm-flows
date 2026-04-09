@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -422,6 +423,32 @@ async def delete_task(task_id: str):
         return {"ok": True}
     finally:
         session.close()
+
+
+ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
+
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+@app.post("/api/tasks/{task_id}/attachments")
+async def upload_attachment(task_id: str, file: UploadFile = File(...)):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Only image files are supported")
+    task_dir = ATTACHMENTS_DIR / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "image.png").suffix or ".png"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest = task_dir / filename
+    dest.write_bytes(await file.read())
+    return {"url": f"/api/attachments/{task_id}/{filename}", "filename": filename}
+
+
+@app.get("/api/attachments/{task_id}/{filename}")
+async def serve_attachment(task_id: str, filename: str):
+    path = ATTACHMENTS_DIR / task_id / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return FileResponse(str(path))
 
 
 @app.post("/api/tasks/{task_id}/start")

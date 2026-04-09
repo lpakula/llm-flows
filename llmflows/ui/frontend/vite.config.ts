@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-const apiPort = process.env.LLMFLOWS_API_PORT || "4201";
+const apiPort = process.env.LLMFLOWS_API_PORT || "4301";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

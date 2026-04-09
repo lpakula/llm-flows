@@ -93,6 +93,7 @@ class AgentService:
             "resume_prompt": resume_prompt,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
+        prompt_content = self._rewrite_attachment_urls(prompt_content)
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
@@ -107,6 +108,19 @@ class AgentService:
             model=model, agent=agent,
         )
         return launched, prompt_content, str(log_file)
+
+    @staticmethod
+    def _rewrite_attachment_urls(text: str) -> str:
+        """Replace /api/attachments/<task_id>/<file> with absolute local paths."""
+        import re
+        attachments_base = Path.home() / ".llmflows" / "attachments"
+
+        def replace(m: re.Match) -> str:
+            task_id, filename = m.group(1), m.group(2)
+            abs_path = attachments_base / task_id / filename
+            return str(abs_path)
+
+        return re.sub(r"/api/attachments/([^/]+)/([^\s\)\"']+)", replace, text)
 
     @staticmethod
     def _ensure_gitignore(llmflows_dir: Path) -> None:

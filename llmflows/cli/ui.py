@@ -135,12 +135,13 @@ def _run_dev_mode(host: str, port: int):
         click.echo("Installing frontend dependencies...")
         subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True)
 
-    vite_port = 4200
-    _free_port(port)
+    vite_port = port
+    api_port = port + 1
     _free_port(vite_port)
+    _free_port(api_port)
     click.echo(f"llmflows UI (dev): http://{host}:{vite_port}")
     click.echo(f"  Vite dev server: :{vite_port}  (open this in browser)")
-    click.echo(f"  FastAPI backend:  :{port}")
+    click.echo(f"  FastAPI backend:  :{api_port}")
     _ensure_daemon_running()
 
     procs: list[subprocess.Popen] = []
@@ -163,12 +164,12 @@ def _run_dev_mode(host: str, port: int):
 
     api_proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "llmflows.ui.server:app",
-         "--host", host, "--port", str(port), "--log-level", "info"],
+         "--host", host, "--port", str(api_port), "--log-level", "info"],
         cwd=os.getcwd(),
     )
     procs.append(api_proc)
 
-    vite_env = {**os.environ, "LLMFLOWS_API_PORT": str(port)}
+    vite_env = {**os.environ, "LLMFLOWS_API_PORT": str(api_port)}
     vite_proc = subprocess.Popen(
         ["npx", "vite", "--host", host, "--port", str(vite_port)],
         cwd=str(FRONTEND_DIR),
