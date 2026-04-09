@@ -42,9 +42,9 @@ def _ensure_frontend_built() -> bool:
 
     try:
         click.echo("  Frontend:        running npm install...")
-        subprocess.run([npm, "install"], cwd=str(FRONTEND_DIR), check=True, capture_output=True)
+        subprocess.run([npm, "install"], cwd=str(FRONTEND_DIR), check=True)
         click.echo("  Frontend:        running npm run build...")
-        subprocess.run([npm, "run", "build"], cwd=str(FRONTEND_DIR), check=True, capture_output=True)
+        subprocess.run([npm, "run", "build"], cwd=str(FRONTEND_DIR), check=True)
         click.echo("  Frontend:        build complete.")
         return True
     except subprocess.CalledProcessError as e:
