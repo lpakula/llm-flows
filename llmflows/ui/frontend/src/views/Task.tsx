@@ -307,7 +307,7 @@ export function TaskView() {
               ) : (
                 <p className="text-sm italic text-gray-600">No description</p>
               )}
-              <div className="flex flex-wrap items-center gap-3 mt-2">
+              <div className="flex flex-wrap items-center gap-3 mt-2 mb-4">
                 {descNeedsClamp ? (
                   <button
                     type="button"
@@ -354,7 +354,7 @@ export function TaskView() {
 
           {/* Properties */}
           {task ? (
-            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-3">
+            <div className="mt-8 mb-4 flex flex-wrap gap-x-6 gap-y-3">
               <PropField label="ID">
                 <span className="text-sm font-mono text-gray-400">{task.id}</span>
               </PropField>
