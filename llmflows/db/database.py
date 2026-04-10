@@ -99,7 +99,9 @@ def get_db(db_path: Optional[Path] = None):
 
 
 def reset_engine():
-    """Reset the global engine (for testing)."""
+    """Reset the global engine, disposing the old connection pool to avoid fd leaks."""
     global _engine, _SessionLocal
+    if _engine is not None:
+        _engine.dispose()
     _engine = None
     _SessionLocal = None
