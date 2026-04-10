@@ -103,6 +103,7 @@ class DaemonConfigBody(BaseModel):
 
 class ProjectSettingsUpdate(BaseModel):
     is_git_repo: Optional[bool] = None
+    max_concurrent_tasks: Optional[int] = None
 
 
 # --- Helpers ---
@@ -326,7 +327,10 @@ async def get_project_settings(project_id: str):
         project = project_svc.get(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        return {"is_git_repo": project.is_git_repo if project.is_git_repo is not None else True}
+        return {
+            "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
+            "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+        }
     finally:
         session.close()
 
@@ -339,11 +343,19 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        updates = {}
         if body.is_git_repo is not None:
-            project_svc.update(project_id, is_git_repo=body.is_git_repo)
+            updates["is_git_repo"] = body.is_git_repo
+        if body.max_concurrent_tasks is not None:
+            updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
+        if updates:
+            project_svc.update(project_id, **updates)
             session.refresh(project)
 
-        return {"is_git_repo": project.is_git_repo if project.is_git_repo is not None else True}
+        return {
+            "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
+            "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+        }
     finally:
         session.close()
 

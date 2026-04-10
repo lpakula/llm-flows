@@ -7,6 +7,7 @@ export interface Project {
 
 export interface ProjectSettings {
   is_git_repo: boolean;
+  max_concurrent_tasks: number;
 }
 
 export interface AgentAlias {
@@ -158,6 +159,7 @@ export interface InboxItem {
   step_position: number;
   task_id: string;
   task_name: string;
+  task_description: string;
   project_id: string;
   project_name: string;
   run_id: string;

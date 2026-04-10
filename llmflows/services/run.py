@@ -50,6 +50,17 @@ class RunService:
             .first()
         )
 
+    def get_all_pending(self, project_id: str) -> list[TaskRun]:
+        """Return all pending TaskRuns for a project, oldest first."""
+        return (
+            self.session.query(TaskRun)
+            .filter_by(project_id=project_id)
+            .filter(TaskRun.started_at.is_(None))
+            .filter(TaskRun.completed_at.is_(None))
+            .order_by(TaskRun.created_at)
+            .all()
+        )
+
     def mark_started(self, run_id: str) -> Optional[TaskRun]:
         """Set started_at on the run."""
         run = self.session.query(TaskRun).filter_by(id=run_id).first()
@@ -371,7 +382,8 @@ class RunService:
                 "step_type": step_type,
                 "step_position": sr.step_position,
                 "task_id": task.id,
-                "task_name": task.name or task.description[:60] if task.description else "",
+                "task_name": task.name or "",
+                "task_description": task.description or "",
                 "project_id": project.id,
                 "project_name": project.name,
                 "run_id": run.id,
@@ -379,7 +391,7 @@ class RunService:
                 "prompt": sr.prompt or "",
                 "user_message": user_message,
                 "log_path": sr.log_path or "",
-                "awaiting_since": sr.awaiting_user_at.isoformat() if sr.awaiting_user_at else None,
+                "awaiting_since": (sr.awaiting_user_at.isoformat() + "Z") if sr.awaiting_user_at else None,
             })
         return results
 

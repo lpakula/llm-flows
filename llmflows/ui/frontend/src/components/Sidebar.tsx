@@ -60,6 +60,19 @@ export function Sidebar() {
         </NavLink>
       </div>
 
+      {/* Inbox — project-agnostic, always visible */}
+      <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2">
+        <NavLink to="/inbox" className={navClass}>
+          <Inbox size={14} className="flex-shrink-0" />
+          <span className="flex-1">Inbox</span>
+          {inboxCount > 0 && (
+            <span className="ml-auto bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+              {inboxCount}
+            </span>
+          )}
+        </NavLink>
+      </nav>
+
       {/* Project picker (inline expand) + project nav */}
       <div className="flex-shrink-0 border-b border-gray-800 px-3 pt-3 pb-2" ref={projectPickerRef}>
         <span className="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1 block mb-1.5">
@@ -119,15 +132,6 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 pt-2 space-y-0.5">
-        <NavLink to="/inbox" className={navClass}>
-          <Inbox size={14} className="flex-shrink-0" />
-          <span className="flex-1">Inbox</span>
-          {inboxCount > 0 && (
-            <span className="ml-auto bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-              {inboxCount}
-            </span>
-          )}
-        </NavLink>
         {selectedProject && (
           <>
             <NavLink to={`/project/${selectedProject.id}`} end className={navClass}>

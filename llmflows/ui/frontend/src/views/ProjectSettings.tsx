@@ -10,7 +10,7 @@ export function ProjectSettingsView() {
   const { reload: reloadApp } = useApp();
 
   const [project, setProject] = useState<Project | null>(null);
-  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true });
+  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1 });
   const [loading, setLoading] = useState(true);
 
   const [nameValue, setNameValue] = useState("");
@@ -20,6 +20,11 @@ export function ProjectSettingsView() {
 
   const [gitSaving, setGitSaving] = useState(false);
   const [gitSaved, setGitSaved] = useState(false);
+
+  const [concurrencyValue, setConcurrencyValue] = useState(1);
+  const [concurrencyDirty, setConcurrencyDirty] = useState(false);
+  const [concurrencySaving, setConcurrencySaving] = useState(false);
+  const [concurrencySaved, setConcurrencySaved] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
@@ -32,6 +37,7 @@ export function ProjectSettingsView() {
         setProject(p);
         setSettings(s);
         setNameValue(p.name);
+        setConcurrencyValue(s.max_concurrent_tasks ?? 1);
       } catch (e) {
         console.error("Failed to load project settings:", e);
       }
@@ -70,6 +76,23 @@ export function ProjectSettingsView() {
       setSettings({ ...settings, is_git_repo: !next });
     }
     setGitSaving(false);
+  };
+
+  const saveConcurrency = async () => {
+    if (!projectId) return;
+    const val = Math.max(1, concurrencyValue);
+    setConcurrencySaving(true);
+    try {
+      const updated = await api.updateProjectSettings(projectId, { max_concurrent_tasks: val });
+      setSettings(updated);
+      setConcurrencyValue(updated.max_concurrent_tasks ?? val);
+      setConcurrencyDirty(false);
+      setConcurrencySaved(true);
+      setTimeout(() => setConcurrencySaved(false), 2000);
+    } catch (e) {
+      console.error("Failed to update concurrency:", e);
+    }
+    setConcurrencySaving(false);
   };
 
   const deleteProject = async () => {
@@ -138,7 +161,7 @@ export function ProjectSettingsView() {
             </tr>
 
             {/* Git repo */}
-            <tr className="bg-gray-900">
+            <tr className="bg-gray-900 border-b border-gray-800">
               <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Git Repository</td>
               <td className="px-4 py-3 text-xs hidden md:table-cell">
                 <span className="text-gray-500">When enabled, agents run in isolated worktree branches. </span>
@@ -157,6 +180,35 @@ export function ProjectSettingsView() {
               </td>
               <td className="px-4 py-3 text-right">
                 {gitSaved && <span className="text-xs text-green-400">Saved</span>}
+              </td>
+            </tr>
+
+            {/* Max concurrent tasks */}
+            <tr className="bg-gray-900">
+              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Max Concurrent Tasks</td>
+              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">How many tasks can be in the In Progress column at the same time</td>
+              <td className="px-4 py-3">
+                <input
+                  type="number"
+                  min={1}
+                  value={concurrencyValue}
+                  onChange={(e) => { setConcurrencyValue(parseInt(e.target.value) || 1); setConcurrencyDirty(true); }}
+                  onKeyDown={(e) => e.key === "Enter" && saveConcurrency()}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm w-20 focus:outline-none focus:border-gray-500"
+                />
+              </td>
+              <td className="px-4 py-3 text-right">
+                {concurrencySaved ? (
+                  <span className="text-xs text-green-400">Saved</span>
+                ) : (
+                  <button
+                    onClick={saveConcurrency}
+                    disabled={!concurrencyDirty || concurrencySaving}
+                    className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
+                  >
+                    {concurrencySaving ? "Saving..." : "Save"}
+                  </button>
+                )}
               </td>
             </tr>
           </tbody>

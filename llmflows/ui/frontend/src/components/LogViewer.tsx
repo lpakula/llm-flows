@@ -54,6 +54,7 @@ export function LogViewer({ entries, streaming, onExpandedChange }: Props) {
     }
   }, [entries, atBottom]);
 
+  const [copied, setCopied] = useState(false);
   const copyLogs = () => {
     const text = entries
       .map((e) => {
@@ -62,6 +63,8 @@ export function LogViewer({ entries, streaming, onExpandedChange }: Props) {
       })
       .join("\n");
     navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -92,9 +95,9 @@ export function LogViewer({ entries, streaming, onExpandedChange }: Props) {
           <button
             type="button"
             onClick={copyLogs}
-            className="text-[11px] text-gray-500 hover:text-gray-300 transition shrink-0"
+            className={`text-[11px] transition shrink-0 ${copied ? "text-green-400" : "text-gray-500 hover:text-gray-300"}`}
           >
-            Copy logs
+            {copied ? "Copied!" : "Copy logs"}
           </button>
         )}
       </div>

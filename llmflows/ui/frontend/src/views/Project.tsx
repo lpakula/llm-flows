@@ -4,7 +4,7 @@ import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import { useAutoResize } from "@/hooks/useAutoResize";
 import { useImagePaste } from "@/hooks/useImagePaste";
-import type { Task, Flow } from "@/api/types";
+import type { Task, Flow, ProjectSettings } from "@/api/types";
 import { typeColor, statusBadge, statusDot, displayStatus, duration, formatSeconds } from "@/lib/format";
 import { RunModal } from "@/components/RunModal";
 
@@ -264,6 +264,7 @@ export function ProjectView() {
   }, []);
   const onNewTaskDescPaste = useImagePaste(newTaskSessionId, setNewTaskDescription);
   const [flows, setFlows] = useState<Flow[]>([]);
+  const [maxConcurrent, setMaxConcurrent] = useState(1);
   const [viewMode, setViewMode] = useState<ViewMode>(() => (localStorage.getItem("tasks-view") as ViewMode) ?? "list");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ completed: true });
   const [runModalTask, setRunModalTask] = useState<Task | null>(null);
@@ -281,6 +282,7 @@ export function ProjectView() {
     load();
     if (projectId) {
       api.listFlows(projectId).then(setFlows).catch(() => setFlows([]));
+      api.getProjectSettings(projectId).then((s) => setMaxConcurrent(s.max_concurrent_tasks ?? 1)).catch(() => {});
     }
   }, [load, projectId]);
 
@@ -476,7 +478,9 @@ export function ProjectView() {
                       <td colSpan={7} className="py-2 pr-4">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-gray-300">{group.label}</span>
-                          <span className="text-xs text-gray-600">{group.tasks.length}</span>
+                          <span className="text-xs text-gray-600 tabular-nums">
+                            {group.key === "in_progress" ? `${group.tasks.length}/${maxConcurrent}` : group.tasks.length}
+                          </span>
                         </div>
                       </td>
                     </tr>
@@ -517,7 +521,9 @@ export function ProjectView() {
               <div className="flex items-center gap-2 mb-3 px-1">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${group.dot}`} />
                 <span className="text-sm font-medium text-gray-300">{group.label}</span>
-                <span className="text-xs text-gray-600">{group.tasks.length}</span>
+                <span className="text-xs text-gray-600 tabular-nums">
+                  {group.key === "in_progress" ? `${group.tasks.length}/${maxConcurrent}` : group.tasks.length}
+                </span>
               </div>
               {/* Cards */}
               <div className="space-y-2">

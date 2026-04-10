@@ -177,9 +177,19 @@ class Daemon:
                             run_svc, flow_svc,
                         )
 
-        pending = run_svc.get_pending(project.id)
-        if pending:
-            self._start_run(pending, task_svc, run_svc, flow_svc, project)
+        # Concurrency gate: only start runs for new tasks if under the limit
+        max_tasks = project.max_concurrent_tasks or 1
+        in_progress_task_ids = {
+            t.id for t in task_svc.list_by_project(project.id)
+            if t.task_status == "in_progress"
+        }
+
+        for pending in run_svc.get_all_pending(project.id):
+            if pending.task_id in in_progress_task_ids:
+                self._start_run(pending, task_svc, run_svc, flow_svc, project)
+            elif len(in_progress_task_ids) < max_tasks:
+                in_progress_task_ids.add(pending.task_id)
+                self._start_run(pending, task_svc, run_svc, flow_svc, project)
 
     def _relaunch_current_step(
         self, run, task, working_path: Path, use_task_subdir: bool,

@@ -76,6 +76,7 @@ class Project(Base):
     name: str = Column(String(255), nullable=False)
     path: str = Column(Text, nullable=False, unique=True)
     is_git_repo: bool = Column(Boolean, default=True)
+    max_concurrent_tasks: int = Column(Integer, default=1)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
@@ -87,6 +88,7 @@ class Project(Base):
             "name": self.name,
             "path": self.path,
             "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
+            "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
