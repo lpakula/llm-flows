@@ -29,6 +29,11 @@ llmflows project update --name "New Name"
 # View/update settings
 llmflows project settings
 llmflows project settings --git-repo false
+
+# Project variables (available as {{project.<KEY>}} in flows)
+llmflows project var set REPOS_PATH /Users/me/repos
+llmflows project var list
+llmflows project var remove REPOS_PATH
 ```
 
 ## Task Lifecycle
@@ -215,6 +220,9 @@ llmflows run logs <run-id> --follow
 | Add step | `llmflows flow step add --flow <name> --name <step> --content file.md` |
 | Export flows | `llmflows flow export --output flows.json` |
 | Import flows | `llmflows flow import flows.json` |
+| Set variable | `llmflows project var set KEY VALUE` |
+| List variables | `llmflows project var list` |
+| Remove variable | `llmflows project var remove KEY` |
 | List aliases | `llmflows alias list` |
 | Set alias | `llmflows alias set <name> --flow default --model ...` |
 | Daemon start | `llmflows daemon start` |

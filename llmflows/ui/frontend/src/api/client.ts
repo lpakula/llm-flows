@@ -24,6 +24,14 @@ function patch<T>(url: string, body: unknown) {
   });
 }
 
+function put<T>(url: string, body?: unknown) {
+  return request<T>(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 function del<T>(url: string) {
   return request<T>(url, { method: "DELETE" });
 }
@@ -57,6 +65,12 @@ export const api = {
   getProjectSettings: (id: string) => get<ProjectSettings>(`/api/projects/${id}/settings`),
   updateProjectSettings: (id: string, body: Partial<ProjectSettings>) =>
     patch<ProjectSettings>(`/api/projects/${id}/settings`, body),
+  getProjectVariables: (id: string) =>
+    get<Record<string, string>>(`/api/projects/${id}/variables`),
+  setProjectVariable: (id: string, key: string, value: string) =>
+    put<Record<string, string>>(`/api/projects/${id}/variables/${encodeURIComponent(key)}`, { value }),
+  deleteProjectVariable: (id: string, key: string) =>
+    del<Record<string, string>>(`/api/projects/${id}/variables/${encodeURIComponent(key)}`),
 
   // Agent Aliases
   listAgentAliases: () => get<AgentAlias[]>("/api/agent-aliases"),

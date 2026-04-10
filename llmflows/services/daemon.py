@@ -32,6 +32,14 @@ class Daemon:
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
 
+    @staticmethod
+    def _build_step_vars(base_vars: dict, project) -> dict:
+        """Build template variables by merging base vars with project-level variables."""
+        merged = dict(base_vars)
+        for k, v in project.get_variables().items():
+            merged[f"project.{k}"] = v
+        return merged
+
     def start(self) -> None:
         """Start the daemon loop."""
         self.running = True
@@ -275,12 +283,11 @@ class Daemon:
         prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
         prompt_file.unlink(missing_ok=True)
 
-        # Auto-publish step attachments to the shared task attachments directory.
         project_root = Path(task.project.path)
         step_artifacts = ContextService.get_artifacts_dir(project_root, task.id, run.id) / \
             f"{step_run.step_position:02d}-{step_run.step_name}" / "attachments"
         if step_artifacts.is_dir():
-            self._publish_attachments(step_artifacts, task.id)
+            self._publish_attachments(step_artifacts, task.id, run.id)
 
         snap_step_def = self._get_snapshot_step(run, step_run.step_name)
         step_type = (snap_step_def or {}).get("step_type", "agent")
@@ -316,12 +323,12 @@ class Daemon:
         project_root = Path(task.project.path)
         artifact_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
         step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
-        step_vars = {
+        step_vars = self._build_step_vars({
             "run.id": run.id,
             "task.id": run.task_id,
             "flow.name": step_run.flow_name,
             "artifacts_output_dir": str(step_artifact_dir),
-        }
+        }, task.project)
 
         # Resolve step definition from snapshot or live template
         snap_step = self._get_snapshot_step(run, step_run.step_name)
@@ -418,11 +425,11 @@ class Daemon:
     ) -> None:
         """Determine the next step and launch it, or complete the run."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        step_vars = {
+        step_vars = self._build_step_vars({
             "run.id": run.id,
             "task.id": run.task_id,
             "flow.name": current_flow,
-        }
+        }, task.project)
 
         if current_step_name == "__summary__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
@@ -530,7 +537,9 @@ class Daemon:
             run_svc.session.commit()
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
+        step_vars = self._build_step_vars({
+            "run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name,
+        }, task.project)
 
         steps = self._get_snapshot_steps(run)
         if not steps:
@@ -583,7 +592,9 @@ class Daemon:
         active_flow = run.flow_name or "default"
 
         if run.flow_name:
-            step_vars = {"run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name}
+            step_vars = self._build_step_vars({
+                "run.id": run.id, "task.id": run.task_id, "flow.name": run.flow_name,
+            }, task.project)
             step_names = flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id)
             for sname in step_names:
                 step_obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
@@ -691,12 +702,12 @@ class Daemon:
         project_root = Path(task.project.path)
         artifacts_dir = ContextService.get_artifacts_dir(project_root, task.id, run.id)
         step_artifact_dir = artifacts_dir / f"{step_position:02d}-{step_name}"
-        step_vars = {
+        step_vars = self._build_step_vars({
             "run.id": run.id,
             "task.id": run.task_id,
             "flow.name": flow_name,
             "artifacts_output_dir": str(step_artifact_dir),
-        }
+        }, task.project)
         for sr in run_svc.list_step_runs(run.id):
             if sr.completed_at and sr.user_response:
                 step_vars[f"steps.{sr.step_name}.user_response"] = sr.user_response
@@ -874,15 +885,15 @@ class Daemon:
             logger.debug("Failed to create completed inbox item for run %s", run.id, exc_info=True)
 
     @staticmethod
-    def _publish_attachments(src_dir: Path, task_id: str) -> None:
-        """Copy files from a step's attachments/ subdirectory into the shared task attachments."""
-        dest_dir = Path.home() / ".llmflows" / "attachments" / task_id
+    def _publish_attachments(src_dir: Path, task_id: str, run_id: str) -> None:
+        """Copy files from a step's attachments/ subdirectory into the run-scoped attachments dir."""
+        dest_dir = Path.home() / ".llmflows" / "attachments" / task_id / run_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         import shutil
         for f in src_dir.iterdir():
             if f.is_file():
                 shutil.copy2(f, dest_dir / f.name)
-                logger.debug("Published attachment %s for task %s", f.name, task_id)
+                logger.debug("Published attachment %s for task %s run %s", f.name, task_id, run_id)
 
     def _start_run(
         self, run, task_svc: TaskService, run_svc: RunService,

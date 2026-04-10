@@ -261,6 +261,116 @@ def project_delete(project_id):
         session.close()
 
 
+@project.group("var")
+def project_var():
+    """Manage project variables.
+
+    Variables are available in flow step content, gates, and IFs as
+    {{project.<KEY>}} template placeholders.
+    """
+    pass
+
+
+@project_var.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
+def var_set(key, value, project_id):
+    """Set a project variable.
+
+    \b
+    Examples:
+      llmflows project var set KM_KUBERNETES_REPOS_PATH /Users/me/repos
+      llmflows project var set AGENT_DEFAULT_ORG mycompany
+    """
+    import json
+    session = get_session()
+    try:
+        project_svc = ProjectService(session)
+        if project_id is None:
+            p = project_svc.resolve_current()
+            if p is None:
+                click.echo("Not inside a registered project. Use --id to specify.")
+                raise SystemExit(1)
+            project_id = p.id
+
+        project = project_svc.get(project_id)
+        if not project:
+            click.echo(f"Project {project_id} not found.")
+            raise SystemExit(1)
+
+        variables = project.get_variables()
+        variables[key] = value
+        project_svc.update(project_id, variables=json.dumps(variables))
+        click.echo(f"  {click.style(key, fg='cyan')} = {click.style(value, fg='white')}")
+    finally:
+        session.close()
+
+
+@project_var.command("list")
+@click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
+def var_list(project_id):
+    """List all project variables."""
+    session = get_session()
+    try:
+        project_svc = ProjectService(session)
+        if project_id is None:
+            p = project_svc.resolve_current()
+            if p is None:
+                click.echo("Not inside a registered project. Use --id to specify.")
+                raise SystemExit(1)
+            project_id = p.id
+
+        project = project_svc.get(project_id)
+        if not project:
+            click.echo(f"Project {project_id} not found.")
+            raise SystemExit(1)
+
+        variables = project.get_variables()
+        if not variables:
+            click.echo("  No variables set.")
+            return
+
+        key_w = max(len(k) for k in variables)
+        for k, v in sorted(variables.items()):
+            click.echo(f"  {click.style(k.ljust(key_w), fg='cyan')}  {v}")
+    finally:
+        session.close()
+
+
+@project_var.command("remove")
+@click.argument("key")
+@click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
+def var_remove(key, project_id):
+    """Remove a project variable."""
+    import json
+    session = get_session()
+    try:
+        project_svc = ProjectService(session)
+        if project_id is None:
+            p = project_svc.resolve_current()
+            if p is None:
+                click.echo("Not inside a registered project. Use --id to specify.")
+                raise SystemExit(1)
+            project_id = p.id
+
+        project = project_svc.get(project_id)
+        if not project:
+            click.echo(f"Project {project_id} not found.")
+            raise SystemExit(1)
+
+        variables = project.get_variables()
+        if key not in variables:
+            click.echo(f"  Variable '{key}' not found.")
+            raise SystemExit(1)
+
+        del variables[key]
+        project_svc.update(project_id, variables=json.dumps(variables))
+        click.echo(f"  Removed {click.style(key, fg='cyan')}")
+    finally:
+        session.close()
+
+
 @project.command("settings")
 @click.option("--id", "project_id", default=None, help="Project ID (defaults to current repo)")
 @click.option("--git-repo", default=None, type=click.Choice(["true", "false"]),

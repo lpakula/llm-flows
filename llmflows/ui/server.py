@@ -365,6 +365,54 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         session.close()
 
 
+@app.get("/api/projects/{project_id}/variables")
+async def get_project_variables(project_id: str):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return project.get_variables()
+    finally:
+        session.close()
+
+
+class VariableUpdate(BaseModel):
+    value: str
+
+
+@app.put("/api/projects/{project_id}/variables/{key}")
+async def set_project_variable(project_id: str, key: str, body: VariableUpdate):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        variables = project.get_variables()
+        variables[key] = body.value
+        project_svc.update(project_id, variables=json.dumps(variables))
+        return variables
+    finally:
+        session.close()
+
+
+@app.delete("/api/projects/{project_id}/variables/{key}")
+async def delete_project_variable(project_id: str, key: str):
+    session, project_svc, _ = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        variables = project.get_variables()
+        if key not in variables:
+            raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
+        del variables[key]
+        project_svc.update(project_id, variables=json.dumps(variables))
+        return variables
+    finally:
+        session.close()
+
+
 # --- Task endpoints ---
 
 @app.get("/api/projects/{project_id}/tasks")
@@ -495,6 +543,14 @@ async def upload_attachment(task_id: str, file: UploadFile = File(...)):
     return {"url": f"/api/attachments/{task_id}/{filename}", "filename": filename}
 
 
+@app.get("/api/attachments/{task_id}/{run_id}/{filename}")
+async def serve_run_attachment(task_id: str, run_id: str, filename: str):
+    path = ATTACHMENTS_DIR / task_id / run_id / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return FileResponse(str(path))
+
+
 @app.get("/api/attachments/{task_id}/{filename}")
 async def serve_attachment(task_id: str, filename: str):
     path = ATTACHMENTS_DIR / task_id / filename
@@ -546,16 +602,16 @@ async def list_task_runs(task_id: str):
         runs = run_svc.list_by_task(task_id)
         result = [r.to_dict() for r in runs]
 
-        att_dir = ATTACHMENTS_DIR / task_id
-        attachments = []
-        if att_dir.is_dir():
-            attachments = sorted(
-                [{"name": f.name, "url": f"/api/attachments/{task_id}/{f.name}"}
-                 for f in att_dir.iterdir() if f.is_file()],
-                key=lambda x: x["name"],
-            )
         for r in result:
-            r["attachments"] = attachments
+            run_att_dir = ATTACHMENTS_DIR / task_id / r["id"]
+            if run_att_dir.is_dir():
+                r["attachments"] = sorted(
+                    [{"name": f.name, "url": f"/api/attachments/{task_id}/{r['id']}/{f.name}"}
+                     for f in run_att_dir.iterdir() if f.is_file()],
+                    key=lambda x: x["name"],
+                )
+            else:
+                r["attachments"] = []
         return result
     finally:
         session.close()
@@ -1187,12 +1243,12 @@ async def get_inbox():
                 if not run or not task or not project:
                     continue
 
-                att_dir = ATTACHMENTS_DIR / item.task_id
+                run_att_dir = ATTACHMENTS_DIR / item.task_id / run.id
                 attachments = []
-                if att_dir.is_dir():
+                if run_att_dir.is_dir():
                     attachments = sorted(
-                        [{"name": f.name, "url": f"/api/attachments/{item.task_id}/{f.name}"}
-                         for f in att_dir.iterdir() if f.is_file()],
+                        [{"name": f.name, "url": f"/api/attachments/{item.task_id}/{run.id}/{f.name}"}
+                         for f in run_att_dir.iterdir() if f.is_file()],
                         key=lambda x: x["name"],
                     )
 

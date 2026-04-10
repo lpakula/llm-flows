@@ -29,16 +29,24 @@ export function ProjectSettingsView() {
   const [concurrencySaving, setConcurrencySaving] = useState(false);
   const [concurrencySaved, setConcurrencySaved] = useState(false);
 
+  const [variables, setVariables] = useState<Record<string, string>>({});
+  const [newVarKey, setNewVarKey] = useState("");
+  const [newVarValue, setNewVarValue] = useState("");
+  const [varSaving, setVarSaving] = useState<string | null>(null);
+  const [editingVar, setEditingVar] = useState<{ key: string; value: string } | null>(null);
+
   useEffect(() => {
     if (!projectId) return;
     (async () => {
       try {
-        const [p, s] = await Promise.all([
+        const [p, s, v] = await Promise.all([
           api.getProject(projectId),
           api.getProjectSettings(projectId),
+          api.getProjectVariables(projectId),
         ]);
         setProject(p);
         setSettings(s);
+        setVariables(v);
         setNameValue(p.name);
         setConcurrencyValue(s.max_concurrent_tasks ?? 1);
       } catch (e) {
@@ -120,6 +128,45 @@ export function ProjectSettingsView() {
     await api.deleteProject(project.id);
     reloadApp();
     navigate("/");
+  };
+
+  const addVariable = async () => {
+    if (!projectId || !newVarKey.trim()) return;
+    setVarSaving(newVarKey);
+    try {
+      const updated = await api.setProjectVariable(projectId, newVarKey.trim(), newVarValue);
+      setVariables(updated);
+      setNewVarKey("");
+      setNewVarValue("");
+    } catch (e) {
+      console.error("Failed to set variable:", e);
+    }
+    setVarSaving(null);
+  };
+
+  const saveEditingVar = async () => {
+    if (!projectId || !editingVar) return;
+    setVarSaving(editingVar.key);
+    try {
+      const updated = await api.setProjectVariable(projectId, editingVar.key, editingVar.value);
+      setVariables(updated);
+      setEditingVar(null);
+    } catch (e) {
+      console.error("Failed to update variable:", e);
+    }
+    setVarSaving(null);
+  };
+
+  const removeVariable = async (key: string) => {
+    if (!projectId) return;
+    setVarSaving(key);
+    try {
+      const updated = await api.deleteProjectVariable(projectId, key);
+      setVariables(updated);
+    } catch (e) {
+      console.error("Failed to remove variable:", e);
+    }
+    setVarSaving(null);
   };
 
   if (loading) {
@@ -248,6 +295,110 @@ export function ProjectSettingsView() {
               </td>
               <td className="px-4 py-3 text-right">
                 {inboxSaved && <span className="text-xs text-green-400">Saved</span>}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Variables */}
+      <div className="border border-gray-800 rounded-xl overflow-hidden mb-8">
+        <div className="px-4 py-3 bg-gray-900/60 border-b border-gray-800 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-white">Variables</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Available in flow steps, gates, and IFs as <code className="text-gray-400">{"{{project.<KEY>}}"}</code>
+            </p>
+          </div>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800 bg-gray-900/40">
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide w-1/3">Key</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide">Value</th>
+              <th className="px-4 py-2 w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
+              <tr key={key} className="bg-gray-900 border-b border-gray-800">
+                <td className="px-4 py-2.5 font-mono text-xs text-cyan-400">{key}</td>
+                <td className="px-4 py-2.5">
+                  {editingVar?.key === key ? (
+                    <input
+                      value={editingVar.value}
+                      onChange={(e) => setEditingVar({ ...editingVar, value: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveEditingVar(); if (e.key === "Escape") setEditingVar(null); }}
+                      autoFocus
+                      className="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-xs font-mono w-full focus:outline-none focus:border-blue-500"
+                    />
+                  ) : (
+                    <span
+                      className="text-xs font-mono text-gray-300 cursor-pointer hover:text-white"
+                      onClick={() => setEditingVar({ key, value })}
+                      title="Click to edit"
+                    >
+                      {value}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                  {editingVar?.key === key ? (
+                    <span className="space-x-2">
+                      <button
+                        onClick={saveEditingVar}
+                        disabled={varSaving === key}
+                        className="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        {varSaving === key ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        onClick={() => setEditingVar(null)}
+                        className="text-xs text-gray-500 hover:text-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => removeVariable(key)}
+                      disabled={varSaving === key}
+                      className="text-xs text-red-400/60 hover:text-red-400 transition-colors"
+                    >
+                      {varSaving === key ? "…" : "Remove"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {/* Add new variable row */}
+            <tr className="bg-gray-900/50">
+              <td className="px-4 py-2.5">
+                <input
+                  value={newVarKey}
+                  onChange={(e) => setNewVarKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addVariable()}
+                  placeholder="KEY"
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-full focus:outline-none focus:border-gray-500 placeholder:text-gray-600"
+                />
+              </td>
+              <td className="px-4 py-2.5">
+                <input
+                  value={newVarValue}
+                  onChange={(e) => setNewVarValue(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addVariable()}
+                  placeholder="value"
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-full focus:outline-none focus:border-gray-500 placeholder:text-gray-600"
+                />
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                <button
+                  onClick={addVariable}
+                  disabled={!newVarKey.trim() || varSaving !== null}
+                  className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
+                >
+                  Add
+                </button>
               </td>
             </tr>
           </tbody>

@@ -172,6 +172,32 @@ Step content, gate commands, gate messages, and IF commands support template var
 - `{{task.id}}` — current task ID
 - `{{flow.name}}` — current flow name
 - `{{artifacts_output_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
+- `{{project.<KEY>}}` — project-level variable (set via `llmflows project var set KEY VALUE`)
+
+### Project variables
+
+Project variables are key-value pairs stored in the database and available to all flows. They are interpolated before shell execution, so they work in gate commands, IF commands, and step content.
+
+```bash
+# Set a variable
+llmflows project var set REPOS_PATH /Users/me/repos
+llmflows project var set DEFAULT_ORG mycompany
+
+# List all variables
+llmflows project var list
+
+# Remove a variable
+llmflows project var remove REPOS_PATH
+```
+
+Use in gates and step content as `{{project.REPOS_PATH}}`:
+
+```json
+{
+  "command": "test -d {{project.REPOS_PATH}}/my-service/.worktrees/task-{{task.id}}",
+  "message": "Worktree not found."
+}
+```
 
 Artifacts from completed steps are automatically collected and passed as context to subsequent steps.
 

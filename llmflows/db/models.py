@@ -78,10 +78,19 @@ class Project(Base):
     is_git_repo: bool = Column(Boolean, default=True)
     max_concurrent_tasks: int = Column(Integer, default=1)
     inbox_completed_runs: bool = Column(Boolean, default=True)
+    variables: str = Column(Text, default="{}")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     flows = relationship("Flow", back_populates="project", cascade="all, delete-orphan")
+
+    def get_variables(self) -> dict:
+        """Parse variables JSON into a dict."""
+        import json
+        try:
+            return json.loads(self.variables or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +100,7 @@ class Project(Base):
             "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
             "inbox_completed_runs": self.inbox_completed_runs if self.inbox_completed_runs is not None else True,
+            "variables": self.get_variables(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
