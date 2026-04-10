@@ -13,6 +13,7 @@ import { MarkdownContent } from "@/components/MarkdownContent";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
 import { statusBadge, displayStatus, duration, formatSeconds, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { MessageSquare, UserCheck, Check } from "lucide-react";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { marked } from "marked";
 
 const DESC_PREVIEW_LINES = 4;
@@ -884,6 +885,7 @@ const SUMMARY_READ_MORE_THRESHOLD = 500;
 
 function RunSummarySection({ summary }: { summary: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const long = summary.length > SUMMARY_READ_MORE_THRESHOLD;
   const html = marked.parse(summary) as string;
   const proseClass =
@@ -900,10 +902,19 @@ function RunSummarySection({ summary }: { summary: string }) {
     "[&_pre_code]:bg-transparent [&_pre_code]:text-gray-400 [&_pre_code]:p-0 [&_pre_code]:text-[11px] " +
     "[&_strong]:text-gray-300 [&_strong]:font-semibold " +
     "[&_a]:text-blue-400 [&_a]:underline " +
+    "[&_img]:max-w-[180px] [&_img]:max-h-[120px] [&_img]:object-contain [&_img]:rounded-md [&_img]:border [&_img]:border-gray-700 [&_img]:cursor-zoom-in [&_img]:inline-block [&_img]:mr-2 [&_img]:my-1 " +
     "[&_table]:w-full [&_table]:my-2 [&_table]:text-[11px] [&_table]:border-collapse " +
     "[&_th]:text-left [&_th]:text-gray-400 [&_th]:font-semibold [&_th]:border-b [&_th]:border-gray-700 [&_th]:px-2 [&_th]:py-1.5 " +
     "[&_td]:text-gray-400 [&_td]:border-b [&_td]:border-gray-800 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top " +
     "[&_tr:last-child_td]:border-b-0";
+
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "IMG") {
+      e.preventDefault();
+      setLightboxSrc((target as HTMLImageElement).src);
+    }
+  };
 
   return (
     <div className="px-5 py-3">
@@ -912,6 +923,7 @@ function RunSummarySection({ summary }: { summary: string }) {
         <div
           className={`${proseClass}${!expanded && long ? " max-h-48 overflow-hidden" : ""}`}
           dangerouslySetInnerHTML={{ __html: html }}
+          onClick={handleClick}
         />
         {!expanded && long ? (
           <div
@@ -932,6 +944,7 @@ function RunSummarySection({ summary }: { summary: string }) {
           {expanded ? "Read less" : "Read more"}
         </button>
       ) : null}
+      {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </div>
   );
 }
