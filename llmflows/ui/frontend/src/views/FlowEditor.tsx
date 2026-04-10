@@ -4,7 +4,7 @@ import { api } from "@/api/client";
 import { useApp } from "@/App";
 import type { Flow, FlowStep, Gate, AgentAlias } from "@/api/types";
 
-const VARIABLES = ["{{run.id}}", "{{task.id}}", "{{flow.name}}", "{{artifacts_output_dir}}"];
+const VARIABLES = ["{{run.id}}", "{{task.id}}", "{{flow.name}}", "{{artifacts_output_dir}}", "{{steps.<name>.user_response}}"];
 
 function GateEditor({
   label,
@@ -75,6 +75,7 @@ function StepEditForm({
     gates: Gate[];
     ifs: Gate[];
     agent_alias: string;
+    step_type: string;
     allow_max: boolean;
     max_gate_retries: number;
   };
@@ -152,6 +153,18 @@ function StepEditForm({
 
       <div className="flex items-center gap-4">
         <div>
+          <label className="text-xs text-gray-400 font-medium block mb-1">Step Type</label>
+          <select
+            value={form.step_type}
+            onChange={(e) => onChange({ step_type: e.target.value })}
+            className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
+          >
+            <option value="agent">Agent</option>
+            <option value="manual">Manual</option>
+            <option value="prompt">Prompt</option>
+          </select>
+        </div>
+        <div>
           <label className="text-xs text-gray-400 font-medium block mb-1">Agent Alias</label>
           <select
             value={form.agent_alias}
@@ -166,6 +179,13 @@ function StepEditForm({
           </select>
         </div>
       </div>
+      {form.step_type !== "agent" && (
+        <p className="text-xs text-amber-500/80">
+          {form.step_type === "manual"
+            ? "Agent will prepare instructions, then the step waits for user to confirm completion."
+            : "Agent will formulate a question, then the step waits for user to provide an answer."}
+        </p>
+      )}
 
       <div className="text-xs text-amber-500 font-mono">
         Variables: {VARIABLES.join(" ")}
@@ -194,12 +214,12 @@ export function FlowEditorView() {
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [stepForm, setStepForm] = useState({
     name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "standard", allow_max: false, max_gate_retries: 3,
+    agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3,
   });
   const [showAddStep, setShowAddStep] = useState(false);
   const [newStep, setNewStep] = useState({
     name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "standard", allow_max: false, max_gate_retries: 3,
+    agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3,
   });
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
   const [localOrder, setLocalOrder] = useState<string[]>([]);
@@ -236,6 +256,7 @@ export function FlowEditorView() {
       gates: (step.gates || []).map((g) => ({ ...g })),
       ifs: (step.ifs || []).map((g) => ({ ...g })),
       agent_alias: step.agent_alias || "standard",
+      step_type: step.step_type || "agent",
       allow_max: step.allow_max || false,
       max_gate_retries: step.max_gate_retries ?? 3,
     });
@@ -249,6 +270,7 @@ export function FlowEditorView() {
       gates: stepForm.gates.filter((g) => g.command.trim()),
       ifs: stepForm.ifs.filter((g) => g.command.trim()),
       agent_alias: stepForm.agent_alias,
+      step_type: stepForm.step_type,
       allow_max: stepForm.allow_max,
       max_gate_retries: stepForm.max_gate_retries,
     });
@@ -262,6 +284,7 @@ export function FlowEditorView() {
       name: newStep.name,
       content: newStep.content,
       agent_alias: newStep.agent_alias,
+      step_type: newStep.step_type,
       allow_max: newStep.allow_max,
       max_gate_retries: newStep.max_gate_retries,
     };
@@ -271,7 +294,7 @@ export function FlowEditorView() {
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
     await api.addStep(flow.id, body);
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "standard", allow_max: false, max_gate_retries: 3 });
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3 });
     setShowAddStep(false);
     load();
   };
@@ -454,6 +477,11 @@ export function FlowEditorView() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-medium text-white">{step.name}</h4>
+                      {step.step_type && step.step_type !== "agent" && (
+                        <span className={`text-[10px] ${step.step_type === "manual" ? "text-amber-400" : "text-blue-400"}`}>
+                          {step.step_type}
+                        </span>
+                      )}
                       {step.agent_alias && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>
                       )}

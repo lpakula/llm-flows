@@ -37,6 +37,7 @@ class AgentService:
         self,
         run_id: str,
         task_id: str,
+        task_name: str,
         task_description: str,
         user_prompt: str,
         step_name: str,
@@ -49,9 +50,10 @@ class AgentService:
         gate_failures: Optional[list[dict]] = None,
         use_task_subdir: bool = False,
         execution_history: Optional[list[dict]] = None,
-        previous_step_log: str = "",
         resume_prompt: str = "",
         attempt: int = 1,
+        user_responses: Optional[list[dict]] = None,
+        step_type: str = "agent",
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -80,6 +82,7 @@ class AgentService:
         prompt_vars = {
             "worktree_path": str(self.worktree_path) if self.worktree_path != self.project_dir.parent else None,
             "task_id": task_id,
+            "task_name": task_name,
             "task_description": task_description,
             "user_prompt": user_prompt,
             "step_name": step_name,
@@ -89,8 +92,9 @@ class AgentService:
             "artifacts_output_dir": str(step_output_dir) if step_output_dir else "",
             "gate_failures": gate_failures,
             "execution_history": execution_history,
-            "previous_step_log": previous_step_log,
             "resume_prompt": resume_prompt,
+            "user_responses": user_responses or [],
+            "step_type": step_type,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)

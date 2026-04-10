@@ -12,6 +12,7 @@ import { RunModal } from "@/components/RunModal";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types";
 import { statusBadge, displayStatus, duration, formatSeconds, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
+import { MessageSquare, UserCheck, Check } from "lucide-react";
 import { marked } from "marked";
 
 const DESC_PREVIEW_LINES = 4;
@@ -50,6 +51,10 @@ export function TaskView() {
   // Retry modal
   const [retryModal, setRetryModal] = useState<{ runId: string; stepName: string } | null>(null);
   const [retryPrompt, setRetryPrompt] = useState("");
+
+  // Respond to awaiting_user step
+  const [respondingStep, setRespondingStep] = useState<{ stepRunId: string; stepType: string } | null>(null);
+  const [respondText, setRespondText] = useState("");
 
   // Selected attempt for viewing logs
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
@@ -111,7 +116,7 @@ export function TaskView() {
             const data = await api.getRunSteps(activeRun.id);
             setRunSteps((prev) => ({ ...prev, [activeRun.id]: data.steps }));
             const steps = data.steps;
-            const activeStep = steps.find((s) => s.step_run && s.status === "running");
+            const activeStep = steps.find((s) => s.step_run && (s.status === "running" || s.status === "awaiting_user"));
             if (activeStep?.step_run) {
               setLogUrl(`/api/step-runs/${activeStep.step_run.id}/logs`);
               const stepLabel =
@@ -202,6 +207,13 @@ export function TaskView() {
   const completeStep = async (stepRunId: string) => {
     if (!confirm("Mark this step as manually completed?")) return;
     await api.completeStep(stepRunId);
+    if (expandedRun) loadRunSteps(expandedRun);
+  };
+
+  const respondToStep = async (stepRunId: string, response: string) => {
+    await api.respondToStep(stepRunId, response);
+    setRespondingStep(null);
+    setRespondText("");
     if (expandedRun) loadRunSteps(expandedRun);
   };
 
@@ -577,18 +589,11 @@ export function TaskView() {
                                       : "border"
                                   } ${attempts[0] ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                                 >
+                                  {step.step_type === "prompt" && <MessageSquare size={10} className="inline mr-1 -mt-px opacity-60" />}
+                                  {step.step_type === "manual" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
                                   {stepLabel}
                                   {step.has_ifs && <span className="ml-1 text-purple-400 font-medium">if</span>}
                                 </button>
-                                {attempts[0] && attempts[0].status !== "completed" && attempts[0].status !== "running" && attempts.length === 1 && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); completeStep(attempts[0].id); }}
-                                    className="absolute -bottom-2 -right-2 bg-green-700 text-white text-[8px] px-1 rounded hover:bg-green-600"
-                                    title="Mark as completed"
-                                  >
-                                    ✓
-                                  </button>
-                                )}
                               </div>
                               {/* Subsequent retry attempts (oldest → newest, left → right) */}
                               {attempts.slice(1).map((att, j) => {
@@ -619,15 +624,6 @@ export function TaskView() {
                                       >
                                         ↻
                                       </button>
-                                      {isLast && att.status !== "completed" && att.status !== "running" && (
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); completeStep(att.id); }}
-                                          className="absolute -bottom-2 -right-2 bg-green-700 text-white text-[8px] px-1 rounded hover:bg-green-600"
-                                          title="Mark as completed"
-                                        >
-                                          ✓
-                                        </button>
-                                      )}
                                     </div>
                                   </div>
                                 );
@@ -662,6 +658,66 @@ export function TaskView() {
                       </div>
                     </div>
                   )}
+
+                  {/* Awaiting user inline respond */}
+                  {(() => {
+                    const awaitingStep = (runSteps[run.id] || []).find(
+                      (s) => s.status === "awaiting_user" && s.step_run
+                    );
+                    if (!awaitingStep?.step_run) return null;
+                    const isPrompt = awaitingStep.step_type === "prompt";
+                    const stepLabel = awaitingStep.name === "__summary__" ? "summary" : awaitingStep.name;
+                    return (
+                      <div className="px-5 py-3 border-t border-gray-800 bg-amber-950/10">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                          <span className="text-xs font-medium text-amber-400">
+                            {isPrompt ? "Question" : "Action required"}: {stepLabel}
+                          </span>
+                        </div>
+                        {awaitingStep.step_run!.user_message && (
+                          <div className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-4 py-3 mb-3 max-h-64 overflow-y-auto">
+                            <MarkdownContent text={awaitingStep.step_run!.user_message} className="text-sm text-gray-300" />
+                          </div>
+                        )}
+                        {isPrompt ? (
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={respondingStep?.stepRunId === awaitingStep.step_run!.id ? respondText : ""}
+                              onChange={(e) => {
+                                setRespondingStep({ stepRunId: awaitingStep.step_run!.id, stepType: "prompt" });
+                                setRespondText(e.target.value);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey && respondText.trim()) {
+                                  respondToStep(awaitingStep.step_run!.id, respondText);
+                                }
+                              }}
+                              placeholder="Type your answer..."
+                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-gray-600 focus:border-gray-600"
+                            />
+                            <button
+                              onClick={() => respondToStep(awaitingStep.step_run!.id, respondText)}
+                              disabled={!respondText.trim()}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-green-500 hover:text-green-400 disabled:opacity-40 text-xs font-medium transition"
+                            >
+                              <Check size={12} />
+                              Submit
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => respondToStep(awaitingStep.step_run!.id, "")}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-green-500 hover:text-green-400 text-xs font-medium transition"
+                          >
+                            <Check size={12} />
+                            Mark as Done
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Log viewer - only when a step is selected */}
                   {viewingStepName && (

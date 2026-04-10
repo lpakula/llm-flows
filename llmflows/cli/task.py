@@ -4,6 +4,7 @@ import click
 
 from ..db.database import get_session, init_db
 from ..db.models import TaskType
+from ..services.flow import FlowService
 from ..services.project import ProjectService
 from ..services.run import RunService
 from ..services.task import TaskService
@@ -270,7 +271,16 @@ def task_start(task_id, flow_name, prompt, one_shot):
             raise SystemExit(1)
 
         run_svc = RunService(session)
+        flow_svc = FlowService(session)
         effective_flow = flow_name or t.default_flow_name
+
+        if one_shot and effective_flow and flow_svc.has_human_steps(effective_flow, project_id=t.project_id):
+            click.echo(
+                click.style("Warning: ", fg="yellow")
+                + f"flow '{effective_flow}' contains manual/prompt steps — ignoring --one-shot"
+            )
+            one_shot = False
+
         run = run_svc.enqueue(t.project_id, task_id,
                               flow_name=effective_flow,
                               user_prompt=prompt,

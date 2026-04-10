@@ -64,6 +64,7 @@ class StepCreate(BaseModel):
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
     agent_alias: str = "standard"
+    step_type: str = "agent"
     allow_max: bool = False
     max_gate_retries: int = 3
 
@@ -75,8 +76,13 @@ class StepUpdate(BaseModel):
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
     agent_alias: Optional[str] = None
+    step_type: Optional[str] = None
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
+
+
+class StepRespondBody(BaseModel):
+    response: str = ""
 
 
 class ReorderSteps(BaseModel):
@@ -462,11 +468,17 @@ async def start_task(task_id: str, body: TaskStartBody):
             raise HTTPException(status_code=404, detail="Task not found")
 
         run_svc = RunService(session)
+        flow_svc = FlowService(session)
+
+        one_shot = body.one_shot
+        if one_shot and body.flow and flow_svc.has_human_steps(body.flow, project_id=task.project_id):
+            one_shot = False
+
         run_svc.enqueue(
             task.project_id, task_id,
             flow_name=body.flow or None,
             user_prompt=body.user_prompt or task.description or "",
-            one_shot=body.one_shot,
+            one_shot=one_shot,
         )
         task_svc.update(task_id, task_status="queue")
 
@@ -700,6 +712,9 @@ async def get_run_steps(run_id: str):
                     "max_gate_retries": obj.max_gate_retries if obj else 5,
                 })
 
+        from ..services.context import ContextService
+        project_path = Path(run.task.project.path) if run.task and run.task.project else None
+
         for position, step_src in enumerate(step_sources):
             step_name = step_src["name"]
             has_ifs = bool(step_src.get("ifs"))
@@ -708,6 +723,16 @@ async def get_run_steps(run_id: str):
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()
+                if sr.awaiting_user_at and not sr.completed_at and project_path:
+                    try:
+                        artifacts_dir = ContextService.get_artifacts_dir(
+                            project_path, run.task_id, run_id,
+                        )
+                        result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                        if result_file.exists():
+                            step_data["user_message"] = result_file.read_text().strip()
+                    except (PermissionError, OSError):
+                        pass
             else:
                 status = "skipped" if has_ifs and position < max_started_position else "pending"
                 step_data = None
@@ -719,6 +744,7 @@ async def get_run_steps(run_id: str):
                 "step_run": step_data,
                 "attempts": attempts,
                 "agent_alias": step_src.get("agent_alias", "standard"),
+                "step_type": step_src.get("step_type", "agent"),
                 "allow_max": bool(step_src.get("allow_max", False)),
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
@@ -1029,6 +1055,33 @@ async def dashboard():
         session.close()
 
 
+# --- Inbox endpoints ---
+
+@app.get("/api/inbox")
+async def get_inbox():
+    """Return all steps awaiting user action across all projects."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        return run_svc.list_awaiting_user()
+    finally:
+        session.close()
+
+
+@app.post("/api/step-runs/{step_run_id}/respond")
+async def respond_to_step(step_run_id: str, body: StepRespondBody):
+    """User responds to an awaiting_user step (confirm manual or answer prompt)."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        sr = run_svc.respond_to_step(step_run_id, body.response)
+        if not sr:
+            raise HTTPException(status_code=404, detail="StepRun not found or not awaiting user")
+        return {"ok": True}
+    finally:
+        session.close()
+
+
 # --- Flow endpoints (project-scoped) ---
 
 @app.get("/api/projects/{project_id}/flows")
@@ -1171,7 +1224,8 @@ async def add_flow_step(flow_id: str, body: StepCreate):
         step = flow_svc.add_step(
             flow_id, body.name, body.content, body.position,
             gates=body.gates, ifs=body.ifs,
-            agent_alias=body.agent_alias, allow_max=body.allow_max,
+            agent_alias=body.agent_alias, step_type=body.step_type,
+            allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
         )
         if not step:
@@ -1199,6 +1253,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["ifs"] = json.dumps(body.ifs)
         if body.agent_alias is not None:
             updates["agent_alias"] = body.agent_alias
+        if body.step_type is not None:
+            updates["step_type"] = body.step_type
         if body.allow_max is not None:
             updates["allow_max"] = body.allow_max
         if body.max_gate_retries is not None:

@@ -163,6 +163,7 @@ class FlowStep(Base):
     gates: str = Column(Text, default="[]")
     ifs: str = Column(Text, default="[]")
     agent_alias: str = Column(String(50), default="standard")
+    step_type: str = Column(String(20), default="agent")
     allow_max: bool = Column(Boolean, default=False)
     max_gate_retries: int = Column(Integer, default=5)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -197,6 +198,7 @@ class FlowStep(Base):
             "gates": self.get_gates(),
             "ifs": self.get_ifs(),
             "agent_alias": self.agent_alias or "standard",
+            "step_type": self.step_type or "agent",
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -240,6 +242,9 @@ class TaskRun(Base):
         if self.paused_at:
             return "paused"
         if self.started_at:
+            for sr in self.step_runs:
+                if sr.awaiting_user_at and not sr.completed_at:
+                    return "awaiting_user"
             return "running"
         return "queued"
 
@@ -295,8 +300,10 @@ class StepRun(Base):
     outcome: str = Column(String(50), nullable=True)
     attempt: int = Column(Integer, nullable=False, default=1)
     gate_failures: str = Column(Text, default="")
+    user_response: str = Column(Text, default="")
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
+    awaiting_user_at: datetime = Column(DateTime, nullable=True)
 
     run = relationship("TaskRun", back_populates="step_runs")
 
@@ -304,6 +311,8 @@ class StepRun(Base):
     def status(self) -> str:
         if self.completed_at:
             return self.outcome or "completed"
+        if self.awaiting_user_at:
+            return "awaiting_user"
         if self.started_at:
             return "running"
         return "pending"
@@ -339,7 +348,9 @@ class StepRun(Base):
             "outcome": self.outcome,
             "attempt": self.attempt or 1,
             "gate_failures": gf,
+            "user_response": self.user_response or "",
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "awaiting_user_at": self.awaiting_user_at.isoformat() if self.awaiting_user_at else None,
             "duration_seconds": self.duration_seconds,
         }

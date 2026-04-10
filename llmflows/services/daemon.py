@@ -142,6 +142,8 @@ class Daemon:
             active_step = run_svc.get_active_step(run.id)
 
             if active_step:
+                if active_step.awaiting_user_at and not active_step.completed_at:
+                    continue
                 self._process_active_step(
                     run, task, project, active_step, working_path,
                     is_git, use_task_subdir, run_svc, flow_svc, task_svc,
@@ -153,10 +155,27 @@ class Daemon:
                         is_git, use_task_subdir, run_svc, flow_svc, task_svc,
                     )
                 else:
-                    self._relaunch_current_step(
-                        run, task, working_path, use_task_subdir,
-                        run_svc, flow_svc,
-                    )
+                    latest = run_svc.get_latest_step_run(run.id, run.current_step)
+                    if latest and latest.completed_at:
+                        snap_steps = self._get_snapshot_steps(run)
+                        if snap_steps:
+                            try:
+                                idx = snap_steps.index(run.current_step)
+                                pos = idx
+                            except ValueError:
+                                pos = latest.step_position
+                        else:
+                            pos = latest.step_position
+                        self._advance_to_next_step(
+                            run, task, working_path, use_task_subdir,
+                            run.current_step, pos, run.flow_name or "",
+                            run_svc, flow_svc, task_svc,
+                        )
+                    else:
+                        self._relaunch_current_step(
+                            run, task, working_path, use_task_subdir,
+                            run_svc, flow_svc,
+                        )
 
         pending = run_svc.get_pending(project.id)
         if pending:
@@ -237,14 +256,24 @@ class Daemon:
             run_svc.mark_step_completed(step_run.id, outcome="cancelled")
             return
 
+        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
+        prompt_file.unlink(missing_ok=True)
+
+        snap_step_def = self._get_snapshot_step(run, step_run.step_name)
+        step_type = (snap_step_def or {}).get("step_type", "agent")
+        if step_type in ("manual", "prompt"):
+            run_svc.mark_awaiting_user(step_run.id)
+            logger.info(
+                "Task %s run %s step '%s' awaiting user (%s)",
+                task.id, run.id, step_run.step_name, step_type,
+            )
+            return
+
         run_svc.mark_step_completed(step_run.id, outcome="completed")
         logger.info(
             "Task %s run %s step '%s' completed",
             task.id, run.id, step_run.step_name,
         )
-
-        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
-        prompt_file.unlink(missing_ok=True)
 
         if step_run.step_name == "__one_shot__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
@@ -447,11 +476,17 @@ class Daemon:
             return
 
         if run.one_shot:
-            self._launch_one_shot(
-                run, task, working_path, use_task_subdir,
-                run_svc, flow_svc,
-            )
-            return
+            if run.flow_name and flow_svc.has_human_steps(run.flow_name, project_id=run.project_id):
+                logger.warning(
+                    "Task %s run %s: one-shot disabled — flow '%s' contains manual/prompt steps",
+                    task.id, run.id, run.flow_name,
+                )
+            else:
+                self._launch_one_shot(
+                    run, task, working_path, use_task_subdir,
+                    run_svc, flow_svc,
+                )
+                return
 
         # Build and persist flow snapshot if not already done
         if not run.flow_snapshot:
@@ -566,6 +601,7 @@ class Daemon:
         execution_history = self._build_execution_history(run_svc, task.id, run.id)
         prompt_content = ctx.render_one_shot({
             "task_id": task.id,
+            "task_name": task.name or "",
             "task_description": task.description or "",
             "user_prompt": run.user_prompt or task.description or "",
             "worktree_path": wt_display,
@@ -609,18 +645,6 @@ class Daemon:
             run_svc.mark_completed(run.id, outcome="error")
             self._set_task_status(task.id, "stopped", run_svc)
 
-    @staticmethod
-    def _get_previous_step_log(run_svc: RunService, run_id: str) -> str:
-        """Read the tail of the most recently completed step's agent log."""
-        completed = [
-            sr for sr in run_svc.list_step_runs(run_id)
-            if sr.completed_at and sr.log_path
-        ]
-        if not completed:
-            return ""
-        last = completed[-1]
-        return ContextService.read_step_log_tail(last.log_path)
-
     def _launch_step(
         self, run, task, working_path: Path, use_task_subdir: bool,
         step_name: str, step_position: int, flow_name: str,
@@ -643,9 +667,14 @@ class Daemon:
             "flow.name": flow_name,
             "artifacts_output_dir": str(step_artifact_dir),
         }
+        for sr in run_svc.list_step_runs(run.id):
+            if sr.completed_at and sr.user_response:
+                step_vars[f"steps.{sr.step_name}.user_response"] = sr.user_response
         if step_content:
             from .gate import _interpolate
             step_content = _interpolate(step_content, step_vars)
+
+        step_type = (snap_step or {}).get("step_type") or getattr(step_obj, 'step_type', None) or "agent"
 
         # Resolve agent/model from alias
         alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "standard"
@@ -680,7 +709,17 @@ class Daemon:
         agent_svc = AgentService(project_dir, working_path)
 
         execution_history = self._build_execution_history(run_svc, task.id, run.id)
-        previous_step_log = self._get_previous_step_log(run_svc, run.id)
+
+        user_responses = []
+        for sr in run_svc.list_step_runs(run.id):
+            if sr.completed_at and sr.user_response:
+                snap_def = self._get_snapshot_step(run, sr.step_name)
+                sr_step_type = (snap_def or {}).get("step_type", "agent")
+                user_responses.append({
+                    "step_name": sr.step_name,
+                    "step_type": sr_step_type,
+                    "user_response": sr.user_response,
+                })
 
         resume_prompt = run.resume_prompt or ""
         if resume_prompt:
@@ -690,6 +729,7 @@ class Daemon:
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
             task_id=task.id,
+            task_name=task.name or "",
             task_description=task.description or "",
             user_prompt=run.user_prompt or task.description or "",
             step_name=step_name,
@@ -701,9 +741,10 @@ class Daemon:
             gate_failures=gate_failures,
             use_task_subdir=use_task_subdir,
             execution_history=execution_history,
-            previous_step_log=previous_step_log,
             resume_prompt=resume_prompt,
             attempt=attempt,
+            user_responses=user_responses,
+            step_type=step_type,
         )
 
         if launched:
@@ -758,11 +799,10 @@ class Daemon:
         project_dir = Path(task.project.path) / ".llmflows"
         agent_svc = AgentService(project_dir, working_path)
 
-        previous_step_log = self._get_previous_step_log(run_svc, run.id)
-
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
             task_id=task.id,
+            task_name=task.name or "",
             task_description=task.description or "",
             user_prompt=run.user_prompt or task.description or "",
             step_name="__summary__",
@@ -772,7 +812,6 @@ class Daemon:
             model=resolved_model,
             agent=resolved_agent,
             use_task_subdir=use_task_subdir,
-            previous_step_log=previous_step_log,
         )
 
         if launched:

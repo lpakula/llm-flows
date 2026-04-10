@@ -20,6 +20,11 @@ export function RunModal({
 
   const hasRuns = task.run_count > 0;
 
+  const selectedFlow = flows.find((f) => f.name === flow);
+  const hasHumanSteps = selectedFlow?.steps.some(
+    (s) => s.step_type === "manual" || s.step_type === "prompt",
+  ) ?? false;
+
   const submit = async () => {
     setSubmitting(true);
     try {
@@ -95,18 +100,22 @@ export function RunModal({
           </div>
 
           {/* One-shot */}
-          <div>
-            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+          <div className={hasHumanSteps ? "opacity-40" : ""}>
+            <label className={`flex items-center gap-2 text-sm text-gray-400 select-none ${hasHumanSteps ? "cursor-not-allowed" : "cursor-pointer"}`}>
               <input
                 type="checkbox"
-                checked={oneShot}
+                checked={oneShot && !hasHumanSteps}
                 onChange={(e) => setOneShot(e.target.checked)}
+                disabled={hasHumanSteps}
                 className="rounded"
               />
               One-shot
             </label>
             <p className="text-xs text-gray-600 mt-1 ml-5">
-              All flow steps and their gates are combined into a single prompt and handed to the agent at once. Gates are included as guidance but not enforced — no retries, no step-by-step validation. Uses the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model).
+              {hasHumanSteps
+                ? "Not available — this flow contains manual or prompt steps that require user interaction."
+                : <>All flow steps and their gates are combined into a single prompt and handed to the agent at once. Gates are included as guidance but not enforced — no retries, no step-by-step validation. Uses the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model).</>
+              }
             </p>
           </div>
         </div>

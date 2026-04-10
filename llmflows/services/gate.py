@@ -8,12 +8,13 @@ from pathlib import Path
 def _interpolate(text: str, variables: dict) -> str:
     """Replace {{key}} placeholders with values from variables dict.
 
-    Supports dotted keys like {{run.id}}, {{task.id}}, {{flow.name}}.
+    Supports dotted keys like {{run.id}}, {{task.id}}, {{flow.name}},
+    {{steps.step-name.user_response}}.
     """
     def replacer(match):
         key = match.group(1).strip()
         return variables.get(key, match.group(0))
-    return re.sub(r"\{\{(\s*[\w.]+\s*)\}\}", replacer, text)
+    return re.sub(r"\{\{(\s*[\w.\-]+\s*)\}\}", replacer, text)
 
 
 def evaluate_gates(

@@ -39,6 +39,7 @@ import type {
   DaemonConfig,
   DashboardEntry,
   StepRunInfo,
+  InboxItem,
   AgentInfo,
   AgentConfigEntry,
 } from "./types";
@@ -97,9 +98,13 @@ export const api = {
   pauseRun: (runId: string) => post<{ ok: boolean }>(`/api/runs/${runId}/pause`),
   resumeRun: (runId: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/resume`, { prompt }),
   completeStep: (stepRunId: string) => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/complete`),
+  respondToStep: (stepRunId: string, response = "") => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/respond`, { response }),
   retryStep: (runId: string, stepName: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/retry-step`, { step_name: stepName, prompt }),
   deleteRun: (runId: string) => del<{ ok: boolean }>(`/api/runs/${runId}`),
   getRunSteps: (runId: string) => get<{ steps: StepRunInfo[] }>(`/api/runs/${runId}/steps`),
+
+  // Inbox
+  getInbox: () => get<InboxItem[]>("/api/inbox"),
 
   // Queue
   getQueue: () => get<TaskRun[]>("/api/queue"),

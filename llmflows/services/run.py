@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import StepRun, Task, TaskRun
+from ..db.models import Project, StepRun, Task, TaskRun
 
 
 class RunService:
@@ -304,3 +304,90 @@ class RunService:
     def get(self, run_id: str) -> Optional[TaskRun]:
         """Get a run by ID."""
         return self.session.query(TaskRun).filter_by(id=run_id).first()
+
+    # ── Human step support ─────────────────────────────────────────────────────
+
+    def mark_awaiting_user(self, step_run_id: str) -> Optional[StepRun]:
+        """Transition a step to awaiting_user state (agent finished, waiting for human)."""
+        sr = self.session.query(StepRun).filter_by(id=step_run_id).first()
+        if not sr:
+            return None
+        sr.awaiting_user_at = datetime.now(timezone.utc)
+        self.session.commit()
+        return sr
+
+    def respond_to_step(self, step_run_id: str, response: str = "") -> Optional[StepRun]:
+        """User responds to an awaiting_user step, completing it."""
+        sr = self.session.query(StepRun).filter_by(id=step_run_id).first()
+        if not sr or not sr.awaiting_user_at:
+            return None
+        sr.user_response = response
+        sr.completed_at = datetime.now(timezone.utc)
+        sr.outcome = "completed"
+        self.session.commit()
+        return sr
+
+    def list_awaiting_user(self) -> list[dict]:
+        """Return all steps awaiting user action, with task/project context."""
+        from .context import ContextService
+
+        rows = (
+            self.session.query(StepRun, TaskRun, Task, Project)
+            .join(TaskRun, StepRun.run_id == TaskRun.id)
+            .join(Task, TaskRun.task_id == Task.id)
+            .join(Project, TaskRun.project_id == Project.id)
+            .filter(StepRun.awaiting_user_at.isnot(None))
+            .filter(StepRun.completed_at.is_(None))
+            .order_by(StepRun.awaiting_user_at)
+            .all()
+        )
+        results = []
+        for sr, run, task, project in rows:
+            step_type = "agent"
+            if run.flow_snapshot:
+                try:
+                    snap = json.loads(run.flow_snapshot)
+                    for s in snap.get("steps", []):
+                        if s["name"] == sr.step_name:
+                            step_type = s.get("step_type", "agent")
+                            break
+                except (ValueError, KeyError, TypeError):
+                    pass
+
+            user_message = ""
+            try:
+                artifacts_dir = ContextService.get_artifacts_dir(
+                    Path(project.path), task.id, run.id,
+                )
+                result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                if result_file.exists():
+                    user_message = result_file.read_text().strip()
+            except (PermissionError, OSError):
+                pass
+
+            results.append({
+                "step_run_id": sr.id,
+                "step_name": sr.step_name,
+                "step_type": step_type,
+                "step_position": sr.step_position,
+                "task_id": task.id,
+                "task_name": task.name or task.description[:60] if task.description else "",
+                "project_id": project.id,
+                "project_name": project.name,
+                "run_id": run.id,
+                "flow_name": sr.flow_name,
+                "prompt": sr.prompt or "",
+                "user_message": user_message,
+                "log_path": sr.log_path or "",
+                "awaiting_since": sr.awaiting_user_at.isoformat() if sr.awaiting_user_at else None,
+            })
+        return results
+
+    def get_latest_step_run(self, run_id: str, step_name: str) -> Optional[StepRun]:
+        """Get the most recent StepRun for a given step name in a run."""
+        return (
+            self.session.query(StepRun)
+            .filter_by(run_id=run_id, step_name=step_name)
+            .order_by(StepRun.started_at.desc())
+            .first()
+        )

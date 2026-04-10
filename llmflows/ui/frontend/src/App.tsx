@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import type { Project } from "@/api/types";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/views/Dashboard";
+import { InboxView } from "@/views/Inbox";
 import { ProjectView } from "@/views/Project";
 import { TaskView } from "@/views/Task";
 import { ProjectFlowsView } from "@/views/Flows";
@@ -60,6 +61,7 @@ function AppInner() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/inbox" element={<InboxView />} />
           <Route path="/project/:projectId" element={<ProjectView />} />
           <Route path="/project/:projectId/flows" element={<ProjectFlowsView />} />
           <Route path="/project/:projectId/task/:taskId" element={<TaskView />} />

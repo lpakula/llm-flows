@@ -6,8 +6,17 @@
       "description": "React/JS flow: execute, test dev server, take and verify screenshots (gated), commit.",
       "steps": [
         {
-          "name": "execute",
+          "name": "propose-solutions",
           "position": 0,
+          "step_type": "prompt",
+          "agent_alias": "high",
+          "allow_max": false,
+          "max_gate_retries": 3,
+          "content": "# PROPOSE SOLUTIONS\n\n## PURPOSE\n\nAnalyze the task and propose up to 3 different implementation approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Read the user prompt and task description carefully\n2. Explore the codebase to understand the current architecture, relevant files, and constraints\n3. Think of 2-3 distinct approaches to solve the task\n4. For each approach, describe:\n   - **Approach name** (short label)\n   - **What it does** (1-2 sentences)\n   - **Pros** (bullet points)\n   - **Cons** (bullet points)\n   - **Files affected** (list)\n5. Present them numbered (1, 2, 3) and ask the user which approach they prefer\n\n## RULES\n\n- Always propose at least 2 approaches\n- Be concrete — reference actual files and components\n- Keep each approach description concise\n- End with a clear question: \"Which approach would you like me to implement? (1, 2, or 3)\""
+        },
+        {
+          "name": "execute",
+          "position": 1,
           "agent_alias": "high",
           "allow_max": true,
           "max_gate_retries": 3,
@@ -15,7 +24,7 @@
         },
         {
           "name": "validate",
-          "position": 1,
+          "position": 2,
           "agent_alias": "standard",
           "allow_max": false,
           "max_gate_retries": 5,
@@ -26,7 +35,7 @@
         },
         {
           "name": "take-screenshots",
-          "position": 2,
+          "position": 3,
           "agent_alias": "standard",
           "allow_max": false,
           "max_gate_retries": 3,
@@ -36,8 +45,17 @@
           ]
         },
         {
+          "name": "manual-review",
+          "position": 4,
+          "step_type": "manual",
+          "agent_alias": "standard",
+          "allow_max": false,
+          "max_gate_retries": 3,
+          "content": "# MANUAL REVIEW\n\n## PURPOSE\n\nPrepare a review checklist for the user to manually verify the changes before committing.\n\n## WORKFLOW\n\n1. List all files that were changed in this task\n2. Summarize what was changed in each file\n3. Provide a step-by-step checklist for the user to verify:\n   - Open the app in the browser\n   - Check each affected page/component visually\n   - Verify responsive behavior if layout was changed\n   - Confirm no console errors in the browser DevTools\n4. Ask the user to confirm they have reviewed the changes\n\n## OUTPUT FORMAT\n\nPresent a clear checklist:\n```\n[ ] Open http://localhost:5173 in your browser\n[ ] Check the homepage renders correctly\n[ ] Open DevTools console — no errors\n[ ] Verify mobile viewport looks correct\n```"
+        },
+        {
           "name": "commit",
-          "position": 3,
+          "position": 5,
           "agent_alias": "fast",
           "allow_max": false,
           "max_gate_retries": 3,

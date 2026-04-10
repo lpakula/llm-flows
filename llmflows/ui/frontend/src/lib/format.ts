@@ -27,6 +27,7 @@ export function statusBadge(status: string): string {
     ({
       queued: "bg-blue-900/50 text-blue-300",
       running: "bg-yellow-900/50 text-yellow-300",
+      awaiting_user: "bg-amber-900/50 text-amber-300",
       paused: "bg-purple-900/50 text-purple-300",
       completed: "bg-green-900/50 text-green-300",
       cancelled: "bg-red-900/50 text-red-400",
@@ -41,6 +42,7 @@ export function statusBadge(status: string): string {
 
 export function statusDot(status: string, outcome?: string | null): string {
   if (status === "running") return "bg-yellow-400 animate-pulse";
+  if (status === "awaiting_user") return "bg-amber-400 animate-pulse";
   if (status === "paused") return "bg-purple-400";
   if (status === "queued") return "bg-blue-400";
   if (status === "interrupted" || status === "error" || status === "cancelled") return "bg-red-500";
@@ -57,6 +59,7 @@ export function displayStatus(run: { status: string; outcome: string | null }): 
   if (run.status === "completed" && run.outcome && run.outcome !== "completed") {
     return run.outcome;
   }
+  if (run.status === "awaiting_user") return "waiting";
   return run.status;
 }
 
@@ -77,6 +80,7 @@ export function stepBoxClass(status: string): string {
       completed: "bg-green-900/40 border-green-700 text-green-400",
       running: "bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold",
       current: "bg-yellow-900/40 border-yellow-600 text-yellow-300 font-semibold",
+      awaiting_user: "bg-amber-900/40 border-amber-600 text-amber-300 font-semibold",
       paused: "bg-purple-900/40 border-purple-700 text-purple-400",
       manual: "bg-blue-900/40 border-blue-700 text-blue-400",
       skipped: "bg-gray-900/30 border-gray-800 text-gray-600",
@@ -94,6 +98,7 @@ export function stepConnectorClass(status: string): string {
       completed: "bg-green-700",
       running: "bg-yellow-600",
       current: "bg-yellow-600",
+      awaiting_user: "bg-amber-600",
       skipped: "bg-gray-800",
       pending: "bg-gray-800",
     } as Record<string, string>)[status] || "bg-gray-800"

@@ -86,6 +86,7 @@ export interface FlowStep {
   gates: Gate[];
   ifs: Gate[];
   agent_alias: string;
+  step_type: string;
   allow_max: boolean;
   max_gate_retries: number;
 }
@@ -127,11 +128,14 @@ export interface StepRunDetail {
   prompt: string | null;
   started_at: string | null;
   completed_at: string | null;
+  awaiting_user_at: string | null;
   duration_seconds: number | null;
   attempt: number;
   agent: string;
   model: string;
   gate_failures?: GateFailure[];
+  user_response?: string;
+  user_message?: string;
 }
 
 export interface StepRunInfo {
@@ -142,8 +146,26 @@ export interface StepRunInfo {
   step_run: StepRunDetail | null;
   attempts?: StepRunDetail[];
   agent_alias?: string;
+  step_type?: string;
   allow_max?: boolean;
   max_gate_retries?: number;
+}
+
+export interface InboxItem {
+  step_run_id: string;
+  step_name: string;
+  step_type: "manual" | "prompt";
+  step_position: number;
+  task_id: string;
+  task_name: string;
+  project_id: string;
+  project_name: string;
+  run_id: string;
+  flow_name: string;
+  prompt: string;
+  user_message: string;
+  log_path: string;
+  awaiting_since: string;
 }
 
 export interface AgentInfo {

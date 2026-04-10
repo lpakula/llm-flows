@@ -53,6 +53,7 @@ class FlowService:
                     gates=_serialize_gates(step_data.get("gates")),
                     ifs=_serialize_json_list(step_data.get("ifs")),
                     agent_alias=step_data.get("agent_alias", "standard"),
+                    step_type=step_data.get("step_type", "agent"),
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                 )
@@ -69,6 +70,16 @@ class FlowService:
         if project_id:
             q = q.filter_by(project_id=project_id)
         return q.first()
+
+    def has_human_steps(self, flow_name: str, project_id: Optional[str] = None) -> bool:
+        """Return True if any step in the flow is manual or prompt."""
+        flow = self.get_by_name(flow_name, project_id)
+        if not flow:
+            return False
+        return any(
+            (s.step_type or "agent") in ("manual", "prompt")
+            for s in flow.steps
+        )
 
     def list_by_project(self, project_id: str) -> list[Flow]:
         return self.session.query(Flow).filter_by(project_id=project_id).order_by(Flow.name).all()
@@ -96,8 +107,8 @@ class FlowService:
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
         ifs: Optional[list] = None,
-        agent_alias: str = "standard", allow_max: bool = False,
-        max_gate_retries: int = 5,
+        agent_alias: str = "standard", step_type: str = "agent",
+        allow_max: bool = False, max_gate_retries: int = 5,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -111,8 +122,8 @@ class FlowService:
             flow_id=flow_id, name=name, position=position,
             content=content, gates=_serialize_gates(gates),
             ifs=_serialize_json_list(ifs),
-            agent_alias=agent_alias, allow_max=allow_max,
-            max_gate_retries=max_gate_retries,
+            agent_alias=agent_alias, step_type=step_type,
+            allow_max=allow_max, max_gate_retries=max_gate_retries,
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -188,6 +199,7 @@ class FlowService:
             {"name": s.name, "position": s.position, "content": s.content,
              "gates": s.get_gates(), "ifs": s.get_ifs(),
              "agent_alias": s.agent_alias or "standard",
+             "step_type": s.step_type or "agent",
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5}
             for s in sorted(source.steps, key=lambda s: s.position)
@@ -216,6 +228,7 @@ class FlowService:
                     "gates": s.get_gates(),
                     "ifs": s.get_ifs(),
                     "agent_alias": s.agent_alias or "standard",
+                    "step_type": s.step_type or "agent",
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                 }
@@ -255,6 +268,8 @@ class FlowService:
                     step_data["ifs"] = ifs
                 if s.agent_alias and s.agent_alias != "standard":
                     step_data["agent_alias"] = s.agent_alias
+                if s.step_type and s.step_type != "agent":
+                    step_data["step_type"] = s.step_type
                 if s.allow_max:
                     step_data["allow_max"] = True
                 if s.max_gate_retries is not None and s.max_gate_retries != 5:
@@ -299,6 +314,7 @@ class FlowService:
                         gates=_serialize_gates(step_data.get("gates")),
                         ifs=_serialize_json_list(step_data.get("ifs")),
                         agent_alias=step_data.get("agent_alias", "standard"),
+                        step_type=step_data.get("step_type", "agent"),
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                     )

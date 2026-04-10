@@ -10,6 +10,9 @@ Run `cd {{ worktree_path }}` before any other commands.
 ## Task
 
 **Task ID:** {{ task_id }}
+{%- if task_name %}
+**Title:** {{ task_name }}
+{%- endif %}
 
 > {{ task_description }}
 {%- if user_prompt and user_prompt != task_description %}
@@ -43,7 +46,7 @@ Run `cd {{ worktree_path }}` before any other commands.
 
 ---
 
-## Previous Step Artifacts
+## Previous Steps
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
@@ -63,19 +66,13 @@ Run `cd {{ worktree_path }}` before any other commands.
 {{ file.content }}
 ```
 {%- endfor %}
+{%- for ur in user_responses if ur.step_name == art.step_name %}
+
+#### ⚠ User {{ "Answer" if ur.step_type == "prompt" else "Confirmation" }}
+
+> {{ ur.user_response or "✓ Done" }}
 {%- endfor %}
-{%- endif %}
-{%- if previous_step_log %}
-
----
-
-## Previous Step Agent Log
-
-The following is the tail of the previous step's agent output. Use it to understand what was done, what decisions were made, and what issues were encountered.
-
-```
-{{ previous_step_log }}
-```
+{%- endfor %}
 {%- endif %}
 {%- if gate_failures %}
 
@@ -105,6 +102,33 @@ This step was attempted before but the following gate checks failed. Fix these i
 
 ---
 {%- if artifacts_output_dir %}
+{%- if step_type == "prompt" %}
+
+## Output for User
+
+You **must** write your output to: `{{ artifacts_output_dir }}/_result.md`
+
+This file will be shown directly to the user in a UI card. The user has a **text input field** to type a short answer and a **Submit** button.
+- Present your analysis, options, or question clearly — format for a human reader
+- Use headers, numbered lists, pros/cons tables where appropriate
+- End with a clear, specific question the user should answer (e.g. "Which approach do you prefer? (1, 2, or 3)")
+- The user will reply with a short text answer — frame your question so a brief response is sufficient
+- Do NOT include internal implementation notes — this is a user-facing document
+- Do NOT ask the user to reply in a thread, tracker, or any other channel — they answer directly in the UI
+{%- elif step_type == "manual" %}
+
+## Instructions for User
+
+You **must** write your output to: `{{ artifacts_output_dir }}/_result.md`
+
+This file will be shown to the user as a checklist of actions to perform manually. The user has a single **"Mark as Done"** button — there is no text reply.
+- Write clear, numbered steps the user must follow
+- Be specific — include exact commands, URLs, paths, settings, screenshots
+- Each step should be independently verifiable
+- End with a simple confirmation line like "When all items above are verified, mark this step as done."
+- Do NOT ask the user to reply, respond, or write anything — they can only confirm completion
+- Do NOT include internal implementation notes — this is a user-facing document
+{%- else %}
 
 ## Output Artifacts
 
@@ -115,6 +139,7 @@ This file is the primary way context is passed to subsequent steps. Include:
 - **Key decisions** — any choices made, trade-offs, or alternatives considered
 - **Files changed** — list of files created or modified with brief descriptions
 - **State / context for next steps** — anything the next step needs to know
+{%- endif %}
 
 You may also save additional files (data, configs, test output) to `{{ artifacts_output_dir }}/`.
 {%- endif %}
