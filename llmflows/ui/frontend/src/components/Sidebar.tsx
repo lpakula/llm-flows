@@ -23,8 +23,8 @@ export function Sidebar() {
 
   const refreshInbox = useCallback(async () => {
     try {
-      const items = await api.getInbox();
-      setInboxCount(items.length);
+      const data = await api.getInbox();
+      setInboxCount(data.count);
     } catch { /* ignore */ }
   }, []);
   useEffect(() => { refreshInbox(); }, [refreshInbox]);

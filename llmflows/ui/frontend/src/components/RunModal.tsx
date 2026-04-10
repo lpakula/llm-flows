@@ -100,8 +100,8 @@ export function RunModal({
           </div>
 
           {/* One-shot */}
-          <div className={hasHumanSteps ? "opacity-40" : ""}>
-            <label className={`flex items-center gap-2 text-sm text-gray-400 select-none ${hasHumanSteps ? "cursor-not-allowed" : "cursor-pointer"}`}>
+          <div>
+            <label className={`flex items-center gap-2 text-sm select-none ${hasHumanSteps ? "cursor-not-allowed text-gray-600" : "cursor-pointer text-gray-400"}`}>
               <input
                 type="checkbox"
                 checked={oneShot && !hasHumanSteps}

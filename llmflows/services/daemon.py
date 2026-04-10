@@ -11,6 +11,7 @@ from typing import Optional
 
 from ..config import load_system_config, resolve_alias
 from ..db.database import get_session, reset_engine
+from ..db.models import Project
 from .agent import AgentService
 from .context import ContextService
 from .flow import FlowService
@@ -233,14 +234,19 @@ class Daemon:
 
         if agent_running:
             if self.run_timeout_minutes and step_run.started_at:
-                started = step_run.started_at
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                completed_time = sum(
+                    sr.duration_seconds for sr in run_svc.list_step_runs(run.id)
+                    if sr.id != step_run.id and sr.duration_seconds is not None
+                )
+                step_started = step_run.started_at
+                if step_started.tzinfo is None:
+                    step_started = step_started.replace(tzinfo=timezone.utc)
+                current_step_time = (datetime.now(timezone.utc) - step_started).total_seconds()
+                elapsed = completed_time + current_step_time
                 if elapsed > self.run_timeout_minutes * 60:
                     logger.warning(
-                        "Task %s run %s step '%s' timed out after %dm",
-                        task.id, run.id, step_run.step_name, int(elapsed / 60),
+                        "Task %s run %s timed out after %dm (step '%s')",
+                        task.id, run.id, int(elapsed / 60), step_run.step_name,
                     )
                     AgentService.kill_agent(
                         project.path,
@@ -269,10 +275,22 @@ class Daemon:
         prompt_file = Path.home() / ".llmflows" / "prompts" / f"{task.id}-{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
         prompt_file.unlink(missing_ok=True)
 
+        # Auto-publish step attachments to the shared task attachments directory.
+        project_root = Path(task.project.path)
+        step_artifacts = ContextService.get_artifacts_dir(project_root, task.id, run.id) / \
+            f"{step_run.step_position:02d}-{step_run.step_name}" / "attachments"
+        if step_artifacts.is_dir():
+            self._publish_attachments(step_artifacts, task.id)
+
         snap_step_def = self._get_snapshot_step(run, step_run.step_name)
         step_type = (snap_step_def or {}).get("step_type", "agent")
         if step_type in ("manual", "prompt"):
             run_svc.mark_awaiting_user(step_run.id)
+            run_svc.create_inbox_item(
+                type="awaiting_user", reference_id=step_run.id,
+                task_id=task.id, project_id=task.project_id,
+                title=f"{task.name or task.id} — {step_run.step_name} ({step_type})",
+            )
             logger.info(
                 "Task %s run %s step '%s' awaiting user (%s)",
                 task.id, run.id, step_run.step_name, step_type,
@@ -287,9 +305,10 @@ class Daemon:
 
         if step_run.step_name == "__one_shot__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
-            summary = ContextService.read_summary_artifact(artifacts_dir)
+            summary = ContextService.read_summary_artifact(artifacts_dir, task_id=task.id)
             logger.info("Task %s run %s one-shot completed", task.id, run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            self._maybe_create_completed_inbox(run, task, run_svc)
             task_svc.update(run.task_id, task_status="completed")
             return
 
@@ -407,9 +426,10 @@ class Daemon:
 
         if current_step_name == "__summary__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
-            summary = ContextService.read_summary_artifact(artifacts_dir)
+            summary = ContextService.read_summary_artifact(artifacts_dir, task_id=task.id)
             logger.info("Task %s run %s completed", task.id, run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            self._maybe_create_completed_inbox(run, task, run_svc)
             task_svc.update(run.task_id, task_status="completed")
             return
 
@@ -834,9 +854,35 @@ class Daemon:
             logger.error("Failed to launch summary step for task %s run %s", task.id, run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
             artifacts_dir = ContextService.get_artifacts_dir(Path(task.project.path), task.id, run.id)
-            summary = ContextService.read_summary_artifact(artifacts_dir)
+            summary = ContextService.read_summary_artifact(artifacts_dir, task_id=task.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            self._maybe_create_completed_inbox(run, task, run_svc)
             task_svc.update(task.id, task_status="completed")
+
+    @staticmethod
+    def _maybe_create_completed_inbox(run, task, run_svc: RunService) -> None:
+        """Create a completed_run inbox item if the project opts in."""
+        try:
+            project = run_svc.session.query(Project).filter_by(id=task.project_id).first()
+            if project and project.inbox_completed_runs is not False:
+                run_svc.create_inbox_item(
+                    type="completed_run", reference_id=run.id,
+                    task_id=task.id, project_id=task.project_id,
+                    title=task.name or task.id,
+                )
+        except Exception:
+            logger.debug("Failed to create completed inbox item for run %s", run.id, exc_info=True)
+
+    @staticmethod
+    def _publish_attachments(src_dir: Path, task_id: str) -> None:
+        """Copy files from a step's attachments/ subdirectory into the shared task attachments."""
+        dest_dir = Path.home() / ".llmflows" / "attachments" / task_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        import shutil
+        for f in src_dir.iterdir():
+            if f.is_file():
+                shutil.copy2(f, dest_dir / f.name)
+                logger.debug("Published attachment %s for task %s", f.name, task_id)
 
     def _start_run(
         self, run, task_svc: TaskService, run_svc: RunService,

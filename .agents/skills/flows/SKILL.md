@@ -184,6 +184,57 @@ Example usage in a gate:
 }
 ```
 
+## Step Types
+
+Each step has a `step_type` that controls how the daemon handles it after the agent finishes.
+
+### `"agent"` (default)
+
+A normal agent step. The agent runs the prompt, and when it finishes the daemon evaluates gates. If gates pass, the flow advances to the next step automatically.
+
+### `"prompt"`
+
+A step where the agent proposes something and then **pauses for user input**. The agent runs the prompt content as usual (e.g. proposing multiple implementation approaches), but when the agent finishes, the daemon marks the step as "awaiting user" instead of evaluating gates. The step appears in the **Inbox** and the user must respond before the flow continues. The user's response is passed to the **next** step as context, so the agent can act on the user's choice.
+
+Use `"prompt"` when the flow needs a human decision before proceeding -- e.g. choosing between approaches, approving a plan, or providing additional input.
+
+```json
+{
+  "name": "propose-solutions",
+  "position": 0,
+  "step_type": "prompt",
+  "agent_alias": "high",
+  "content": "# PROPOSE SOLUTIONS\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Explore the codebase\n2. Think of 2-3 distinct approaches\n3. Present them numbered and ask which one to implement"
+}
+```
+
+### `"manual"`
+
+A step where the agent prepares a checklist or instructions, then **pauses for the user to confirm** they've completed a manual action. Like `"prompt"`, the agent runs the content and the daemon marks it as "awaiting user" when done. The difference is semantic: `"manual"` signals that the user needs to do something themselves (review the app in a browser, test on a device, approve a deploy), while `"prompt"` signals that the user needs to provide input to the agent.
+
+Use `"manual"` for human-in-the-loop checkpoints like visual review, manual QA, or approval gates.
+
+```json
+{
+  "name": "manual-review",
+  "position": 4,
+  "step_type": "manual",
+  "content": "# MANUAL REVIEW\n\n## PURPOSE\n\nPrepare a checklist for the user to verify changes before committing.\n\n## WORKFLOW\n\n1. List all changed files\n2. Provide a step-by-step verification checklist\n3. Ask the user to confirm"
+}
+```
+
+### How prompt/manual steps flow
+
+1. The daemon launches the agent with the step's content (same as `"agent"`)
+2. The agent runs and produces output (e.g. a proposal or checklist)
+3. When the agent finishes, instead of evaluating gates, the daemon marks the step as **awaiting user**
+4. The step appears in the **Inbox** with the agent's output
+5. The user reads the output and submits a response (a choice, confirmation, or free-text)
+6. The daemon marks the step as completed and advances to the next step
+7. The next step receives the user's response as part of its context
+
+**One-shot mode is automatically disabled** when a flow contains any `"prompt"` or `"manual"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
+
 ## Step Fields
 
 Each step supports these fields in the JSON format:
@@ -193,6 +244,7 @@ Each step supports these fields in the JSON format:
 | `name` | required | Step identifier |
 | `position` | required | Sequential index starting at 0 |
 | `content` | required | Markdown prompt |
+| `step_type` | `"agent"` | Step type: `"agent"`, `"prompt"`, or `"manual"` |
 | `agent_alias` | `"standard"` | Which agent config to use (e.g. `"fast"`, `"standard"`, `"high"`) |
 | `allow_max` | `false` | On the last gate retry, escalate to max-capability model |
 | `max_gate_retries` | `3` | How many times to retry a failed gate before failing the step |
@@ -216,6 +268,7 @@ The export/import format. One file can contain multiple flows.
         {
           "name": "step-name",
           "position": 0,
+          "step_type": "agent",
           "agent_alias": "standard",
           "allow_max": false,
           "max_gate_retries": 3,
@@ -241,6 +294,8 @@ Positions must be sequential starting at 0. Fields at their default values can b
 **Step granularity** — each step should have a single clear purpose. If a step has two unrelated goals, split it.
 
 **Artifacts** — if steps need to share state, use a file (e.g. `.llmflows/task.md`). Early steps write findings; later steps read them.
+
+**Attachments** — to publish files (screenshots, images, reports) so they appear in the task UI and run summary, save them to `{{artifacts_output_dir}}/attachments/`. When a step completes, the daemon automatically copies files from this subdirectory to the task's shared attachments. Image attachments (`.png`, `.jpg`, `.gif`, `.webp`) are rendered inline in the run summary with click-to-zoom; other file types appear as download links.
 
 **Keep steps self-contained** — the agent only sees one step at a time. Each step must include all context needed to execute it.
 
@@ -305,7 +360,7 @@ Built-in flows (seeded on first run):
 
 Example flows in `flows/` directory:
 - **`ripper-5`** — 7-step research-driven flow with artifact passing and multiple gates
-- **`react-js`** — 4-step: execute, test dev server, take & verify screenshots, commit
+- **`react-js`** — 6-step flow demonstrating prompt/manual steps: propose solutions (prompt) → execute → validate (gated) → take screenshots (gated) → manual review (manual) → commit (gated)
 
 Study these for patterns. Export them to see the full JSON:
 

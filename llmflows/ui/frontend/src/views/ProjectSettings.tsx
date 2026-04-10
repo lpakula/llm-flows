@@ -10,7 +10,7 @@ export function ProjectSettingsView() {
   const { reload: reloadApp } = useApp();
 
   const [project, setProject] = useState<Project | null>(null);
-  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1 });
+  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1, inbox_completed_runs: true });
   const [loading, setLoading] = useState(true);
 
   const [nameValue, setNameValue] = useState("");
@@ -20,6 +20,9 @@ export function ProjectSettingsView() {
 
   const [gitSaving, setGitSaving] = useState(false);
   const [gitSaved, setGitSaved] = useState(false);
+
+  const [inboxSaving, setInboxSaving] = useState(false);
+  const [inboxSaved, setInboxSaved] = useState(false);
 
   const [concurrencyValue, setConcurrencyValue] = useState(1);
   const [concurrencyDirty, setConcurrencyDirty] = useState(false);
@@ -76,6 +79,23 @@ export function ProjectSettingsView() {
       setSettings({ ...settings, is_git_repo: !next });
     }
     setGitSaving(false);
+  };
+
+  const toggleInboxCompleted = async () => {
+    if (!projectId) return;
+    const next = !settings.inbox_completed_runs;
+    setSettings({ ...settings, inbox_completed_runs: next });
+    setInboxSaving(true);
+    try {
+      const updated = await api.updateProjectSettings(projectId, { inbox_completed_runs: next });
+      setSettings(updated);
+      setInboxSaved(true);
+      setTimeout(() => setInboxSaved(false), 2000);
+    } catch (e) {
+      console.error("Failed to update inbox setting:", e);
+      setSettings({ ...settings, inbox_completed_runs: !next });
+    }
+    setInboxSaving(false);
   };
 
   const saveConcurrency = async () => {
@@ -184,7 +204,7 @@ export function ProjectSettingsView() {
             </tr>
 
             {/* Max concurrent tasks */}
-            <tr className="bg-gray-900">
+            <tr className="bg-gray-900 border-b border-gray-800">
               <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Max Concurrent Tasks</td>
               <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">How many tasks can be in the In Progress column at the same time</td>
               <td className="px-4 py-3">
@@ -209,6 +229,25 @@ export function ProjectSettingsView() {
                     {concurrencySaving ? "Saving..." : "Save"}
                   </button>
                 )}
+              </td>
+            </tr>
+            {/* Inbox completed runs */}
+            <tr className="bg-gray-900">
+              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Inbox Summaries</td>
+              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">
+                Show completed run summaries in the Inbox for this project
+              </td>
+              <td className="px-4 py-3">
+                <button
+                  onClick={toggleInboxCompleted}
+                  disabled={inboxSaving}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.inbox_completed_runs ? "bg-blue-600" : "bg-gray-700"}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.inbox_completed_runs ? "translate-x-4" : "translate-x-1"}`} />
+                </button>
+              </td>
+              <td className="px-4 py-3 text-right">
+                {inboxSaved && <span className="text-xs text-green-400">Saved</span>}
               </td>
             </tr>
           </tbody>

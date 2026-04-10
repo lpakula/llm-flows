@@ -142,6 +142,8 @@ This file is the primary way context is passed to subsequent steps. Include:
 {%- endif %}
 
 You may also save additional files (data, configs, test output) to `{{ artifacts_output_dir }}/`.
+
+To publish files (screenshots, images, etc.) so they appear in the task UI and run summary, save them to `{{ artifacts_output_dir }}/attachments/`. Files in this directory are automatically copied to the task's shared attachments when the step completes.
 {%- endif %}
 {%- if resume_prompt %}
 

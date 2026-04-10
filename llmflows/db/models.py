@@ -77,6 +77,7 @@ class Project(Base):
     path: str = Column(Text, nullable=False, unique=True)
     is_git_repo: bool = Column(Boolean, default=True)
     max_concurrent_tasks: int = Column(Integer, default=1)
+    inbox_completed_runs: bool = Column(Boolean, default=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
@@ -89,6 +90,7 @@ class Project(Base):
             "path": self.path,
             "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
+            "inbox_completed_runs": self.inbox_completed_runs if self.inbox_completed_runs is not None else True,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -284,6 +286,31 @@ class TaskRun(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration_seconds": self.duration_seconds,
+        }
+
+
+class InboxItem(Base):
+    __tablename__ = "inbox_items"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    type: str = Column(String(32), nullable=False)
+    reference_id: str = Column(String(6), nullable=False)
+    task_id: str = Column(String(6), ForeignKey("tasks.id"), nullable=False)
+    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
+    title: str = Column(Text, default="")
+    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    archived_at: datetime = Column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "reference_id": self.reference_id,
+            "task_id": self.task_id,
+            "project_id": self.project_id,
+            "title": self.title,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "archived_at": self.archived_at.isoformat() if self.archived_at else None,
         }
 
 

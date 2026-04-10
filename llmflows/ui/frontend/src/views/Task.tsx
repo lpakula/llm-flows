@@ -14,6 +14,7 @@ import type { Task, TaskRun, StepRunInfo, Flow, GateFailure } from "@/api/types"
 import { statusBadge, displayStatus, duration, formatSeconds, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { MessageSquare, UserCheck, Check } from "lucide-react";
 import { ImageLightbox } from "@/components/ImageLightbox";
+import { AttachmentsGrid } from "@/components/AttachmentsGrid";
 import { marked } from "marked";
 
 const DESC_PREVIEW_LINES = 4;
@@ -815,7 +816,7 @@ export function TaskView() {
                   )}
 
                   {/* Run summary */}
-                  {run.summary ? <RunSummarySection summary={run.summary} /> : null}
+                  {run.summary ? <RunSummarySection summary={run.summary} attachments={run.attachments || []} /> : null}
                             </div>
                           </td>
                         </tr>
@@ -883,7 +884,7 @@ function PropField({ label, children }: { label: string; children: ReactNode }) 
 
 const SUMMARY_READ_MORE_THRESHOLD = 500;
 
-function RunSummarySection({ summary }: { summary: string }) {
+function RunSummarySection({ summary, attachments }: { summary: string; attachments: { name: string; url: string }[] }) {
   const [expanded, setExpanded] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const long = summary.length > SUMMARY_READ_MORE_THRESHOLD;
@@ -922,9 +923,11 @@ function RunSummarySection({ summary }: { summary: string }) {
       <div className="relative">
         <div
           className={`${proseClass}${!expanded && long ? " max-h-48 overflow-hidden" : ""}`}
-          dangerouslySetInnerHTML={{ __html: html }}
           onClick={handleClick}
-        />
+        >
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+          <AttachmentsGrid files={attachments} />
+        </div>
         {!expanded && long ? (
           <div
             className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-gray-950 via-gray-950/70 to-transparent"

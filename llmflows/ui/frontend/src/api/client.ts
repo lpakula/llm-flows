@@ -39,7 +39,7 @@ import type {
   DaemonConfig,
   DashboardEntry,
   StepRunInfo,
-  InboxItem,
+  InboxResponse,
   AgentInfo,
   AgentConfigEntry,
 } from "./types";
@@ -104,7 +104,8 @@ export const api = {
   getRunSteps: (runId: string) => get<{ steps: StepRunInfo[] }>(`/api/runs/${runId}/steps`),
 
   // Inbox
-  getInbox: () => get<InboxItem[]>("/api/inbox"),
+  getInbox: () => get<InboxResponse>("/api/inbox"),
+  archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
 
   // Queue
   getQueue: () => get<TaskRun[]>("/api/queue"),

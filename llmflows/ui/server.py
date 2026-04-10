@@ -104,6 +104,7 @@ class DaemonConfigBody(BaseModel):
 class ProjectSettingsUpdate(BaseModel):
     is_git_repo: Optional[bool] = None
     max_concurrent_tasks: Optional[int] = None
+    inbox_completed_runs: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -330,6 +331,7 @@ async def get_project_settings(project_id: str):
         return {
             "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
             "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+            "inbox_completed_runs": project.inbox_completed_runs if project.inbox_completed_runs is not None else True,
         }
     finally:
         session.close()
@@ -348,6 +350,8 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
             updates["is_git_repo"] = body.is_git_repo
         if body.max_concurrent_tasks is not None:
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
+        if body.inbox_completed_runs is not None:
+            updates["inbox_completed_runs"] = body.inbox_completed_runs
         if updates:
             project_svc.update(project_id, **updates)
             session.refresh(project)
@@ -355,6 +359,7 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         return {
             "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
             "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+            "inbox_completed_runs": project.inbox_completed_runs if project.inbox_completed_runs is not None else True,
         }
     finally:
         session.close()
@@ -435,10 +440,25 @@ async def update_task(task_id: str, body: TaskUpdate):
 
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: str):
-    session, _, task_svc = _get_services()
+    session, project_svc, task_svc = _get_services()
     try:
-        if not task_svc.delete(task_id):
+        task = task_svc.get(task_id)
+        if not task:
             raise HTTPException(status_code=404, detail="Task not found")
+        project = project_svc.get(task.project_id)
+        project_path = project.path if project else None
+
+        task_svc.delete(task_id)
+
+        import shutil
+        if project_path:
+            artifacts_dir = Path(project_path) / ".llmflows" / task_id
+            if artifacts_dir.is_dir():
+                shutil.rmtree(artifacts_dir, ignore_errors=True)
+        attachments_dir = ATTACHMENTS_DIR / task_id
+        if attachments_dir.is_dir():
+            shutil.rmtree(attachments_dir, ignore_errors=True)
+
         return {"ok": True}
     finally:
         session.close()
@@ -447,6 +467,19 @@ async def delete_task(task_id: str):
 ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+@app.get("/api/tasks/{task_id}/attachments")
+async def list_attachments(task_id: str):
+    task_dir = ATTACHMENTS_DIR / task_id
+    if not task_dir.is_dir():
+        return []
+    files = [
+        {"name": f.name, "url": f"/api/attachments/{task_id}/{f.name}"}
+        for f in task_dir.iterdir() if f.is_file()
+    ]
+    files.sort(key=lambda x: x["name"])
+    return files
 
 
 @app.post("/api/tasks/{task_id}/attachments")
@@ -511,7 +544,19 @@ async def list_task_runs(task_id: str):
             raise HTTPException(status_code=404, detail="Task not found")
         run_svc = RunService(session)
         runs = run_svc.list_by_task(task_id)
-        return [r.to_dict() for r in runs]
+        result = [r.to_dict() for r in runs]
+
+        att_dir = ATTACHMENTS_DIR / task_id
+        attachments = []
+        if att_dir.is_dir():
+            attachments = sorted(
+                [{"name": f.name, "url": f"/api/attachments/{task_id}/{f.name}"}
+                 for f in att_dir.iterdir() if f.is_file()],
+                key=lambda x: x["name"],
+            )
+        for r in result:
+            r["attachments"] = attachments
+        return result
     finally:
         session.close()
 
@@ -1071,11 +1116,116 @@ async def dashboard():
 
 @app.get("/api/inbox")
 async def get_inbox():
-    """Return all steps awaiting user action across all projects."""
+    """Return inbox items (awaiting_user + completed_run), enriched with context."""
+    from ..services.context import ContextService
+    from ..db.models import Project as ProjectModel, StepRun, Task, TaskRun
     session, _, _ = _get_services()
     try:
         run_svc = RunService(session)
-        return run_svc.list_awaiting_user()
+        inbox_items = run_svc.list_inbox()
+
+        awaiting = []
+        completed = []
+
+        for item in inbox_items:
+            if item.type == "awaiting_user":
+                sr = session.query(StepRun).filter_by(id=item.reference_id).first()
+                if not sr or sr.completed_at:
+                    run_svc.archive_inbox_item(item.id)
+                    continue
+                run = session.query(TaskRun).filter_by(id=sr.run_id).first()
+                task = session.query(Task).filter_by(id=item.task_id).first()
+                project = session.query(ProjectModel).filter_by(id=item.project_id).first()
+                if not run or not task or not project:
+                    continue
+
+                step_type = "agent"
+                if run.flow_snapshot:
+                    try:
+                        snap = json.loads(run.flow_snapshot)
+                        for s in snap.get("steps", []):
+                            if s["name"] == sr.step_name:
+                                step_type = s.get("step_type", "agent")
+                                break
+                    except (ValueError, KeyError, TypeError):
+                        pass
+
+                user_message = ""
+                try:
+                    artifacts_dir = ContextService.get_artifacts_dir(
+                        Path(project.path), task.id, run.id,
+                    )
+                    result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                    if result_file.exists():
+                        user_message = result_file.read_text().strip()
+                except (PermissionError, OSError):
+                    pass
+
+                awaiting.append({
+                    "inbox_id": item.id,
+                    "step_run_id": sr.id,
+                    "step_name": sr.step_name,
+                    "step_type": step_type,
+                    "step_position": sr.step_position,
+                    "task_id": task.id,
+                    "task_name": task.name or "",
+                    "task_description": task.description or "",
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "run_id": run.id,
+                    "flow_name": sr.flow_name,
+                    "prompt": sr.prompt or "",
+                    "user_message": user_message,
+                    "log_path": sr.log_path or "",
+                    "awaiting_since": (sr.awaiting_user_at.isoformat() + "Z") if sr.awaiting_user_at else None,
+                })
+
+            elif item.type == "completed_run":
+                run = session.query(TaskRun).filter_by(id=item.reference_id).first()
+                task = session.query(Task).filter_by(id=item.task_id).first()
+                project = session.query(ProjectModel).filter_by(id=item.project_id).first()
+                if not run or not task or not project:
+                    continue
+
+                att_dir = ATTACHMENTS_DIR / item.task_id
+                attachments = []
+                if att_dir.is_dir():
+                    attachments = sorted(
+                        [{"name": f.name, "url": f"/api/attachments/{item.task_id}/{f.name}"}
+                         for f in att_dir.iterdir() if f.is_file()],
+                        key=lambda x: x["name"],
+                    )
+
+                completed.append({
+                    "inbox_id": item.id,
+                    "run_id": run.id,
+                    "task_id": task.id,
+                    "task_name": task.name or "",
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "flow_name": run.flow_name or "",
+                    "outcome": run.outcome or "",
+                    "summary": run.summary or "",
+                    "duration_seconds": run.duration_seconds,
+                    "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,
+                    "attachments": attachments,
+                })
+
+        return {"awaiting": awaiting, "completed": completed, "count": len(awaiting) + len(completed)}
+    finally:
+        session.close()
+
+
+@app.post("/api/inbox/{item_id}/archive")
+async def archive_inbox_item(item_id: str):
+    """Archive an inbox item (dismiss it)."""
+    session, _, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        ok = run_svc.archive_inbox_item(item_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Inbox item not found")
+        return {"ok": True}
     finally:
         session.close()
 
@@ -1113,7 +1263,7 @@ async def list_project_flows(project_id: str):
                 "description": f.description,
                 "step_count": len(f.steps),
                 "steps": [
-                    {"name": s.name, "position": s.position}
+                    {"name": s.name, "position": s.position, "step_type": s.step_type or "agent"}
                     for s in sorted(f.steps, key=lambda s: s.position)
                 ],
                 "created_at": f.created_at.isoformat() if f.created_at else None,

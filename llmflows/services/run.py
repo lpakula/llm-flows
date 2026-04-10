@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Project, StepRun, Task, TaskRun
+from ..db.models import InboxItem, Project, StepRun, Task, TaskRun
 
 
 class RunService:
@@ -335,6 +335,7 @@ class RunService:
         sr.user_response = response
         sr.completed_at = datetime.now(timezone.utc)
         sr.outcome = "completed"
+        self.archive_inbox_by_reference(step_run_id)
         self.session.commit()
         return sr
 
@@ -395,6 +396,39 @@ class RunService:
             })
         return results
 
+    def list_completed_for_inbox(self) -> list[dict]:
+        """Return recently completed runs with summaries, for projects that opt in."""
+        from datetime import timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        rows = (
+            self.session.query(TaskRun, Task, Project)
+            .join(Task, TaskRun.task_id == Task.id)
+            .join(Project, TaskRun.project_id == Project.id)
+            .filter(TaskRun.completed_at.isnot(None))
+            .filter(TaskRun.completed_at >= cutoff)
+            .filter(TaskRun.summary.isnot(None))
+            .filter(TaskRun.summary != "")
+            .filter(Project.inbox_completed_runs.isnot(False))
+            .order_by(TaskRun.completed_at.desc())
+            .all()
+        )
+        return [
+            {
+                "run_id": run.id,
+                "task_id": task.id,
+                "task_name": task.name or "",
+                "project_id": project.id,
+                "project_name": project.name,
+                "flow_name": run.flow_name or "",
+                "outcome": run.outcome or "",
+                "summary": run.summary or "",
+                "duration_seconds": run.duration_seconds,
+                "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,
+            }
+            for run, task, project in rows
+        ]
+
     def get_latest_step_run(self, run_id: str, step_name: str) -> Optional[StepRun]:
         """Get the most recent StepRun for a given step name in a run."""
         return (
@@ -402,4 +436,44 @@ class RunService:
             .filter_by(run_id=run_id, step_name=step_name)
             .order_by(StepRun.started_at.desc())
             .first()
+        )
+
+    # ── Inbox helpers ───────────────────────────────────────────────────────
+
+    def create_inbox_item(
+        self, type: str, reference_id: str, task_id: str, project_id: str, title: str = "",
+    ) -> InboxItem:
+        item = InboxItem(
+            type=type, reference_id=reference_id,
+            task_id=task_id, project_id=project_id, title=title,
+        )
+        self.session.add(item)
+        self.session.commit()
+        return item
+
+    def archive_inbox_item(self, item_id: str) -> bool:
+        item = self.session.query(InboxItem).filter_by(id=item_id).first()
+        if not item:
+            return False
+        self.session.delete(item)
+        self.session.commit()
+        return True
+
+    def archive_inbox_by_reference(self, reference_id: str) -> None:
+        """Delete all inbox items matching a reference_id (e.g. when user responds to a step)."""
+        (
+            self.session.query(InboxItem)
+            .filter_by(reference_id=reference_id)
+            .delete()
+        )
+        self.session.commit()
+
+    def count_inbox(self) -> int:
+        return self.session.query(InboxItem).count()
+
+    def list_inbox(self) -> list[InboxItem]:
+        return (
+            self.session.query(InboxItem)
+            .order_by(InboxItem.created_at.desc())
+            .all()
         )

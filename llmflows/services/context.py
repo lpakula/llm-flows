@@ -143,7 +143,7 @@ class ContextService:
         return artifacts
 
     @staticmethod
-    def read_summary_artifact(artifacts_dir: Path) -> str:
+    def read_summary_artifact(artifacts_dir: Path, **_kwargs) -> str:
         """Read the summary.md file from the artifacts root, if it exists."""
         summary_file = artifacts_dir / "summary.md"
         if not summary_file.exists():

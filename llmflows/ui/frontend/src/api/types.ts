@@ -8,6 +8,7 @@ export interface Project {
 export interface ProjectSettings {
   is_git_repo: boolean;
   max_concurrent_tasks: number;
+  inbox_completed_runs: boolean;
 }
 
 export interface AgentAlias {
@@ -66,6 +67,7 @@ export interface TaskRun {
   duration_seconds: number | null;
   task_name?: string;
   project_name?: string;
+  attachments?: { name: string; url: string }[];
 }
 
 export interface Flow {
@@ -153,6 +155,7 @@ export interface StepRunInfo {
 }
 
 export interface InboxItem {
+  inbox_id: string;
   step_run_id: string;
   step_name: string;
   step_type: "manual" | "prompt";
@@ -168,6 +171,27 @@ export interface InboxItem {
   user_message: string;
   log_path: string;
   awaiting_since: string;
+}
+
+export interface CompletedRunItem {
+  inbox_id: string;
+  run_id: string;
+  task_id: string;
+  task_name: string;
+  project_id: string;
+  project_name: string;
+  flow_name: string;
+  outcome: string;
+  summary: string;
+  duration_seconds: number | null;
+  completed_at: string;
+  attachments?: { name: string; url: string }[];
+}
+
+export interface InboxResponse {
+  awaiting: InboxItem[];
+  completed: CompletedRunItem[];
+  count: number;
 }
 
 export interface AgentInfo {
