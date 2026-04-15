@@ -63,17 +63,6 @@ export function displayStatus(run: { status: string; outcome: string | null }): 
   return run.status;
 }
 
-export function typeColor(type: string): string {
-  return (
-    ({
-      feature: "text-blue-400",
-      fix: "text-red-400",
-      refactor: "text-yellow-400",
-      chore: "text-gray-400",
-    } as Record<string, string>)[type] || "text-gray-400"
-  );
-}
-
 export function stepBoxClass(status: string): string {
   return (
     ({

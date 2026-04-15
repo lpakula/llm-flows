@@ -154,6 +154,6 @@ class ContextService:
             return ""
 
     @staticmethod
-    def get_artifacts_dir(project_path: Path, task_id: str, run_id: str) -> Path:
+    def get_artifacts_dir(project_path: Path, run_id: str) -> Path:
         """Return the artifacts directory for a run, always under the main project root."""
-        return project_path / ".llmflows" / task_id / run_id / "artifacts"
+        return project_path / ".llmflows" / "runs" / run_id / "artifacts"

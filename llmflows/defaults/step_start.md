@@ -1,52 +1,16 @@
-# llmflows Task
+# llmflows Flow Run
 
 You are an autonomous AI agent executing a step of a larger workflow.
-{%- if worktree_path %}
 
-**Working directory:** `{{ worktree_path }}`
-Run `cd {{ worktree_path }}` before any other commands.
-{%- endif %}
+## Flow Run
 
-## Task
-
-**Task ID:** {{ task_id }}
-{%- if task_name %}
-**Title:** {{ task_name }}
-{%- endif %}
-
-> {{ task_description }}
-{%- if user_prompt and user_prompt != task_description %}
-
-### Additional Instructions
-
-> {{ user_prompt }}
-{%- endif %}
-{%- if execution_history %}
-
----
-
-## Previous Runs
-{%- if worktree_path %}
-
-> The worktree at `{{ worktree_path }}` contains changes from previous runs.
-{%- endif %}
-{%- for run in execution_history %}
-
-### Run {{ loop.index }} — {{ run.flow_name }} ({{ run.outcome }})
-{%- if run.user_prompt %}
-**Prompt:** {{ run.user_prompt }}
-{%- endif %}
-{%- if run.summary %}
-
-{{ run.summary | trim }}
-{%- endif %}
-{%- endfor %}
-{%- endif %}
+**Run ID:** {{ run_id }}
+**Flow:** {{ flow_name }}
 {%- if artifacts %}
 
 ---
 
-## Previous Steps
+## Previous Step Artifacts
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
@@ -65,12 +29,6 @@ Run `cd {{ worktree_path }}` before any other commands.
 ```
 {{ file.content }}
 ```
-{%- endfor %}
-{%- for ur in user_responses if ur.step_name == art.step_name %}
-
-#### ⚠ User {{ "Answer" if ur.step_type == "prompt" else "Confirmation" }}
-
-> {{ ur.user_response or "✓ Done" }}
 {%- endfor %}
 {%- endfor %}
 {%- endif %}
@@ -94,6 +52,30 @@ This step was attempted before but the following gate checks failed. Fix these i
 {%- endfor %}
 {%- endif %}
 
+{%- if project_variables %}
+
+---
+
+## Environment Variables
+
+The following project variables are available as environment variables in this session:
+
+{% for key, value in project_variables.items() -%}
+- `{{ key }}`: `{{ value }}`
+{% endfor %}
+{%- endif %}
+{%- if skills %}
+
+---
+
+## Skills
+
+Read each skill file and follow its instructions before starting the step.
+{%- for skill in skills %}
+- **{{ skill.name }}** — {{ skill.description or "No description" }} → `{{ skill.path }}`
+{%- endfor %}
+{%- endif %}
+
 ---
 
 ## Current Step: {{ step_name }}
@@ -101,38 +83,25 @@ This step was attempted before but the following gate checks failed. Fix these i
 {{ step_content }}
 
 ---
-{%- if artifacts_output_dir %}
-{%- if step_type == "prompt" %}
+{%- if artifacts_dir %}
+{%- if step_type == "manual" %}
 
 ## Output for User
 
-You **must** write your output to: `{{ artifacts_output_dir }}/_result.md`
+You **must** write your output to: `{{ artifacts_dir }}/_result.md`
 
-This file will be shown directly to the user in a UI card. The user has a **text input field** to type a short answer and a **Submit** button.
+This file will be shown directly to the user in a UI card. The user has a **text input field** to type a response and a **Submit** button.
 - Present your analysis, options, or question clearly — format for a human reader
 - Use headers, numbered lists, pros/cons tables where appropriate
 - End with a clear, specific question the user should answer (e.g. "Which approach do you prefer? (1, 2, or 3)")
 - The user will reply with a short text answer — frame your question so a brief response is sufficient
 - Do NOT include internal implementation notes — this is a user-facing document
 - Do NOT ask the user to reply in a thread, tracker, or any other channel — they answer directly in the UI
-{%- elif step_type == "manual" %}
-
-## Instructions for User
-
-You **must** write your output to: `{{ artifacts_output_dir }}/_result.md`
-
-This file will be shown to the user as a checklist of actions to perform manually. The user has a single **"Mark as Done"** button — there is no text reply.
-- Write clear, numbered steps the user must follow
-- Be specific — include exact commands, URLs, paths, settings, screenshots
-- Each step should be independently verifiable
-- End with a simple confirmation line like "When all items above are verified, mark this step as done."
-- Do NOT ask the user to reply, respond, or write anything — they can only confirm completion
-- Do NOT include internal implementation notes — this is a user-facing document
 {%- else %}
 
 ## Output Artifacts
 
-You **must** write a `_result.md` file to: `{{ artifacts_output_dir }}/_result.md`
+You **must** write a `_result.md` file to: `{{ artifacts_dir }}/_result.md`
 
 This file is the primary way context is passed to subsequent steps. Include:
 - **What was done** — brief description of the work completed in this step
@@ -141,9 +110,9 @@ This file is the primary way context is passed to subsequent steps. Include:
 - **State / context for next steps** — anything the next step needs to know
 {%- endif %}
 
-You may also save additional files (data, configs, test output) to `{{ artifacts_output_dir }}/`.
+You may also save additional files (data, configs, test output) to `{{ artifacts_dir }}/`.
 
-To publish files (screenshots, images, etc.) so they appear in the task UI and run summary, save them to `{{ artifacts_output_dir }}/attachments/`. Files in this directory are automatically copied to the task's shared attachments when the step completes.
+To publish files (screenshots, images, etc.) so they appear in the run summary, save them to `{{ artifacts_dir }}/attachments/`. Files in this directory are automatically copied to the run's shared attachments when the step completes.
 {%- endif %}
 {%- if resume_prompt %}
 
@@ -152,6 +121,21 @@ To publish files (screenshots, images, etc.) so they appear in the task UI and r
 ## Additional Context
 
 {{ resume_prompt }}
+{%- endif %}
+
+{%- if user_responses %}
+
+---
+
+## User Responses
+
+These are responses from the user to previous manual steps. The most recent response is the most relevant.
+{%- for ur in user_responses %}
+
+### {{ ur.step_name }}
+
+> {{ ur.user_response or "✓ Done" }}
+{%- endfor %}
 {%- endif %}
 
 **When you have completed the instructions above, stop. Do not continue or run additional commands.**

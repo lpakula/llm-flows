@@ -294,9 +294,7 @@ class TelegramBot:
             buttons = []
 
             if event == "step.awaiting_user" and step_run_id:
-                if step_type == "prompt":
-                    buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
-                buttons.append(InlineKeyboardButton("Complete", callback_data=f"complete:{step_run_id}"))
+                buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
 
             if inbox_id:
                 buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
@@ -308,10 +306,9 @@ class TelegramBot:
 
         att_files: list[Path] = []
         if event == "run.completed":
-            task_id = payload.get("task_id")
             run_id = payload.get("run_id")
-            if task_id and run_id:
-                att_dir = Path.home() / ".llmflows" / "attachments" / task_id / run_id
+            if run_id:
+                att_dir = Path.home() / ".llmflows" / "attachments" / run_id
                 if att_dir.is_dir():
                     for f in sorted(att_dir.iterdir()):
                         if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
@@ -354,25 +351,23 @@ class TelegramBot:
 
     @staticmethod
     def _format_notification(event: str, payload: dict) -> str | None:
-        task = payload.get("task_name", "?")
+        name = payload.get("flow_name") or "?"
 
         if event == "run.completed":
             outcome = payload.get("outcome", "completed")
             summary = payload.get("summary")
-            text = f"**{task}** — {outcome}"
+            text = f"**{name}** — {outcome}"
             if summary:
                 text += f"\n\n{summary}"
             return text
 
         if event == "run.timeout":
             mins = payload.get("timeout_minutes", "?")
-            return f"**{task}** timed out after {mins}min."
+            return f"**{name}** timed out after {mins}min."
 
         if event == "step.awaiting_user":
             step_name = payload.get("step_name", "?")
-            step_type = payload.get("step_type", "manual")
-            label = "needs your input" if step_type == "prompt" else "requires manual action"
-            text = f"**{task}** — step *{step_name}* {label}."
+            text = f"**{name}** — step *{step_name}* needs your input."
             user_message = payload.get("user_message")
             if user_message:
                 text += f"\n\n{user_message}"

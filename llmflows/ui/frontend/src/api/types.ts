@@ -8,7 +8,6 @@ export interface Project {
 export interface ProjectSettings {
   is_git_repo: boolean;
   max_concurrent_tasks: number;
-  inbox_completed_runs: boolean;
 }
 
 export interface AgentAlias {
@@ -21,41 +20,15 @@ export interface AgentAlias {
   updated_at: string;
 }
 
-export interface Task {
+export interface FlowRun {
   id: string;
   project_id: string;
-  name: string;
-  description: string;
-  type: string;
-  default_flow_name: string | null;
-  task_status: string;
-  status: string;
-  worktree_branch: string;
-  worktree_path: string | null;
-  agent_active: boolean;
-  flow: string | null;
-  current_step: string | null;
-  run_id: string | null;
-  run_count: number;
-  last_run_status: string | null;
-  last_run_outcome: string | null;
-  last_run_started_at: string | null;
-  last_run_completed_at: string | null;
-  last_run_duration_seconds: number | null;
-  created_at: string;
-}
-
-export interface TaskRun {
-  id: string;
-  task_id: string;
-  project_id: string;
+  flow_id: string | null;
   flow_name: string | null;
-  run_flow_id: string | null;
   current_step: string | null;
   status: string;
   outcome: string | null;
   summary: string | null;
-  user_prompt: string;
   prompt: string;
   started_at: string | null;
   completed_at: string | null;
@@ -65,7 +38,6 @@ export interface TaskRun {
   paused_at: string | null;
   resume_prompt: string;
   duration_seconds: number | null;
-  task_name?: string;
   project_name?: string;
   attachments?: { name: string; url: string }[];
 }
@@ -92,6 +64,7 @@ export interface FlowStep {
   step_type: string;
   allow_max: boolean;
   max_gate_retries: number;
+  skills: string[];
 }
 
 export interface Gate {
@@ -118,11 +91,11 @@ export interface GatewayConfig {
 
 export interface DashboardEntry {
   project: Project;
-  task_counts: { running: number; queued: number; idle: number };
+  run_counts: { running: number; queued: number };
   queue_depth: number;
   active_runs: number;
-  executing: { run: TaskRun; agent_active: boolean }[];
-  recent_completions: TaskRun[];
+  executing: { run: FlowRun; agent_active: boolean }[];
+  recent_completions: FlowRun[];
 }
 
 export interface GateFailure {
@@ -164,11 +137,8 @@ export interface InboxItem {
   inbox_id: string;
   step_run_id: string;
   step_name: string;
-  step_type: "manual" | "prompt";
+  step_type: "manual";
   step_position: number;
-  task_id: string;
-  task_name: string;
-  task_description: string;
   project_id: string;
   project_name: string;
   run_id: string;
@@ -182,8 +152,6 @@ export interface InboxItem {
 export interface CompletedRunItem {
   inbox_id: string;
   run_id: string;
-  task_id: string;
-  task_name: string;
   project_id: string;
   project_name: string;
   flow_name: string;
@@ -213,6 +181,13 @@ export interface AgentConfigEntry {
   agent: string;
   key: string;
   value: string;
+}
+
+export interface SkillInfo {
+  name: string;
+  path: string;
+  description: string;
+  compatibility: string;
 }
 
 export interface LogEntry {

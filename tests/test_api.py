@@ -11,7 +11,6 @@ from sqlalchemy.pool import StaticPool
 from llmflows.db.models import Base, Flow, FlowStep, Project
 from llmflows.services.flow import FlowService
 from llmflows.services.project import ProjectService
-from llmflows.services.task import TaskService
 from llmflows.ui.server import app
 
 
@@ -29,8 +28,9 @@ def api_db():
     setup_session = Session()
     project = Project(name="test-project", path="/tmp/test-project")
     setup_session.add(project)
+    setup_session.flush()
 
-    flow = Flow(name="default", description="Default flow")
+    flow = Flow(name="default", description="Default flow", project_id=project.id)
     setup_session.add(flow)
     setup_session.flush()
     step = FlowStep(flow_id=flow.id, name="research", position=0, content="# Research")
@@ -43,7 +43,7 @@ def api_db():
 
     def mock_get_services():
         s = Session()
-        return s, ProjectService(s), TaskService(s)
+        return s, ProjectService(s)
 
     with patch("llmflows.ui.server._get_services", mock_get_services):
         yield {"project_id": project_id, "flow_id": flow_id}
@@ -74,69 +74,10 @@ class TestProjectsAPI:
         assert response.status_code == 404
 
 
-class TestTasksAPI:
-    def test_create_task(self, client, api_db):
-        pid = api_db["project_id"]
-        response = client.post(
-            f"/api/projects/{pid}/tasks",
-            json={"title": "Do something", "description": "Details here"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == "Do something"
-        assert data["description"] == "Details here"
-        assert "status" not in data
-
-    def test_create_task_with_type(self, client, api_db):
-        pid = api_db["project_id"]
-        response = client.post(
-            f"/api/projects/{pid}/tasks",
-            json={"title": "Fix the bug", "type": "fix"},
-        )
-        assert response.status_code == 200
-        assert response.json()["type"] == "fix"
-
-    def test_list_tasks(self, client, api_db):
-        pid = api_db["project_id"]
-        client.post(f"/api/projects/{pid}/tasks", json={"title": "Task 1"})
-        client.post(f"/api/projects/{pid}/tasks", json={"title": "Task 2"})
-
-        response = client.get(f"/api/projects/{pid}/tasks")
-        assert response.status_code == 200
-        assert len(response.json()) >= 2
-
-    def test_delete_task(self, client, api_db):
-        pid = api_db["project_id"]
-        create_resp = client.post(
-            f"/api/projects/{pid}/tasks", json={"title": "Delete me"}
-        )
-        task_id = create_resp.json()["id"]
-
-        response = client.delete(f"/api/tasks/{task_id}")
-        assert response.status_code == 200
-
-    def test_delete_nonexistent(self, client):
-        response = client.delete("/api/tasks/nope")
-        assert response.status_code == 404
-
-    def test_update_task_description(self, client, api_db):
-        pid = api_db["project_id"]
-        create_resp = client.post(
-            f"/api/projects/{pid}/tasks", json={"title": "Old task"}
-        )
-        task_id = create_resp.json()["id"]
-
-        response = client.patch(
-            f"/api/tasks/{task_id}",
-            json={"description": "New desc"},
-        )
-        assert response.status_code == 200
-        assert response.json()["description"] == "New desc"
-
-
 class TestFlowsAPI:
     def test_list_flows(self, client, api_db):
-        response = client.get("/api/flows")
+        pid = api_db["project_id"]
+        response = client.get(f"/api/projects/{pid}/flows")
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 1
@@ -163,4 +104,26 @@ class TestDashboardAPI:
         data = response.json()
         assert len(data) >= 1
         assert "project" in data[0]
-        assert "task_counts" in data[0]
+        assert "run_counts" in data[0]
+
+
+class TestScheduleAPI:
+    def test_schedule_flow_run(self, client, api_db):
+        pid = api_db["project_id"]
+        fid = api_db["flow_id"]
+        response = client.post(
+            f"/api/projects/{pid}/schedule",
+            json={"flow_id": fid, "one_shot": False},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["flow_id"] == fid
+        assert data["project_id"] == pid
+
+    def test_schedule_flow_not_found(self, client, api_db):
+        pid = api_db["project_id"]
+        response = client.post(
+            f"/api/projects/{pid}/schedule",
+            json={"flow_id": "nope", "one_shot": False},
+        )
+        assert response.status_code == 404

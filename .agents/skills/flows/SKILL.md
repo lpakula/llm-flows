@@ -171,7 +171,7 @@ Step content, gate commands, gate messages, and IF commands support template var
 - `{{run.id}}` — current run ID
 - `{{task.id}}` — current task ID
 - `{{flow.name}}` — current flow name
-- `{{artifacts_output_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
+- `{{artifacts_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
 - `{{project.<KEY>}}` — project-level variable (set via `llmflows project var set KEY VALUE`)
 
 ### Project variables
@@ -205,8 +205,8 @@ Example usage in a gate:
 
 ```json
 {
-  "command": "ls {{artifacts_output_dir}}/*.png 2>/dev/null | grep -q .",
-  "message": "No screenshots found. Save at least one .png to {{artifacts_output_dir}}/ before advancing."
+  "command": "ls {{artifacts_dir}}/*.png 2>/dev/null | grep -q .",
+  "message": "No screenshots found. Save at least one .png to {{artifacts_dir}}/ before advancing."
 }
 ```
 
@@ -218,48 +218,33 @@ Each step has a `step_type` that controls how the daemon handles it after the ag
 
 A normal agent step. The agent runs the prompt, and when it finishes the daemon evaluates gates. If gates pass, the flow advances to the next step automatically.
 
-### `"prompt"`
+### `"manual"`
 
-A step where the agent proposes something and then **pauses for user input**. The agent runs the prompt content as usual (e.g. proposing multiple implementation approaches), but when the agent finishes, the daemon marks the step as "awaiting user" instead of evaluating gates. The step appears in the **Inbox** and the user must respond before the flow continues. The user's response is passed to the **next** step as context, so the agent can act on the user's choice.
+A step where the agent prepares output and then **pauses for user input**. The agent runs the prompt content as usual (e.g. proposing multiple implementation approaches, preparing a review checklist), but when the agent finishes, the daemon marks the step as "awaiting user" instead of evaluating gates. The step appears in the **Inbox** with a text input field where the user can respond before the flow continues. The user's response is passed to the **next** step as context.
 
-Use `"prompt"` when the flow needs a human decision before proceeding -- e.g. choosing between approaches, approving a plan, or providing additional input.
+Use `"manual"` when the flow needs a human decision or action before proceeding -- e.g. choosing between approaches, approving a plan, visual review, manual QA, or providing additional input.
 
 ```json
 {
   "name": "propose-solutions",
   "position": 0,
-  "step_type": "prompt",
+  "step_type": "manual",
   "agent_alias": "high",
   "content": "# PROPOSE SOLUTIONS\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Explore the codebase\n2. Think of 2-3 distinct approaches\n3. Present them numbered and ask which one to implement"
 }
 ```
 
-### `"manual"`
-
-A step where the agent prepares a checklist or instructions, then **pauses for the user to confirm** they've completed a manual action. Like `"prompt"`, the agent runs the content and the daemon marks it as "awaiting user" when done. The difference is semantic: `"manual"` signals that the user needs to do something themselves (review the app in a browser, test on a device, approve a deploy), while `"prompt"` signals that the user needs to provide input to the agent.
-
-Use `"manual"` for human-in-the-loop checkpoints like visual review, manual QA, or approval gates.
-
-```json
-{
-  "name": "manual-review",
-  "position": 4,
-  "step_type": "manual",
-  "content": "# MANUAL REVIEW\n\n## PURPOSE\n\nPrepare a checklist for the user to verify changes before committing.\n\n## WORKFLOW\n\n1. List all changed files\n2. Provide a step-by-step verification checklist\n3. Ask the user to confirm"
-}
-```
-
-### How prompt/manual steps flow
+### How manual steps flow
 
 1. The daemon launches the agent with the step's content (same as `"agent"`)
 2. The agent runs and produces output (e.g. a proposal or checklist)
 3. When the agent finishes, instead of evaluating gates, the daemon marks the step as **awaiting user**
-4. The step appears in the **Inbox** with the agent's output
-5. The user reads the output and submits a response (a choice, confirmation, or free-text)
+4. The step appears in the **Inbox** with the agent's output and a text input field
+5. The user reads the output and submits a response
 6. The daemon marks the step as completed and advances to the next step
 7. The next step receives the user's response as part of its context
 
-**One-shot mode is automatically disabled** when a flow contains any `"prompt"` or `"manual"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
+**One-shot mode is automatically disabled** when a flow contains any `"manual"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
 
 ## Step Fields
 
@@ -270,7 +255,7 @@ Each step supports these fields in the JSON format:
 | `name` | required | Step identifier |
 | `position` | required | Sequential index starting at 0 |
 | `content` | required | Markdown prompt |
-| `step_type` | `"agent"` | Step type: `"agent"`, `"prompt"`, or `"manual"` |
+| `step_type` | `"agent"` | Step type: `"agent"` or `"manual"` |
 | `agent_alias` | `"standard"` | Which agent config to use (e.g. `"fast"`, `"standard"`, `"high"`) |
 | `allow_max` | `false` | On the last gate retry, escalate to max-capability model |
 | `max_gate_retries` | `3` | How many times to retry a failed gate before failing the step |
@@ -321,7 +306,7 @@ Positions must be sequential starting at 0. Fields at their default values can b
 
 **Artifacts** — if steps need to share state, use a file (e.g. `.llmflows/task.md`). Early steps write findings; later steps read them.
 
-**Attachments** — to publish files (screenshots, images, reports) so they appear in the task UI and run summary, save them to `{{artifacts_output_dir}}/attachments/`. When a step completes, the daemon automatically copies files from this subdirectory to the task's shared attachments. Image attachments (`.png`, `.jpg`, `.gif`, `.webp`) are rendered inline in the run summary with click-to-zoom; other file types appear as download links.
+**Attachments** — to publish files (screenshots, images, reports) so they appear in the task UI and run summary, save them to `{{artifacts_dir}}/attachments/`. When a step completes, the daemon automatically copies files from this subdirectory to the task's shared attachments. Image attachments (`.png`, `.jpg`, `.gif`, `.webp`) are rendered inline in the run summary with click-to-zoom; other file types appear as download links.
 
 **Keep steps self-contained** — the agent only sees one step at a time. Each step must include all context needed to execute it.
 

@@ -8,11 +8,9 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep
-from ..defaults import get_defaults_dir
-
 
 def _serialize_json_list(value) -> str:
-    """Normalize a list (gates/ifs) to a JSON string for storage."""
+    """Normalize a list (gates/ifs/skills) to a JSON string for storage."""
     if value is None:
         return "[]"
     if isinstance(value, str):
@@ -56,6 +54,7 @@ class FlowService:
                     step_type=step_data.get("step_type", "agent"),
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
+                    skills=_serialize_json_list(step_data.get("skills")),
                 )
                 self.session.add(step)
 
@@ -72,12 +71,12 @@ class FlowService:
         return q.first()
 
     def has_human_steps(self, flow_name: str, project_id: Optional[str] = None) -> bool:
-        """Return True if any step in the flow is manual or prompt."""
+        """Return True if any step in the flow is a manual (human) step."""
         flow = self.get_by_name(flow_name, project_id)
         if not flow:
             return False
         return any(
-            (s.step_type or "agent") in ("manual", "prompt")
+            (s.step_type or "agent") == "manual"
             for s in flow.steps
         )
 
@@ -109,6 +108,7 @@ class FlowService:
         ifs: Optional[list] = None,
         agent_alias: str = "standard", step_type: str = "agent",
         allow_max: bool = False, max_gate_retries: int = 5,
+        skills: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -124,6 +124,7 @@ class FlowService:
             ifs=_serialize_json_list(ifs),
             agent_alias=agent_alias, step_type=step_type,
             allow_max=allow_max, max_gate_retries=max_gate_retries,
+            skills=_serialize_json_list(skills),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -201,7 +202,8 @@ class FlowService:
              "agent_alias": s.agent_alias or "standard",
              "step_type": s.step_type or "agent",
              "allow_max": bool(s.allow_max),
-             "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5}
+             "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
+             "skills": s.get_skills()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -212,7 +214,7 @@ class FlowService:
         )
 
     def build_flow_snapshot(self, flow_name: str, project_id: Optional[str] = None) -> Optional[dict]:
-        """Return a plain-dict snapshot of a flow (stored as JSON on TaskRun.flow_snapshot)."""
+        """Return a plain-dict snapshot of a flow (stored as JSON on FlowRun.flow_snapshot)."""
         source = self.get_by_name(flow_name, project_id)
         if not source:
             return None
@@ -231,18 +233,11 @@ class FlowService:
                     "step_type": s.step_type or "agent",
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
+                    "skills": s.get_skills(),
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
         }
-
-    def seed_defaults(self, project_id: str) -> None:
-        """Seed default flows from defaults/flows.json for a project. Idempotent."""
-        flows_file = get_defaults_dir() / "flows.json"
-        if not flows_file.exists():
-            return
-        data = json.loads(flows_file.read_text())
-        self._import_flows_data(data, project_id=project_id, skip_existing=True)
 
     def export_flows(self, project_id: str, path: Optional[Path] = None) -> dict:
         """Export all flows for a project to a dict (optionally write to file)."""
@@ -274,6 +269,9 @@ class FlowService:
                     step_data["allow_max"] = True
                 if s.max_gate_retries is not None and s.max_gate_retries != 5:
                     step_data["max_gate_retries"] = s.max_gate_retries
+                skills = s.get_skills()
+                if skills:
+                    step_data["skills"] = skills
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -317,6 +315,7 @@ class FlowService:
                         step_type=step_data.get("step_type", "agent"),
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
+                        skills=_serialize_json_list(step_data.get("skills")),
                     )
                     self.session.add(step)
             else:

@@ -1,45 +1,11 @@
-# llmflows Task
+# llmflows Flow Run
 
 You are an autonomous AI agent executing a multi-step workflow.
-{%- if worktree_path %}
 
-**Working directory:** `{{ worktree_path }}`
-Run `cd {{ worktree_path }}` before any other commands.
-{%- endif %}
+## Flow Run
 
-## Task
-
-**Task ID:** {{ task_id }}
-
-> {{ task_description }}
-{%- if user_prompt and user_prompt != task_description %}
-
-### Additional Instructions
-
-> {{ user_prompt }}
-{%- endif %}
-
-{%- if execution_history %}
-
----
-
-## Previous Runs
-{%- if worktree_path %}
-
-> The worktree at `{{ worktree_path }}` contains changes from previous runs.
-{%- endif %}
-{%- for run in execution_history %}
-
-### Run {{ loop.index }} — {{ run.flow_name }} ({{ run.outcome }})
-{%- if run.user_prompt %}
-**Prompt:** {{ run.user_prompt }}
-{%- endif %}
-{%- if run.summary %}
-
-{{ run.summary | trim }}
-{%- endif %}
-{%- endfor %}
-{%- endif %}
+**Run ID:** {{ run_id }}
+**Flow:** {{ flow_name }}
 
 ---
 
@@ -64,14 +30,8 @@ Execute the following steps in order:
 
 ## Output Artifacts
 
-Save outputs to: `{{ artifacts_output_dir }}/`
+Save outputs to: `{{ artifacts_dir }}/`
 
 Use a subdirectory per step (e.g. `00-step-name/`, `01-step-name/`).
-{%- if user_prompt and user_prompt != task_description %}
-
----
-
-**Reminder:** {{ user_prompt }}
-{%- endif %}
 
 **When you have completed ALL steps above, stop.**

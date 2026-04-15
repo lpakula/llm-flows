@@ -10,19 +10,13 @@ export function ProjectSettingsView() {
   const { reload: reloadApp } = useApp();
 
   const [project, setProject] = useState<Project | null>(null);
-  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1, inbox_completed_runs: true });
+  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1 });
   const [loading, setLoading] = useState(true);
 
   const [nameValue, setNameValue] = useState("");
   const [nameDirty, setNameDirty] = useState(false);
   const [nameSaving, setNameSaving] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
-
-  const [gitSaving, setGitSaving] = useState(false);
-  const [gitSaved, setGitSaved] = useState(false);
-
-  const [inboxSaving, setInboxSaving] = useState(false);
-  const [inboxSaved, setInboxSaved] = useState(false);
 
   const [concurrencyValue, setConcurrencyValue] = useState(1);
   const [concurrencyDirty, setConcurrencyDirty] = useState(false);
@@ -72,40 +66,6 @@ export function ProjectSettingsView() {
     setNameSaving(false);
   };
 
-  const toggleGitRepo = async () => {
-    if (!projectId) return;
-    const next = !settings.is_git_repo;
-    setSettings({ ...settings, is_git_repo: next });
-    setGitSaving(true);
-    try {
-      const updated = await api.updateProjectSettings(projectId, { is_git_repo: next });
-      setSettings(updated);
-      setGitSaved(true);
-      setTimeout(() => setGitSaved(false), 2000);
-    } catch (e) {
-      console.error("Failed to update project settings:", e);
-      setSettings({ ...settings, is_git_repo: !next });
-    }
-    setGitSaving(false);
-  };
-
-  const toggleInboxCompleted = async () => {
-    if (!projectId) return;
-    const next = !settings.inbox_completed_runs;
-    setSettings({ ...settings, inbox_completed_runs: next });
-    setInboxSaving(true);
-    try {
-      const updated = await api.updateProjectSettings(projectId, { inbox_completed_runs: next });
-      setSettings(updated);
-      setInboxSaved(true);
-      setTimeout(() => setInboxSaved(false), 2000);
-    } catch (e) {
-      console.error("Failed to update inbox setting:", e);
-      setSettings({ ...settings, inbox_completed_runs: !next });
-    }
-    setInboxSaving(false);
-  };
-
   const saveConcurrency = async () => {
     if (!projectId) return;
     const val = Math.max(1, concurrencyValue);
@@ -124,7 +84,7 @@ export function ProjectSettingsView() {
   };
 
   const deleteProject = async () => {
-    if (!project || !confirm(`Delete project "${project.name}"? All tasks and runs will be lost.`)) return;
+    if (!project || !confirm(`Delete project "${project.name}"? All runs and flows will be lost.`)) return;
     await api.deleteProject(project.id);
     reloadApp();
     navigate("/");
@@ -180,7 +140,7 @@ export function ProjectSettingsView() {
           onClick={() => navigate(`/project/${projectId}`)}
           className="text-xs text-gray-500 hover:text-gray-300 mb-3 block"
         >
-          &larr; Back to tasks
+          &larr; Back to board
         </button>
         <h2 className="text-xl font-semibold">Project Settings</h2>
         {project && (
@@ -227,33 +187,10 @@ export function ProjectSettingsView() {
               </td>
             </tr>
 
-            {/* Git repo */}
-            <tr className="bg-gray-900 border-b border-gray-800">
-              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Git Repository</td>
-              <td className="px-4 py-3 text-xs hidden md:table-cell">
-                <span className="text-gray-500">When enabled, agents run in isolated worktree branches. </span>
-                {!settings.is_git_repo && (
-                  <span className="text-yellow-400">Agents run directly in the project directory.</span>
-                )}
-              </td>
-              <td className="px-4 py-3">
-                <button
-                  onClick={toggleGitRepo}
-                  disabled={gitSaving}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.is_git_repo ? "bg-blue-600" : "bg-gray-700"}`}
-                >
-                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.is_git_repo ? "translate-x-4" : "translate-x-1"}`} />
-                </button>
-              </td>
-              <td className="px-4 py-3 text-right">
-                {gitSaved && <span className="text-xs text-green-400">Saved</span>}
-              </td>
-            </tr>
-
             {/* Max concurrent tasks */}
             <tr className="bg-gray-900 border-b border-gray-800">
-              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Max Concurrent Tasks</td>
-              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">How many tasks can be in the In Progress column at the same time</td>
+              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Max Concurrent Runs</td>
+              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">How many flow runs can be in progress at the same time</td>
               <td className="px-4 py-3">
                 <input
                   type="number"
@@ -278,25 +215,6 @@ export function ProjectSettingsView() {
                 )}
               </td>
             </tr>
-            {/* Inbox completed runs */}
-            <tr className="bg-gray-900">
-              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Inbox Summaries</td>
-              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">
-                Show completed run summaries in the Inbox for this project
-              </td>
-              <td className="px-4 py-3">
-                <button
-                  onClick={toggleInboxCompleted}
-                  disabled={inboxSaving}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.inbox_completed_runs ? "bg-blue-600" : "bg-gray-700"}`}
-                >
-                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.inbox_completed_runs ? "translate-x-4" : "translate-x-1"}`} />
-                </button>
-              </td>
-              <td className="px-4 py-3 text-right">
-                {inboxSaved && <span className="text-xs text-green-400">Saved</span>}
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -307,7 +225,7 @@ export function ProjectSettingsView() {
           <div>
             <h3 className="text-sm font-medium text-white">Variables</h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              Available in flow steps, gates, and IFs as <code className="text-gray-400">{"{{project.<KEY>}}"}</code>
+              Available in flow steps, gates, and IFs as <code className="text-gray-400">{"{{project.<KEY>}}"}</code>. Injected as environment variables into the agent runtime.
             </p>
           </div>
         </div>
@@ -413,7 +331,7 @@ export function ProjectSettingsView() {
         <div className="px-4 py-4 bg-gray-900 flex items-center justify-between">
           <div>
             <p className="text-sm text-white">Delete this project</p>
-            <p className="text-xs text-gray-500 mt-0.5">All tasks, runs, and flows associated with this project will be permanently deleted.</p>
+            <p className="text-xs text-gray-500 mt-0.5">All flow runs and flows associated with this project will be permanently deleted.</p>
           </div>
           <button
             onClick={deleteProject}

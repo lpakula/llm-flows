@@ -39,9 +39,9 @@ function del<T>(url: string) {
 import type {
   Project,
   ProjectSettings,
-  Task,
-  TaskRun,
+  FlowRun,
   Flow,
+  FlowStep,
   AgentAlias,
   DaemonStatus,
   DaemonConfig,
@@ -51,6 +51,7 @@ import type {
   AgentInfo,
   AgentConfigEntry,
   GatewayConfig,
+  SkillInfo,
 } from "./types";
 
 export const api = {
@@ -81,40 +82,18 @@ export const api = {
     patch<AgentAlias>(`/api/agent-aliases/${id}`, body),
   deleteAgentAlias: (id: string) => del<{ ok: boolean }>(`/api/agent-aliases/${id}`),
 
-  // Attachments
-  uploadAttachment: (taskId: string, file: File): Promise<{ url: string; filename: string }> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    return fetch(`/api/tasks/${taskId}/attachments`, { method: "POST", body: formData }).then((r) => {
-      if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
-      return r.json();
-    });
-  },
+  // Scheduling
+  scheduleFlow: (projectId: string, flowId: string, oneShot = false) =>
+    post<FlowRun>(`/api/projects/${projectId}/schedule`, { flow_id: flowId, one_shot: oneShot }),
 
-  // Tasks
-  listTasks: (projectId: string) => get<Task[]>(`/api/projects/${projectId}/tasks`),
-  createTask: (projectId: string, body: { title: string; description: string; type: string; default_flow_name?: string }) =>
-    post<Task>(`/api/projects/${projectId}/tasks`, body),
-  updateTask: (id: string, body: Partial<{ title: string; description: string; default_flow_name: string; task_status: string; type: string }>) =>
-    patch<Task>(`/api/tasks/${id}`, body),
-  deleteTask: (id: string) => del<{ ok: boolean }>(`/api/tasks/${id}`),
-  startTask: (
-    id: string,
-    body: {
-      flow?: string | null;
-      user_prompt: string;
-      one_shot: boolean;
-    },
-  ) => post<Task>(`/api/tasks/${id}/start`, body),
-
-  // Runs
-  listTaskRuns: (taskId: string) => get<TaskRun[]>(`/api/tasks/${taskId}/runs`),
+  // Flow Runs
+  listFlowRuns: (projectId: string) => get<FlowRun[]>(`/api/projects/${projectId}/runs`),
   stopRun: (runId: string) => post<{ ok: boolean; killed: boolean }>(`/api/runs/${runId}/stop`),
   pauseRun: (runId: string) => post<{ ok: boolean }>(`/api/runs/${runId}/pause`),
   resumeRun: (runId: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/resume`, { prompt }),
   completeStep: (stepRunId: string) => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/complete`),
   respondToStep: (stepRunId: string, response = "") => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/respond`, { response }),
-  retryStep: (runId: string, stepName: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/retry-step`, { step_name: stepName, prompt }),
+  retryStep: (runId: string, stepName: string) => post<{ ok: boolean }>(`/api/runs/${runId}/retry-step`, { step_name: stepName }),
   deleteRun: (runId: string) => del<{ ok: boolean }>(`/api/runs/${runId}`),
   getRunSteps: (runId: string) => get<{ steps: StepRunInfo[] }>(`/api/runs/${runId}/steps`),
 
@@ -123,7 +102,7 @@ export const api = {
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
 
   // Queue
-  getQueue: () => get<TaskRun[]>("/api/queue"),
+  getQueue: () => get<FlowRun[]>("/api/queue"),
 
   // Flows (project-scoped)
   listFlows: (projectId: string) => get<Flow[]>(`/api/projects/${projectId}/flows`),
@@ -147,6 +126,10 @@ export const api = {
     formData.append("file", file);
     return fetch(`/api/projects/${projectId}/flows/import`, { method: "POST", body: formData }).then((r) => r.json());
   },
+
+  // Skills
+  listSkills: (projectId: string) => get<SkillInfo[]>(`/api/projects/${projectId}/skills`),
+  getSkillContent: (projectId: string, name: string) => get<{ content: string }>(`/api/projects/${projectId}/skills/${encodeURIComponent(name)}/content`),
 
   // Daemon
   getDaemonStatus: () => get<DaemonStatus>("/api/daemon/status"),
@@ -172,5 +155,3 @@ export const api = {
   updateGatewayConfig: (body: Partial<GatewayConfig>) => patch<GatewayConfig>("/api/config/gateway", body),
 
 };
-
-import type { FlowStep } from "./types";

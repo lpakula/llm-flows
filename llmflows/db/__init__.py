@@ -1,7 +1,7 @@
 """Database module."""
 
 from .database import get_db, get_session, init_db, reset_engine
-from .models import Base, Flow, FlowStep, Project, StepRun, Task, TaskRun, TaskType
+from .models import Base, Flow, FlowRun, FlowStep, InboxItem, Project, StepRun
 
 __all__ = [
     "get_db",
@@ -10,10 +10,9 @@ __all__ = [
     "reset_engine",
     "Base",
     "Flow",
+    "FlowRun",
     "FlowStep",
+    "InboxItem",
     "Project",
     "StepRun",
-    "Task",
-    "TaskRun",
-    "TaskType",
 ]

@@ -1,4 +1,4 @@
-"""Run service -- manages TaskRun and StepRun lifecycle."""
+"""Run service -- manages FlowRun and StepRun lifecycle."""
 
 import json
 import shutil
@@ -8,62 +8,50 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import InboxItem, Project, StepRun, Task, TaskRun
+from ..db.models import FlowRun, InboxItem, Project, StepRun
 
 
 class RunService:
     def __init__(self, session: Session):
         self.session = session
 
-    def enqueue(self, project_id: str, task_id: str,
-                flow_name: Optional[str] = None,
-                user_prompt: str = "",
-                one_shot: bool = False) -> TaskRun:
-        """Create a TaskRun in the queue.
-
-        flow_name is the flow to use (None = prompt-only run).
-        user_prompt falls back to task.description when not provided.
-        """
-        task = self.session.query(Task).filter_by(id=task_id).first()
-        if not task:
-            raise ValueError(f"Task '{task_id}' not found")
-
-        run = TaskRun(
+    def enqueue(self, project_id: str, flow_id: str,
+                one_shot: bool = False) -> FlowRun:
+        """Create a FlowRun in the queue."""
+        run = FlowRun(
             project_id=project_id,
-            task_id=task_id,
-            flow_name=flow_name,
-            user_prompt=user_prompt or task.description or "",
+            flow_id=flow_id,
             one_shot=one_shot,
         )
         self.session.add(run)
         self.session.commit()
         return run
 
-    def get_pending(self, project_id: str) -> Optional[TaskRun]:
-        """Return the oldest TaskRun with no started_at (daemon picks this up)."""
+    def get_pending(self, project_id: str) -> Optional[FlowRun]:
+        """Return the oldest FlowRun with no started_at (daemon picks this up)."""
         return (
-            self.session.query(TaskRun)
+            self.session.query(FlowRun)
             .filter_by(project_id=project_id)
-            .filter(TaskRun.started_at.is_(None))
-            .filter(TaskRun.completed_at.is_(None))
-            .order_by(TaskRun.created_at)
+            .filter(FlowRun.started_at.is_(None))
+            .filter(FlowRun.completed_at.is_(None))
+            .order_by(FlowRun.created_at)
             .first()
         )
 
-    def get_all_pending(self, project_id: str) -> list[TaskRun]:
-        """Return all pending TaskRuns for a project, oldest first."""
+    def get_all_pending(self, project_id: str) -> list[FlowRun]:
+        """Return all pending FlowRuns for a project, oldest first."""
         return (
-            self.session.query(TaskRun)
+            self.session.query(FlowRun)
             .filter_by(project_id=project_id)
-            .filter(TaskRun.started_at.is_(None))
-            .filter(TaskRun.completed_at.is_(None))
-            .order_by(TaskRun.created_at)
+            .filter(FlowRun.started_at.is_(None))
+            .filter(FlowRun.completed_at.is_(None))
+            .order_by(FlowRun.created_at)
             .all()
         )
 
-    def mark_started(self, run_id: str) -> Optional[TaskRun]:
+    def mark_started(self, run_id: str) -> Optional[FlowRun]:
         """Set started_at on the run."""
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             return None
         run.started_at = datetime.now(timezone.utc)
@@ -73,9 +61,9 @@ class RunService:
     def mark_completed(
         self, run_id: str, outcome: str = "completed",
         summary: str = "",
-    ) -> Optional[TaskRun]:
+    ) -> Optional[FlowRun]:
         """Set completed_at and outcome on the run."""
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             return None
 
@@ -87,18 +75,18 @@ class RunService:
         self.session.commit()
         return run
 
-    def pause(self, run_id: str) -> Optional[TaskRun]:
+    def pause(self, run_id: str) -> Optional[FlowRun]:
         """Pause an active run."""
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run or run.completed_at:
             return None
         run.paused_at = datetime.now(timezone.utc)
         self.session.commit()
         return run
 
-    def resume(self, run_id: str, prompt: str = "") -> Optional[TaskRun]:
+    def resume(self, run_id: str, prompt: str = "") -> Optional[FlowRun]:
         """Resume a paused run, optionally with an additional prompt."""
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run or not run.paused_at:
             return None
         run.paused_at = None
@@ -107,33 +95,30 @@ class RunService:
         self.session.commit()
         return run
 
-    def retry_step(self, run_id: str, step_name: str, prompt: str = "") -> Optional[TaskRun]:
+    def retry_step(self, run_id: str, step_name: str) -> Optional[FlowRun]:
         """Re-activate an interrupted run and re-launch a step from scratch.
 
         Deletes all StepRuns at or after the retried step's position, and cleans
         up the corresponding artifact directories so the daemon starts clean.
-        This prevents stale downstream StepRuns from confusing the daemon.
         """
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             return None
 
-        # Find the position of the step being retried
         pivot_step = self.session.query(StepRun).filter_by(
-            run_id=run_id, step_name=step_name,
+            flow_run_id=run_id, step_name=step_name,
         ).order_by(StepRun.step_position).first()
         pivot_position = pivot_step.step_position if pivot_step else 0
 
-        # Delete all StepRuns at or after this position (retried step + all downstream)
         steps_to_delete = self.session.query(StepRun).filter(
-            StepRun.run_id == run_id,
+            StepRun.flow_run_id == run_id,
             StepRun.step_position >= pivot_position,
         ).all()
 
-        if steps_to_delete and run.task and run.task.project:
+        if steps_to_delete and run.project:
             from .context import ContextService
             artifacts_dir = ContextService.get_artifacts_dir(
-                Path(run.task.project.path), run.task_id, run_id,
+                Path(run.project.path), run_id,
             )
             for sr in steps_to_delete:
                 step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}"
@@ -146,7 +131,7 @@ class RunService:
         run.completed_at = None
         run.outcome = None
         run.current_step = step_name
-        run.resume_prompt = prompt if prompt else ""
+        run.resume_prompt = ""
         self.session.commit()
         return run
 
@@ -160,14 +145,12 @@ class RunService:
         self.session.commit()
         return sr
 
-    def update_run_step(self, run_id: str, step_name: str, flow_name: str = "") -> Optional[TaskRun]:
-        """Update current_step/flow_name on a run (called by daemon during orchestration)."""
-        run = self.session.query(TaskRun).filter_by(id=run_id).first()
+    def update_run_step(self, run_id: str, step_name: str, flow_name: str = "") -> Optional[FlowRun]:
+        """Update current_step on a run (called by daemon during orchestration)."""
+        run = self.session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             return None
         run.current_step = step_name
-        if flow_name:
-            run.flow_name = flow_name
 
         try:
             completed = json.loads(run.steps_completed or "[]")
@@ -188,7 +171,7 @@ class RunService:
     ) -> StepRun:
         """Create a new StepRun and mark it started."""
         step_run = StepRun(
-            run_id=run_id,
+            flow_run_id=run_id,
             step_name=step_name,
             step_position=step_position,
             flow_name=flow_name,
@@ -231,10 +214,10 @@ class RunService:
         return sr
 
     def get_active_step(self, run_id: str) -> Optional[StepRun]:
-        """Get the currently running StepRun for a TaskRun."""
+        """Get the currently running StepRun for a FlowRun."""
         return (
             self.session.query(StepRun)
-            .filter_by(run_id=run_id)
+            .filter_by(flow_run_id=run_id)
             .filter(StepRun.started_at.isnot(None))
             .filter(StepRun.completed_at.is_(None))
             .order_by(StepRun.started_at.desc())
@@ -242,10 +225,10 @@ class RunService:
         )
 
     def list_step_runs(self, run_id: str) -> list[StepRun]:
-        """All StepRuns for a TaskRun, ordered by position."""
+        """All StepRuns for a FlowRun, ordered by position."""
         return (
             self.session.query(StepRun)
-            .filter_by(run_id=run_id)
+            .filter_by(flow_run_id=run_id)
             .order_by(StepRun.step_position, StepRun.started_at)
             .all()
         )
@@ -254,67 +237,38 @@ class RunService:
         """Get a StepRun by ID."""
         return self.session.query(StepRun).filter_by(id=step_run_id).first()
 
-    def get_active(self, task_id: str) -> Optional[TaskRun]:
-        """Get the current active run (no completed_at)."""
-        return (
-            self.session.query(TaskRun)
-            .filter_by(task_id=task_id)
-            .filter(TaskRun.completed_at.is_(None))
-            .order_by(TaskRun.created_at.desc())
-            .first()
-        )
-
-    def get_active_by_project(self, project_id: str) -> list[TaskRun]:
+    def get_active_by_project(self, project_id: str) -> list[FlowRun]:
         """All active runs for a project (started but not completed)."""
         return (
-            self.session.query(TaskRun)
+            self.session.query(FlowRun)
             .filter_by(project_id=project_id)
-            .filter(TaskRun.completed_at.is_(None))
-            .filter(TaskRun.started_at.isnot(None))
-            .order_by(TaskRun.created_at)
+            .filter(FlowRun.completed_at.is_(None))
+            .filter(FlowRun.started_at.isnot(None))
+            .order_by(FlowRun.created_at)
             .all()
         )
 
-    def get_history(self, task_id: str) -> list[TaskRun]:
-        """All completed runs for a task (execution memory)."""
-        return (
-            self.session.query(TaskRun)
-            .filter_by(task_id=task_id)
-            .filter(TaskRun.completed_at.isnot(None))
-            .order_by(TaskRun.created_at)
-            .all()
-        )
-
-    def list_by_task(self, task_id: str) -> list[TaskRun]:
-        """All runs for a task, newest first."""
-        return (
-            self.session.query(TaskRun)
-            .filter_by(task_id=task_id)
-            .order_by(TaskRun.created_at.desc())
-            .all()
-        )
-
-    def list_by_project(self, project_id: str) -> list[TaskRun]:
+    def list_by_project(self, project_id: str) -> list[FlowRun]:
         """All runs for a project (active + history)."""
         return (
-            self.session.query(TaskRun)
+            self.session.query(FlowRun)
             .filter_by(project_id=project_id)
-            .order_by(TaskRun.created_at)
+            .order_by(FlowRun.created_at)
             .all()
         )
 
-    def list_active(self) -> list[TaskRun]:
+    def list_active(self) -> list[FlowRun]:
         """All runs globally that are not completed, executing first."""
         return (
-            self.session.query(TaskRun)
-            .filter(TaskRun.completed_at.is_(None))
-            .order_by(TaskRun.started_at.desc().nullslast(), TaskRun.created_at)
+            self.session.query(FlowRun)
+            .filter(FlowRun.completed_at.is_(None))
+            .order_by(FlowRun.started_at.desc().nullslast(), FlowRun.created_at)
             .all()
         )
 
-    def get(self, run_id: str) -> Optional[TaskRun]:
+    def get(self, run_id: str) -> Optional[FlowRun]:
         """Get a run by ID."""
-        return self.session.query(TaskRun).filter_by(id=run_id).first()
+        return self.session.query(FlowRun).filter_by(id=run_id).first()
 
     # ── Human step support ─────────────────────────────────────────────────────
 
@@ -340,21 +294,20 @@ class RunService:
         return sr
 
     def list_awaiting_user(self) -> list[dict]:
-        """Return all steps awaiting user action, with task/project context."""
+        """Return all steps awaiting user action, with project context."""
         from .context import ContextService
 
         rows = (
-            self.session.query(StepRun, TaskRun, Task, Project)
-            .join(TaskRun, StepRun.run_id == TaskRun.id)
-            .join(Task, TaskRun.task_id == Task.id)
-            .join(Project, TaskRun.project_id == Project.id)
+            self.session.query(StepRun, FlowRun, Project)
+            .join(FlowRun, StepRun.flow_run_id == FlowRun.id)
+            .join(Project, FlowRun.project_id == Project.id)
             .filter(StepRun.awaiting_user_at.isnot(None))
             .filter(StepRun.completed_at.is_(None))
             .order_by(StepRun.awaiting_user_at)
             .all()
         )
         results = []
-        for sr, run, task, project in rows:
+        for sr, run, project in rows:
             step_type = "agent"
             if run.flow_snapshot:
                 try:
@@ -369,7 +322,7 @@ class RunService:
             user_message = ""
             try:
                 artifacts_dir = ContextService.get_artifacts_dir(
-                    Path(project.path), task.id, run.id,
+                    Path(project.path), run.id,
                 )
                 result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                 if result_file.exists():
@@ -382,13 +335,10 @@ class RunService:
                 "step_name": sr.step_name,
                 "step_type": step_type,
                 "step_position": sr.step_position,
-                "task_id": task.id,
-                "task_name": task.name or "",
-                "task_description": task.description or "",
                 "project_id": project.id,
                 "project_name": project.name,
                 "run_id": run.id,
-                "flow_name": sr.flow_name,
+                "flow_name": run.flow_name or "",
                 "prompt": sr.prompt or "",
                 "user_message": user_message,
                 "log_path": sr.log_path or "",
@@ -397,27 +347,23 @@ class RunService:
         return results
 
     def list_completed_for_inbox(self) -> list[dict]:
-        """Return recently completed runs with summaries, for projects that opt in."""
+        """Return recently completed runs with summaries."""
         from datetime import timedelta
 
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         rows = (
-            self.session.query(TaskRun, Task, Project)
-            .join(Task, TaskRun.task_id == Task.id)
-            .join(Project, TaskRun.project_id == Project.id)
-            .filter(TaskRun.completed_at.isnot(None))
-            .filter(TaskRun.completed_at >= cutoff)
-            .filter(TaskRun.summary.isnot(None))
-            .filter(TaskRun.summary != "")
-            .filter(Project.inbox_completed_runs.isnot(False))
-            .order_by(TaskRun.completed_at.desc())
+            self.session.query(FlowRun, Project)
+            .join(Project, FlowRun.project_id == Project.id)
+            .filter(FlowRun.completed_at.isnot(None))
+            .filter(FlowRun.completed_at >= cutoff)
+            .filter(FlowRun.summary.isnot(None))
+            .filter(FlowRun.summary != "")
+            .order_by(FlowRun.completed_at.desc())
             .all()
         )
         return [
             {
                 "run_id": run.id,
-                "task_id": task.id,
-                "task_name": task.name or "",
                 "project_id": project.id,
                 "project_name": project.name,
                 "flow_name": run.flow_name or "",
@@ -426,14 +372,14 @@ class RunService:
                 "duration_seconds": run.duration_seconds,
                 "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,
             }
-            for run, task, project in rows
+            for run, project in rows
         ]
 
     def get_latest_step_run(self, run_id: str, step_name: str) -> Optional[StepRun]:
         """Get the most recent StepRun for a given step name in a run."""
         return (
             self.session.query(StepRun)
-            .filter_by(run_id=run_id, step_name=step_name)
+            .filter_by(flow_run_id=run_id, step_name=step_name)
             .order_by(StepRun.started_at.desc())
             .first()
         )
@@ -441,11 +387,11 @@ class RunService:
     # ── Inbox helpers ───────────────────────────────────────────────────────
 
     def create_inbox_item(
-        self, type: str, reference_id: str, task_id: str, project_id: str, title: str = "",
+        self, type: str, reference_id: str, project_id: str, title: str = "",
     ) -> InboxItem:
         item = InboxItem(
             type=type, reference_id=reference_id,
-            task_id=task_id, project_id=project_id, title=title,
+            project_id=project_id, title=title,
         )
         self.session.add(item)
         self.session.commit()

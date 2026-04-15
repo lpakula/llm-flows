@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { CheckSquare, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio } from "lucide-react";
+import { LayoutDashboard, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -135,12 +135,16 @@ export function Sidebar() {
         {selectedProject && (
           <>
             <NavLink to={`/project/${selectedProject.id}`} end className={navClass}>
-              <CheckSquare size={14} className="flex-shrink-0" />
-              Tasks
+              <LayoutDashboard size={14} className="flex-shrink-0" />
+              Board
             </NavLink>
             <NavLink to={`/project/${selectedProject.id}/flows`} className={navClass}>
               <Workflow size={14} className="flex-shrink-0" />
               Flows
+            </NavLink>
+            <NavLink to={`/project/${selectedProject.id}/skills`} className={navClass}>
+              <BookOpen size={14} className="flex-shrink-0" />
+              Skills
             </NavLink>
             <NavLink to={`/project/${selectedProject.id}/settings`} className={navClass}>
               <Settings size={14} className="flex-shrink-0" />

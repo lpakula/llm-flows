@@ -15,13 +15,11 @@ from pydantic import BaseModel
 from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
-from ..db.models import TaskType
 from ..services.agent import AgentService
 from ..services.flow import FlowService
 from ..services.project import ProjectService
 from ..services.run import RunService
-from ..services.task import TaskService
-from ..services.worktree import WorktreeService
+from ..services.skill import SkillService
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -29,22 +27,6 @@ app = FastAPI(title="llmflows", version=__version__)
 
 
 # --- Pydantic models ---
-
-class TaskCreate(BaseModel):
-    title: str
-    description: str = ""
-    type: str = "feature"
-    default_flow_name: Optional[str] = None
-    task_status: str = "backlog"
-
-
-class TaskUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    default_flow_name: Optional[str] = None
-    task_status: Optional[str] = None
-    type: Optional[str] = None
-
 
 class FlowCreate(BaseModel):
     name: str
@@ -67,6 +49,7 @@ class StepCreate(BaseModel):
     step_type: str = "agent"
     allow_max: bool = False
     max_gate_retries: int = 3
+    skills: Optional[list[str]] = None
 
 
 class StepUpdate(BaseModel):
@@ -79,6 +62,7 @@ class StepUpdate(BaseModel):
     step_type: Optional[str] = None
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
+    skills: Optional[list[str]] = None
 
 
 class StepRespondBody(BaseModel):
@@ -89,9 +73,8 @@ class ReorderSteps(BaseModel):
     step_ids: list[str]
 
 
-class TaskStartBody(BaseModel):
-    flow: Optional[str] = None
-    user_prompt: str = ""
+class ScheduleBody(BaseModel):
+    flow_id: str
     one_shot: bool = False
 
 
@@ -110,7 +93,6 @@ class GatewayConfigBody(BaseModel):
 class ProjectSettingsUpdate(BaseModel):
     is_git_repo: Optional[bool] = None
     max_concurrent_tasks: Optional[int] = None
-    inbox_completed_runs: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -118,42 +100,12 @@ class ProjectSettingsUpdate(BaseModel):
 def _get_services():
     reset_engine()
     session = get_session()
-    return session, ProjectService(session), TaskService(session)
+    return session, ProjectService(session)
 
 
-def _enrich_task(task_dict: dict, project_path: str, session, project: Optional[object] = None) -> dict:
-    """Add dynamic fields from active TaskRun and run count."""
-    run_svc = RunService(session)
-    active_run = run_svc.get_active(task_dict["id"])
-    all_runs = run_svc.list_by_task(task_dict["id"])
+ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
 
-    is_git = (project.is_git_repo if project is not None else None)
-    if is_git is None:
-        is_git = True
-    branch = task_dict.get("worktree_branch", "")
-
-    task_dict["agent_active"] = bool(active_run) and AgentService.is_agent_running(
-        project_path,
-        branch if is_git else "",
-        task_id="" if is_git else task_dict["id"],
-    )
-    task_dict["flow"] = active_run.flow_name if active_run else None
-    task_dict["current_step"] = active_run.current_step if active_run else None
-    task_dict["run_id"] = active_run.id if active_run else None
-    task_dict["run_count"] = len(all_runs)
-    last_run = all_runs[0] if all_runs else None
-    task_dict["last_run_status"] = last_run.status if last_run else None
-    task_dict["last_run_outcome"] = last_run.outcome if last_run else None
-    task_dict["last_run_started_at"] = last_run.started_at.isoformat() if last_run and last_run.started_at else None
-    task_dict["last_run_completed_at"] = last_run.completed_at.isoformat() if last_run and last_run.completed_at else None
-    task_dict["last_run_duration_seconds"] = last_run.duration_seconds if last_run else None
-    if is_git and branch:
-        wt_svc = WorktreeService(project_path)
-        wt_path = wt_svc.get_worktree_path(branch)
-        task_dict["worktree_path"] = str(wt_path) if wt_path else None
-    else:
-        task_dict["worktree_path"] = None
-    return task_dict
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 # --- Root ---
@@ -284,7 +236,6 @@ async def start_daemon():
     else:
         cmd = [sys.executable, "-m", "llmflows", "daemon", "start"]
 
-    # Daemon is a long-running process — launch it detached and don't wait for it
     subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
@@ -292,7 +243,6 @@ async def start_daemon():
         start_new_session=True,
     )
 
-    # Give it a moment to write its PID file
     for _ in range(10):
         await asyncio.sleep(0.5)
         new_pid = read_pid_file()
@@ -306,7 +256,7 @@ async def start_daemon():
 
 @app.get("/api/projects")
 async def list_projects():
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         projects = project_svc.list_all()
         return [p.to_dict() for p in projects]
@@ -316,7 +266,7 @@ async def list_projects():
 
 @app.get("/api/projects/{project_id}")
 async def get_project(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -332,7 +282,7 @@ class ProjectUpdate(BaseModel):
 
 @app.patch("/api/projects/{project_id}")
 async def update_project(project_id: str, body: ProjectUpdate):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -349,7 +299,7 @@ async def update_project(project_id: str, body: ProjectUpdate):
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         if not project_svc.unregister(project_id):
             raise HTTPException(status_code=404, detail="Project not found")
@@ -360,7 +310,7 @@ async def delete_project(project_id: str):
 
 @app.get("/api/projects/{project_id}/settings")
 async def get_project_settings(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -368,7 +318,6 @@ async def get_project_settings(project_id: str):
         return {
             "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
             "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
-            "inbox_completed_runs": project.inbox_completed_runs if project.inbox_completed_runs is not None else True,
         }
     finally:
         session.close()
@@ -376,7 +325,7 @@ async def get_project_settings(project_id: str):
 
 @app.patch("/api/projects/{project_id}/settings")
 async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -387,8 +336,6 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
             updates["is_git_repo"] = body.is_git_repo
         if body.max_concurrent_tasks is not None:
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
-        if body.inbox_completed_runs is not None:
-            updates["inbox_completed_runs"] = body.inbox_completed_runs
         if updates:
             project_svc.update(project_id, **updates)
             session.refresh(project)
@@ -396,7 +343,6 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         return {
             "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
             "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
-            "inbox_completed_runs": project.inbox_completed_runs if project.inbox_completed_runs is not None else True,
         }
     finally:
         session.close()
@@ -404,7 +350,7 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
 
 @app.get("/api/projects/{project_id}/variables")
 async def get_project_variables(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -420,7 +366,7 @@ class VariableUpdate(BaseModel):
 
 @app.put("/api/projects/{project_id}/variables/{key}")
 async def set_project_variable(project_id: str, key: str, body: VariableUpdate):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -435,7 +381,7 @@ async def set_project_variable(project_id: str, key: str, body: VariableUpdate):
 
 @app.delete("/api/projects/{project_id}/variables/{key}")
 async def delete_project_variable(project_id: str, key: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -450,205 +396,59 @@ async def delete_project_variable(project_id: str, key: str):
         session.close()
 
 
-# --- Task endpoints ---
+# --- Schedule flow run ---
 
-@app.get("/api/projects/{project_id}/tasks")
-async def list_tasks(project_id: str):
-    session, project_svc, task_svc = _get_services()
+@app.post("/api/projects/{project_id}/schedule")
+async def schedule_flow_run(project_id: str, body: ScheduleBody):
+    """Schedule a new FlowRun for a flow."""
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        tasks = task_svc.list_by_project(project_id)
-        return [_enrich_task(t.to_dict(), project.path, session, project) for t in tasks]
-    finally:
-        session.close()
-
-
-@app.post("/api/projects/{project_id}/tasks")
-async def create_task(project_id: str, body: TaskCreate):
-    session, project_svc, task_svc = _get_services()
-    try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        try:
-            task_type = TaskType(body.type)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid type: {body.type}")
-
-        task = task_svc.create(
-            project_id=project_id,
-            name=body.title,
-            description=body.description,
-            task_type=task_type,
-            default_flow_name=body.default_flow_name or None,
-        )
-
-        return _enrich_task(task.to_dict(), project.path, session, project)
-    finally:
-        session.close()
-
-
-@app.patch("/api/tasks/{task_id}")
-async def update_task(task_id: str, body: TaskUpdate):
-    session, project_svc, task_svc = _get_services()
-    try:
-        task = task_svc.get(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        updates = {}
-        if body.title is not None:
-            updates["name"] = body.title
-        if body.description is not None:
-            updates["description"] = body.description
-        if body.default_flow_name is not None:
-            updates["default_flow_name"] = body.default_flow_name or None
-        if body.task_status is not None:
-            updates["task_status"] = body.task_status
-        if body.type is not None:
-            try:
-                updates["type"] = TaskType(body.type)
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid type: {body.type}")
-        if updates:
-            task = task_svc.update(task_id, **updates)
-
-        project = project_svc.get(task.project_id)
-        return _enrich_task(task.to_dict(), project.path, session, project)
-    finally:
-        session.close()
-
-
-@app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: str):
-    session, project_svc, task_svc = _get_services()
-    try:
-        task = task_svc.get(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        project = project_svc.get(task.project_id)
-        project_path = project.path if project else None
-
-        task_svc.delete(task_id)
-
-        import shutil
-        if project_path:
-            artifacts_dir = Path(project_path) / ".llmflows" / task_id
-            if artifacts_dir.is_dir():
-                shutil.rmtree(artifacts_dir, ignore_errors=True)
-        attachments_dir = ATTACHMENTS_DIR / task_id
-        if attachments_dir.is_dir():
-            shutil.rmtree(attachments_dir, ignore_errors=True)
-
-        return {"ok": True}
-    finally:
-        session.close()
-
-
-ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
-
-ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
-
-
-@app.get("/api/tasks/{task_id}/attachments")
-async def list_attachments(task_id: str):
-    task_dir = ATTACHMENTS_DIR / task_id
-    if not task_dir.is_dir():
-        return []
-    files = [
-        {"name": f.name, "url": f"/api/attachments/{task_id}/{f.name}"}
-        for f in task_dir.iterdir() if f.is_file()
-    ]
-    files.sort(key=lambda x: x["name"])
-    return files
-
-
-@app.post("/api/tasks/{task_id}/attachments")
-async def upload_attachment(task_id: str, file: UploadFile = File(...)):
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Only image files are supported")
-    task_dir = ATTACHMENTS_DIR / task_id
-    task_dir.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "image.png").suffix or ".png"
-    filename = f"{uuid.uuid4().hex}{ext}"
-    dest = task_dir / filename
-    dest.write_bytes(await file.read())
-    return {"url": f"/api/attachments/{task_id}/{filename}", "filename": filename}
-
-
-@app.get("/api/attachments/{task_id}/{run_id}/{filename}")
-async def serve_run_attachment(task_id: str, run_id: str, filename: str):
-    path = ATTACHMENTS_DIR / task_id / run_id / filename
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    return FileResponse(str(path))
-
-
-@app.get("/api/attachments/{task_id}/{filename}")
-async def serve_attachment(task_id: str, filename: str):
-    path = ATTACHMENTS_DIR / task_id / filename
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    return FileResponse(str(path))
-
-
-@app.post("/api/tasks/{task_id}/start")
-async def start_task(task_id: str, body: TaskStartBody):
-    """Enqueue a new run for a task."""
-    session, project_svc, task_svc = _get_services()
-    try:
-        task = task_svc.get(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
 
         run_svc = RunService(session)
         flow_svc = FlowService(session)
 
+        flow = flow_svc.get(body.flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+
         one_shot = body.one_shot
-        if one_shot and body.flow and flow_svc.has_human_steps(body.flow, project_id=task.project_id):
+        if one_shot and flow_svc.has_human_steps(flow.name, project_id=project_id):
             one_shot = False
 
-        run_svc.enqueue(
-            task.project_id, task_id,
-            flow_name=body.flow or None,
-            user_prompt=body.user_prompt or task.description or "",
-            one_shot=one_shot,
-        )
-        task_svc.update(task_id, task_status="queue")
-
-        project = project_svc.get(task.project_id)
-        task = task_svc.get(task_id)
-        return _enrich_task(task.to_dict(), project.path, session, project)
+        run = run_svc.enqueue(project_id, body.flow_id, one_shot=one_shot)
+        return run.to_dict()
     finally:
         session.close()
 
 
-@app.get("/api/tasks/{task_id}/runs")
-async def list_task_runs(task_id: str):
-    """Execution history for a task."""
-    session, _, task_svc = _get_services()
-    try:
-        task = task_svc.get(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        run_svc = RunService(session)
-        runs = run_svc.list_by_task(task_id)
-        result = [r.to_dict() for r in runs]
+# --- FlowRun endpoints ---
 
-        for r in result:
-            run_att_dir = ATTACHMENTS_DIR / task_id / r["id"]
+@app.get("/api/projects/{project_id}/runs")
+async def list_project_runs(project_id: str):
+    """All flow runs for a project (for the Board page)."""
+    session, project_svc = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        run_svc = RunService(session)
+        runs = run_svc.list_by_project(project_id)
+        result = []
+        for r in runs:
+            d = r.to_dict()
+            run_att_dir = ATTACHMENTS_DIR / r.id
             if run_att_dir.is_dir():
-                r["attachments"] = sorted(
-                    [{"name": f.name, "url": f"/api/attachments/{task_id}/{r['id']}/{f.name}"}
+                d["attachments"] = sorted(
+                    [{"name": f.name, "url": f"/api/attachments/{r.id}/{f.name}"}
                      for f in run_att_dir.iterdir() if f.is_file()],
                     key=lambda x: x["name"],
                 )
             else:
-                r["attachments"] = []
+                d["attachments"] = []
+            result.append(d)
         return result
     finally:
         session.close()
@@ -661,7 +461,7 @@ class ResumeBody(BaseModel):
 @app.post("/api/runs/{run_id}/pause")
 async def pause_run(run_id: str):
     """Pause an active run -- kills agent, marks as paused (not completed)."""
-    session, project_svc, task_svc = _get_services()
+    session, project_svc = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -670,15 +470,9 @@ async def pause_run(run_id: str):
         if run.completed_at:
             raise HTTPException(status_code=400, detail="Run is already completed")
 
-        task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
-        if task and project:
-            is_git = project.is_git_repo if project.is_git_repo is not None else True
-            AgentService.kill_agent(
-                project.path,
-                task.worktree_branch if is_git else "",
-                task_id="" if is_git else task.id,
-            )
+        if project:
+            AgentService.kill_agent(project.path, run_id=run.id)
 
         run_svc.pause(run_id)
         return {"ok": True}
@@ -689,7 +483,7 @@ async def pause_run(run_id: str):
 @app.post("/api/runs/{run_id}/resume")
 async def resume_run(run_id: str, body: ResumeBody):
     """Resume a paused run, optionally with an additional prompt."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -705,16 +499,15 @@ async def resume_run(run_id: str, body: ResumeBody):
 
 class RetryStepBody(BaseModel):
     step_name: str
-    prompt: str = ""
 
 
 @app.post("/api/runs/{run_id}/retry-step")
 async def retry_step(run_id: str, body: RetryStepBody):
     """Re-activate an interrupted run and re-run from a specific step."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
-        run = run_svc.retry_step(run_id, body.step_name, prompt=body.prompt)
+        run = run_svc.retry_step(run_id, body.step_name)
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
         return {"ok": True}
@@ -725,7 +518,7 @@ async def retry_step(run_id: str, body: RetryStepBody):
 @app.post("/api/step-runs/{step_run_id}/complete")
 async def complete_step_manually(step_run_id: str):
     """Manually mark a step as completed so the flow can advance."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         sr = run_svc.complete_step_manually(step_run_id)
@@ -738,8 +531,8 @@ async def complete_step_manually(step_run_id: str):
 
 @app.post("/api/runs/{run_id}/stop")
 async def stop_run(run_id: str):
-    """Stop or dequeue a run. If not yet started, deletes the run and returns the task to backlog."""
-    session, project_svc, task_svc = _get_services()
+    """Stop or dequeue a run."""
+    session, project_svc = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -748,27 +541,17 @@ async def stop_run(run_id: str):
         if run.completed_at:
             raise HTTPException(status_code=400, detail="Run is already completed")
 
-        # Queued but not yet picked up — just remove it and return task to backlog
         if not run.started_at:
-            task_svc.update(run.task_id, task_status="backlog")
             session.delete(run)
             session.commit()
             return {"ok": True, "killed": False, "dequeued": True}
 
-        # Mark cancelled BEFORE killing the agent so the daemon's next poll
-        # always sees completed_at set and skips gate evaluation.
         run_svc.mark_completed(run_id, outcome="cancelled")
 
-        task = task_svc.get(run.task_id)
         project = project_svc.get(run.project_id) if run.project_id else None
         killed = False
-        if task and project:
-            is_git = project.is_git_repo if project.is_git_repo is not None else True
-            killed = AgentService.kill_agent(
-                project.path,
-                task.worktree_branch if is_git else "",
-                task_id="" if is_git else task.id,
-            )
+        if project:
+            killed = AgentService.kill_agent(project.path, run_id=run.id)
 
         return {"ok": True, "killed": killed, "dequeued": False}
     finally:
@@ -777,11 +560,11 @@ async def stop_run(run_id: str):
 
 @app.delete("/api/runs/{run_id}")
 async def delete_run(run_id: str):
-    """Delete a completed or queued (not yet started) task run by ID."""
-    session, _, _ = _get_services()
+    """Delete a completed or queued (not yet started) flow run by ID."""
+    session, _ = _get_services()
     try:
-        from ..db.models import TaskRun
-        run = session.query(TaskRun).filter_by(id=run_id).first()
+        from ..db.models import FlowRun
+        run = session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
         if run.started_at and not run.completed_at:
@@ -796,10 +579,10 @@ async def delete_run(run_id: str):
 @app.get("/api/runs/{run_id}/steps")
 async def get_run_steps(run_id: str):
     """Return step progress for a run, including all retry attempts."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
-        from ..db.models import TaskRun
-        run = session.query(TaskRun).filter_by(id=run_id).first()
+        from ..db.models import FlowRun
+        run = session.query(FlowRun).filter_by(id=run_id).first()
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -823,12 +606,10 @@ async def get_run_steps(run_id: str):
                 })
             return {"steps": result}
 
-        # Group all step runs by step_name for retry history
         step_runs_by_name: dict[str, list] = {}
         for sr in step_runs:
             step_runs_by_name.setdefault(sr.step_name, []).append(sr)
 
-        # Latest step run per step (most recent attempt)
         step_run_map = {}
         for name, srs in step_runs_by_name.items():
             step_run_map[name] = max(srs, key=lambda s: s.started_at or s.created_at if hasattr(s, 'created_at') else s.started_at)
@@ -840,7 +621,6 @@ async def get_run_steps(run_id: str):
 
         result = []
 
-        # Resolve step list from snapshot (preferred) or live template
         snap_steps = []
         if run.flow_snapshot:
             try:
@@ -851,7 +631,6 @@ async def get_run_steps(run_id: str):
 
         step_sources = snap_steps or []
         if not step_sources and run.flow_name:
-            # Fallback: build step list from live template
             for sname in flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id):
                 obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
                 step_sources.append({
@@ -863,7 +642,7 @@ async def get_run_steps(run_id: str):
                 })
 
         from ..services.context import ContextService
-        project_path = Path(run.task.project.path) if run.task and run.task.project else None
+        project = run.project
 
         for position, step_src in enumerate(step_sources):
             step_name = step_src["name"]
@@ -873,10 +652,10 @@ async def get_run_steps(run_id: str):
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()
-                if sr.awaiting_user_at and not sr.completed_at and project_path:
+                if sr.awaiting_user_at and not sr.completed_at and project:
                     try:
                         artifacts_dir = ContextService.get_artifacts_dir(
-                            project_path, run.task_id, run_id,
+                            Path(project.path), run_id,
                         )
                         result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                         if result_file.exists():
@@ -899,7 +678,6 @@ async def get_run_steps(run_id: str):
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
 
-        # Add summary step if present
         summary_sr = step_run_map.get("__summary__")
         if summary_sr and not any(s["name"] == "__summary__" for s in result):
             result.append({
@@ -919,7 +697,7 @@ async def get_run_steps(run_id: str):
 @app.get("/api/step-runs/{step_run_id}/logs")
 async def stream_step_run_logs(step_run_id: str):
     """SSE endpoint that tails a StepRun's log file."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         sr = run_svc.get_step_run(step_run_id)
@@ -975,8 +753,8 @@ async def stream_step_run_logs(step_run_id: str):
 
 @app.get("/api/runs/{run_id}/logs")
 async def stream_run_logs(run_id: str):
-    """SSE endpoint that tails the agent's NDJSON log file for a TaskRun."""
-    session, _, _ = _get_services()
+    """SSE endpoint that tails the agent's NDJSON log file for a FlowRun."""
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -1029,6 +807,16 @@ async def stream_run_logs(run_id: str):
     )
 
 
+# --- Attachments ---
+
+@app.get("/api/attachments/{run_id}/{filename}")
+async def serve_attachment(run_id: str, filename: str):
+    path = ATTACHMENTS_DIR / run_id / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return FileResponse(str(path))
+
+
 # --- Agent Alias endpoints ---
 
 class AgentAliasCreate(BaseModel):
@@ -1047,7 +835,7 @@ class AgentAliasUpdate(BaseModel):
 @app.get("/api/agent-aliases")
 async def list_agent_aliases():
     from ..db.models import AgentAlias
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         aliases = session.query(AgentAlias).order_by(AgentAlias.position, AgentAlias.name).all()
         return [a.to_dict() for a in aliases]
@@ -1058,7 +846,7 @@ async def list_agent_aliases():
 @app.post("/api/agent-aliases")
 async def create_agent_alias(body: AgentAliasCreate):
     from ..db.models import AgentAlias
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         existing = session.query(AgentAlias).filter_by(name=body.name).first()
         if existing:
@@ -1078,7 +866,7 @@ async def create_agent_alias(body: AgentAliasCreate):
 @app.patch("/api/agent-aliases/{alias_id}")
 async def update_agent_alias(alias_id: str, body: AgentAliasUpdate):
     from ..db.models import AgentAlias
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         alias = session.query(AgentAlias).filter_by(id=alias_id).first()
         if not alias:
@@ -1103,7 +891,7 @@ async def update_agent_alias(alias_id: str, body: AgentAliasUpdate):
 @app.delete("/api/agent-aliases/{alias_id}")
 async def delete_agent_alias(alias_id: str):
     from ..db.models import AgentAlias
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         alias = session.query(AgentAlias).filter_by(id=alias_id).first()
         if not alias:
@@ -1119,17 +907,15 @@ async def delete_agent_alias(alias_id: str):
 
 @app.get("/api/queue")
 async def global_queue():
-    """All active TaskRuns globally (executing first, then pending)."""
-    session, project_svc, task_svc = _get_services()
+    """All active FlowRuns globally (executing first, then pending)."""
+    session, project_svc = _get_services()
     try:
         run_svc = RunService(session)
         runs = run_svc.list_active()
         result = []
         for r in runs:
             d = r.to_dict()
-            task = task_svc.get(r.task_id)
             project = project_svc.get(r.project_id) if r.project_id else None
-            d["task_name"] = task.name if task else None
             d["project_name"] = project.name if project else None
             result.append(d)
         return result
@@ -1139,8 +925,8 @@ async def global_queue():
 
 @app.get("/api/projects/{project_id}/queue")
 async def project_queue(project_id: str):
-    """All TaskRuns for project (pending + executing), ordered."""
-    session, project_svc, _ = _get_services()
+    """All FlowRuns for project (pending + executing), ordered."""
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -1156,45 +942,32 @@ async def project_queue(project_id: str):
 @app.get("/api/dashboard")
 async def dashboard():
     """System overview: all projects with active run counts, queue depths."""
-    session, project_svc, task_svc = _get_services()
+    session, project_svc = _get_services()
     try:
         run_svc = RunService(session)
         projects = project_svc.list_all()
         result = []
         for p in projects:
-            tasks = task_svc.list_by_project(p.id)
             all_runs = run_svc.list_by_project(p.id)
             active_runs = [r for r in all_runs if r.completed_at is None]
             pending_runs = [r for r in active_runs if r.started_at is None]
             executing_runs = [r for r in active_runs if r.started_at is not None]
             recent = [r.to_dict() for r in all_runs if r.completed_at is not None][-5:]
 
-            task_ids_with_active = {r.task_id for r in active_runs}
-            task_counts = {
+            run_counts = {
                 "running": len(executing_runs),
                 "queued": len(pending_runs),
-                "idle": sum(1 for t in tasks if t.id not in task_ids_with_active),
             }
-
-            is_git = p.is_git_repo if p.is_git_repo is not None else True
-
-            def _agent_active(run):
-                task = task_svc.get(run.task_id)
-                if not task:
-                    return False
-                if is_git:
-                    return AgentService.is_agent_running(p.path, task.worktree_branch)
-                return AgentService.is_agent_running(p.path, "", task_id=task.id)
 
             result.append({
                 "project": p.to_dict(),
-                "task_counts": task_counts,
+                "run_counts": run_counts,
                 "queue_depth": len(pending_runs),
                 "active_runs": len(executing_runs),
                 "executing": [
                     {
                         "run": r.to_dict(),
-                        "agent_active": _agent_active(r),
+                        "agent_active": AgentService.is_agent_running(p.path, run_id=r.id),
                     }
                     for r in executing_runs
                 ],
@@ -1211,8 +984,8 @@ async def dashboard():
 async def get_inbox():
     """Return inbox items (awaiting_user + completed_run), enriched with context."""
     from ..services.context import ContextService
-    from ..db.models import Project as ProjectModel, StepRun, Task, TaskRun
-    session, _, _ = _get_services()
+    from ..db.models import Project as ProjectModel, StepRun, FlowRun
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         inbox_items = run_svc.list_inbox()
@@ -1226,10 +999,9 @@ async def get_inbox():
                 if not sr or sr.completed_at:
                     run_svc.archive_inbox_item(item.id)
                     continue
-                run = session.query(TaskRun).filter_by(id=sr.run_id).first()
-                task = session.query(Task).filter_by(id=item.task_id).first()
+                run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
                 project = session.query(ProjectModel).filter_by(id=item.project_id).first()
-                if not run or not task or not project:
+                if not run or not project:
                     continue
 
                 step_type = "agent"
@@ -1246,7 +1018,7 @@ async def get_inbox():
                 user_message = ""
                 try:
                     artifacts_dir = ContextService.get_artifacts_dir(
-                        Path(project.path), task.id, run.id,
+                        Path(project.path), run.id,
                     )
                     result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                     if result_file.exists():
@@ -1260,13 +1032,10 @@ async def get_inbox():
                     "step_name": sr.step_name,
                     "step_type": step_type,
                     "step_position": sr.step_position,
-                    "task_id": task.id,
-                    "task_name": task.name or "",
-                    "task_description": task.description or "",
                     "project_id": project.id,
                     "project_name": project.name,
                     "run_id": run.id,
-                    "flow_name": sr.flow_name,
+                    "flow_name": run.flow_name or "",
                     "prompt": sr.prompt or "",
                     "user_message": user_message,
                     "log_path": sr.log_path or "",
@@ -1274,17 +1043,16 @@ async def get_inbox():
                 })
 
             elif item.type == "completed_run":
-                run = session.query(TaskRun).filter_by(id=item.reference_id).first()
-                task = session.query(Task).filter_by(id=item.task_id).first()
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
                 project = session.query(ProjectModel).filter_by(id=item.project_id).first()
-                if not run or not task or not project:
+                if not run or not project:
                     continue
 
-                run_att_dir = ATTACHMENTS_DIR / item.task_id / run.id
+                run_att_dir = ATTACHMENTS_DIR / run.id
                 attachments = []
                 if run_att_dir.is_dir():
                     attachments = sorted(
-                        [{"name": f.name, "url": f"/api/attachments/{item.task_id}/{run.id}/{f.name}"}
+                        [{"name": f.name, "url": f"/api/attachments/{run.id}/{f.name}"}
                          for f in run_att_dir.iterdir() if f.is_file()],
                         key=lambda x: x["name"],
                     )
@@ -1292,8 +1060,6 @@ async def get_inbox():
                 completed.append({
                     "inbox_id": item.id,
                     "run_id": run.id,
-                    "task_id": task.id,
-                    "task_name": task.name or "",
                     "project_id": project.id,
                     "project_name": project.name,
                     "flow_name": run.flow_name or "",
@@ -1312,7 +1078,7 @@ async def get_inbox():
 @app.post("/api/inbox/{item_id}/archive")
 async def archive_inbox_item(item_id: str):
     """Archive an inbox item (dismiss it)."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         ok = run_svc.archive_inbox_item(item_id)
@@ -1326,7 +1092,7 @@ async def archive_inbox_item(item_id: str):
 @app.post("/api/step-runs/{step_run_id}/respond")
 async def respond_to_step(step_run_id: str, body: StepRespondBody):
     """User responds to an awaiting_user step (confirm manual or answer prompt)."""
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         run_svc = RunService(session)
         sr = run_svc.respond_to_step(step_run_id, body.response)
@@ -1341,7 +1107,7 @@ async def respond_to_step(step_run_id: str, body: StepRespondBody):
 
 @app.get("/api/projects/{project_id}/flows")
 async def list_project_flows(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -1370,7 +1136,7 @@ async def list_project_flows(project_id: str):
 
 @app.post("/api/projects/{project_id}/flows/export")
 async def export_project_flows(project_id: str):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -1384,7 +1150,7 @@ async def export_project_flows(project_id: str):
 
 @app.post("/api/projects/{project_id}/flows/import")
 async def import_project_flows(project_id: str, file: UploadFile = File(...)):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -1402,7 +1168,7 @@ async def import_project_flows(project_id: str, file: UploadFile = File(...)):
 
 @app.get("/api/flows/{flow_id}")
 async def get_flow(flow_id: str):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         flow = flow_svc.get(flow_id)
@@ -1415,7 +1181,7 @@ async def get_flow(flow_id: str):
 
 @app.post("/api/projects/{project_id}/flows")
 async def create_project_flow(project_id: str, body: FlowCreate):
-    session, project_svc, _ = _get_services()
+    session, project_svc = _get_services()
     try:
         project = project_svc.get(project_id)
         if not project:
@@ -1442,7 +1208,7 @@ async def create_project_flow(project_id: str, body: FlowCreate):
 
 @app.patch("/api/flows/{flow_id}")
 async def update_flow(flow_id: str, body: FlowUpdate):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         updates = {}
@@ -1460,7 +1226,7 @@ async def update_flow(flow_id: str, body: FlowUpdate):
 
 @app.delete("/api/flows/{flow_id}")
 async def delete_flow(flow_id: str):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         flow_svc.delete(flow_id)
@@ -1473,7 +1239,7 @@ async def delete_flow(flow_id: str):
 
 @app.post("/api/flows/{flow_id}/steps")
 async def add_flow_step(flow_id: str, body: StepCreate):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         step = flow_svc.add_step(
@@ -1482,6 +1248,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             agent_alias=body.agent_alias, step_type=body.step_type,
             allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
+            skills=body.skills,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1492,7 +1259,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
 
 @app.patch("/api/flows/{flow_id}/steps/{step_id}")
 async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         updates = {}
@@ -1514,6 +1281,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["allow_max"] = body.allow_max
         if body.max_gate_retries is not None:
             updates["max_gate_retries"] = body.max_gate_retries
+        if body.skills is not None:
+            updates["skills"] = json.dumps(body.skills)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
@@ -1524,7 +1293,7 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
 
 @app.delete("/api/flows/{flow_id}/steps/{step_id}")
 async def delete_flow_step(flow_id: str, step_id: str):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         if not flow_svc.remove_step(step_id):
@@ -1536,13 +1305,45 @@ async def delete_flow_step(flow_id: str, step_id: str):
 
 @app.post("/api/flows/{flow_id}/reorder")
 async def reorder_flow_steps(flow_id: str, body: ReorderSteps):
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
         if not flow_svc.reorder_steps(flow_id, body.step_ids):
             raise HTTPException(status_code=404, detail="Flow not found")
         flow = flow_svc.get(flow_id)
         return flow.to_dict()
+    finally:
+        session.close()
+
+
+# --- Skills endpoints ---
+
+@app.get("/api/projects/{project_id}/skills")
+async def list_project_skills(project_id: str):
+    """Return discovered skills for a project."""
+    session, project_svc = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        skills = SkillService.discover(project.path)
+        return [{"name": s.name, "path": s.path, "description": s.description, "compatibility": s.compatibility} for s in skills]
+    finally:
+        session.close()
+
+
+@app.get("/api/projects/{project_id}/skills/{skill_name}/content")
+async def get_skill_content(project_id: str, skill_name: str):
+    """Return the full SKILL.md content for a skill."""
+    session, project_svc = _get_services()
+    try:
+        project = project_svc.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        content = SkillService.get_content(project.path, skill_name)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"content": content}
     finally:
         session.close()
 
@@ -1575,7 +1376,7 @@ async def agents_status():
 @app.get("/api/agents/{agent_name}/config")
 async def get_agent_config(agent_name: str):
     from ..db.models import AgentConfig
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         configs = session.query(AgentConfig).filter_by(agent=agent_name).all()
         return [c.to_dict() for c in configs]
@@ -1591,7 +1392,7 @@ class AgentConfigBody(BaseModel):
 @app.post("/api/agents/{agent_name}/config")
 async def set_agent_config(agent_name: str, body: AgentConfigBody):
     from ..db.models import AgentConfig
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         existing = session.query(AgentConfig).filter_by(agent=agent_name, key=body.key).first()
         if existing:
@@ -1608,7 +1409,7 @@ async def set_agent_config(agent_name: str, body: AgentConfigBody):
 @app.delete("/api/agents/{agent_name}/config/{config_id}")
 async def delete_agent_config(agent_name: str, config_id: str):
     from ..db.models import AgentConfig
-    session, _, _ = _get_services()
+    session, _ = _get_services()
     try:
         config = session.query(AgentConfig).filter_by(id=config_id, agent=agent_name).first()
         if not config:

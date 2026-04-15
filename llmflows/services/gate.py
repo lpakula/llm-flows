@@ -8,7 +8,7 @@ from pathlib import Path
 def _interpolate(text: str, variables: dict) -> str:
     """Replace {{key}} placeholders with values from variables dict.
 
-    Supports dotted keys like {{run.id}}, {{task.id}}, {{flow.name}},
+    Supports dotted keys like {{run.id}}, {{flow.name}},
     {{steps.step-name.user_response}}.
     """
     def replacer(match):

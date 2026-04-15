@@ -3,9 +3,8 @@
 import secrets
 import string
 from datetime import datetime, timezone
-from enum import Enum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text, UniqueConstraint  # noqa: F401
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint  # noqa: F401
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -17,13 +16,6 @@ def generate_id() -> str:
 
 class Base(DeclarativeBase):
     pass
-
-
-class TaskType(str, Enum):
-    FEATURE = "feature"
-    FIX = "fix"
-    REFACTOR = "refactor"
-    CHORE = "chore"
 
 
 class AgentAlias(Base):
@@ -81,8 +73,9 @@ class Project(Base):
     variables: str = Column(Text, default="{}")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     flows = relationship("Flow", back_populates="project", cascade="all, delete-orphan")
+    flow_runs = relationship("FlowRun", back_populates="project", cascade="all, delete-orphan",
+                             order_by="FlowRun.created_at")
 
     def get_variables(self) -> dict:
         """Parse variables JSON into a dict."""
@@ -99,39 +92,7 @@ class Project(Base):
             "path": self.path,
             "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
-            "inbox_completed_runs": self.inbox_completed_runs if self.inbox_completed_runs is not None else True,
             "variables": self.get_variables(),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
-
-class Task(Base):
-    __tablename__ = "tasks"
-
-    id: str = Column(String(6), primary_key=True, default=generate_id)
-    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
-    name: str = Column(String(255), default="")
-    description: str = Column(Text, default="")
-    type: TaskType = Column(SQLEnum(TaskType), default=TaskType.FEATURE)
-    default_flow_name: str = Column(String(255), nullable=True, default=None)
-    task_status: str = Column(String(50), default="backlog")
-    worktree_branch: str = Column(String(255), default="")
-    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    project = relationship("Project", back_populates="tasks")
-    runs = relationship("TaskRun", back_populates="task", cascade="all, delete-orphan",
-                        order_by="TaskRun.created_at")
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "project_id": self.project_id,
-            "name": self.name,
-            "description": self.description,
-            "type": self.type.value,
-            "default_flow_name": self.default_flow_name,
-            "task_status": self.task_status or "backlog",
-            "worktree_branch": self.worktree_branch,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -180,6 +141,7 @@ class FlowStep(Base):
     step_type: str = Column(String(20), default="agent")
     allow_max: bool = Column(Boolean, default=False)
     max_gate_retries: int = Column(Integer, default=5)
+    skills: str = Column(Text, default="[]")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -202,6 +164,14 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    def get_skills(self) -> list[str]:
+        """Parse skills JSON into a list of skill names."""
+        import json
+        try:
+            return json.loads(self.skills or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -215,23 +185,22 @@ class FlowStep(Base):
             "step_type": self.step_type or "agent",
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
+            "skills": self.get_skills(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
-class TaskRun(Base):
-    __tablename__ = "task_runs"
+class FlowRun(Base):
+    __tablename__ = "flow_runs"
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
     project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
-    task_id: str = Column(String(6), ForeignKey("tasks.id"), nullable=False)
-    flow_name: str = Column(String(255), nullable=True, default=None)
+    flow_id: str = Column(String(6), ForeignKey("flows.id"), nullable=True)
     flow_snapshot: str = Column(Text, nullable=True)
     current_step: str = Column(String(255), default="")
     outcome: str = Column(String(50), nullable=True)
     log_path: str = Column(Text, default="")
-    user_prompt: str = Column(Text, default="")
     prompt: str = Column(Text, default="")
     summary: str = Column(Text, default="")
     steps_completed: str = Column(Text, default="[]")
@@ -243,9 +212,24 @@ class TaskRun(Base):
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
 
-    task = relationship("Task", back_populates="runs")
+    project = relationship("Project", back_populates="flow_runs")
+    flow = relationship("Flow")
     step_runs = relationship("StepRun", back_populates="run", cascade="all, delete-orphan",
                              order_by="StepRun.step_position")
+
+    @property
+    def flow_name(self) -> str | None:
+        """Derive flow name from the related Flow object."""
+        if self.flow:
+            return self.flow.name
+        if self.flow_snapshot:
+            import json
+            try:
+                snap = json.loads(self.flow_snapshot)
+                return snap.get("name")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return None
 
     @property
     def status(self) -> str:
@@ -278,13 +262,12 @@ class TaskRun(Base):
         return {
             "id": self.id,
             "project_id": self.project_id,
-            "task_id": self.task_id,
+            "flow_id": self.flow_id,
             "flow_name": self.flow_name,
             "current_step": self.current_step,
             "status": self.status,
             "outcome": self.outcome,
             "log_path": self.log_path,
-            "user_prompt": self.user_prompt,
             "prompt": self.prompt,
             "summary": self.summary,
             "steps_completed": self.steps_completed,
@@ -305,7 +288,6 @@ class InboxItem(Base):
     id: str = Column(String(6), primary_key=True, default=generate_id)
     type: str = Column(String(32), nullable=False)
     reference_id: str = Column(String(6), nullable=False)
-    task_id: str = Column(String(6), ForeignKey("tasks.id"), nullable=False)
     project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
     title: str = Column(Text, default="")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -316,7 +298,6 @@ class InboxItem(Base):
             "id": self.id,
             "type": self.type,
             "reference_id": self.reference_id,
-            "task_id": self.task_id,
             "project_id": self.project_id,
             "title": self.title,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -328,7 +309,7 @@ class StepRun(Base):
     __tablename__ = "step_runs"
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
-    run_id: str = Column(String(6), ForeignKey("task_runs.id"), nullable=False)
+    flow_run_id: str = Column(String(6), ForeignKey("flow_runs.id"), nullable=False)
     step_name: str = Column(String(255), nullable=False)
     step_position: int = Column(Integer, nullable=False)
     flow_name: str = Column(String(255), nullable=False)
@@ -344,7 +325,7 @@ class StepRun(Base):
     completed_at: datetime = Column(DateTime, nullable=True)
     awaiting_user_at: datetime = Column(DateTime, nullable=True)
 
-    run = relationship("TaskRun", back_populates="step_runs")
+    run = relationship("FlowRun", back_populates="step_runs")
 
     @property
     def status(self) -> str:
@@ -375,7 +356,7 @@ class StepRun(Base):
                 pass
         return {
             "id": self.id,
-            "run_id": self.run_id,
+            "run_id": self.flow_run_id,
             "step_name": self.step_name,
             "step_position": self.step_position,
             "flow_name": self.flow_name,

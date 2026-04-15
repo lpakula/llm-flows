@@ -6,13 +6,14 @@ import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/views/Dashboard";
 import { InboxView } from "@/views/Inbox";
 import { ProjectView } from "@/views/Project";
-import { TaskView } from "@/views/Task";
+import { RunDetailView } from "@/views/RunDetail";
 import { ProjectFlowsView } from "@/views/Flows";
 import { FlowEditorView } from "@/views/FlowEditor";
 import { AgentsView } from "@/views/Agents";
 import { GatewayView } from "@/views/Gateway";
 import { SettingsView } from "@/views/Settings";
 import { ProjectSettingsView } from "@/views/ProjectSettings";
+import { SkillsView } from "@/views/Skills";
 
 interface AppContextType {
   projects: Project[];
@@ -65,7 +66,8 @@ function AppInner() {
           <Route path="/inbox" element={<InboxView />} />
           <Route path="/project/:projectId" element={<ProjectView />} />
           <Route path="/project/:projectId/flows" element={<ProjectFlowsView />} />
-          <Route path="/project/:projectId/task/:taskId" element={<TaskView />} />
+          <Route path="/project/:projectId/run/:runId" element={<RunDetailView />} />
+          <Route path="/project/:projectId/skills" element={<SkillsView />} />
           <Route path="/project/:projectId/settings" element={<ProjectSettingsView />} />
           <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />

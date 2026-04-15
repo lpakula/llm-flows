@@ -23,9 +23,6 @@ export function Dashboard() {
   }, []);
   useInterval(refresh, 8000);
 
-  const totalTasks = (entry: DashboardEntry) =>
-    Object.values(entry.task_counts).reduce((a, b) => a + b, 0);
-
   const stepLabel = (step: string | null) => {
     if (!step) return "-";
     if (step === "__one_shot__") return "one-shot";
@@ -79,26 +76,22 @@ export function Dashboard() {
 
               {/* Stats row */}
               <div className="px-4 pb-3 flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                  <span className="text-xs text-gray-400">{totalTasks(entry)} tasks</span>
-                </div>
-                {entry.task_counts.running > 0 && (
+                {entry.run_counts.running > 0 && (
                   <div className="flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                    <span className="text-xs text-yellow-400">{entry.task_counts.running} running</span>
+                    <span className="text-xs text-yellow-400">{entry.run_counts.running} running</span>
                   </div>
                 )}
-                {entry.queue_depth > 0 && (
+                {entry.run_counts.queued > 0 && (
                   <div className="flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                    <span className="text-xs text-blue-400">{entry.queue_depth} queued</span>
+                    <span className="text-xs text-blue-400">{entry.run_counts.queued} queued</span>
                   </div>
                 )}
-                {entry.task_counts.idle > 0 && entry.task_counts.running === 0 && entry.queue_depth === 0 && (
+                {entry.run_counts.running === 0 && entry.run_counts.queued === 0 && (
                   <div className="flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                    <span className="text-xs text-gray-500">{entry.task_counts.idle} idle</span>
+                    <span className="text-xs text-gray-500">idle</span>
                   </div>
                 )}
               </div>

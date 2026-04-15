@@ -9,9 +9,7 @@ import click
 from ..db.database import get_session, init_db
 from ..services.project import ProjectService
 from ..services.run import RunService
-from ..services.task import TaskService
 from ..services.agent import AgentService
-from ..services.worktree import WorktreeService
 
 
 def _get_session():
@@ -36,7 +34,7 @@ def agent_list(show_all):
     session = _get_session()
     try:
         project_svc = ProjectService(session)
-        task_svc = TaskService(session)
+        run_svc = RunService(session)
 
         if show_all:
             projects = project_svc.list_all()
@@ -49,12 +47,12 @@ def agent_list(show_all):
 
         found = False
         for proj in projects:
-            tasks = task_svc.list_by_project(proj.id)
-            for t in tasks:
-                if AgentService.is_agent_running(proj.path, t.worktree_branch):
+            active_runs = run_svc.get_active_by_project(proj.id)
+            for r in active_runs:
+                if AgentService.is_agent_running(proj.path, run_id=r.id):
                     found = True
-                    click.echo(f"  {t.id}  {'running':10s}  {t.name}")
-                    click.echo(f"         project: {proj.name}  branch: {t.worktree_branch or '-'}")
+                    click.echo(f"  {r.id}  {'running':10s}  {r.flow_name or 'run'}")
+                    click.echo(f"         project: {proj.name}")
 
         if not found:
             click.echo("No active agents.")
@@ -62,47 +60,8 @@ def agent_list(show_all):
         session.close()
 
 
-def stream_task_logs(task_id: str, follow: bool = True, raw: bool = False) -> None:
-    """Resolve log path for a task's active (or latest) run and stream it."""
-    session = _get_session()
-    try:
-        task_svc = TaskService(session)
-        run_svc = RunService(session)
-        project_svc = ProjectService(session)
-
-        t = task_svc.get(task_id)
-        if not t:
-            click.echo(f"Task {task_id} not found.")
-            raise SystemExit(1)
-
-        run = run_svc.get_active(task_id)
-        if not run:
-            history = run_svc.get_history(task_id)
-            run = history[-1] if history else None
-
-        if not run or not run.log_path:
-            click.echo(f"No agent log found for task {task_id}.")
-            click.echo("The agent may not have started yet.")
-            raise SystemExit(1)
-
-        log_path = Path(run.log_path)
-
-        proj = project_svc.get(t.project_id)
-        wt_svc = WorktreeService(proj.path) if proj else None
-        wt_path = wt_svc.get_worktree_path(t.worktree_branch) if wt_svc and t.worktree_branch else None
-        strip_prefix = str(wt_path) + "/" if wt_path else None
-    finally:
-        session.close()
-
-    if not log_path.exists():
-        click.echo(f"Log file not found: {log_path}")
-        raise SystemExit(1)
-
-    tail_log(log_path, follow=follow, raw=raw, strip_prefix=strip_prefix)
-
-
 def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None:
-    """Stream logs for a specific TaskRun by run_id."""
+    """Stream logs for a specific FlowRun by run_id."""
     session = _get_session()
     try:
         run_svc = RunService(session)
@@ -113,14 +72,6 @@ def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None
             raise SystemExit(1)
 
         log_path = Path(run.log_path)
-
-        task_svc = TaskService(session)
-        project_svc = ProjectService(session)
-        t = task_svc.get(run.task_id)
-        proj = project_svc.get(run.project_id) if t else None
-        wt_svc = WorktreeService(proj.path) if proj else None
-        wt_path = wt_svc.get_worktree_path(t.worktree_branch) if wt_svc and t and t.worktree_branch else None
-        strip_prefix = str(wt_path) + "/" if wt_path else None
     finally:
         session.close()
 
@@ -128,7 +79,7 @@ def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None
         click.echo(f"Log file not found: {log_path}")
         raise SystemExit(1)
 
-    tail_log(log_path, follow=follow, raw=raw, strip_prefix=strip_prefix)
+    tail_log(log_path, follow=follow, raw=raw)
 
 
 def tail_log(log_path, follow: bool = True, raw: bool = False,
@@ -170,24 +121,16 @@ def tail_log(log_path, follow: bool = True, raw: bool = False,
 
 
 @agent.command("logs")
-@click.argument("task_id", required=False)
-@click.option("--run", "run_id", default=None, help="Stream logs for a specific run ID")
+@click.argument("run_id")
 @click.option("--follow", "-f", is_flag=True, help="Follow log output (like tail -f)")
 @click.option("--raw", is_flag=True, help="Output raw NDJSON instead of formatted text")
-def agent_logs(task_id, run_id, follow, raw):
-    """Stream agent logs for a task or specific run.
+def agent_logs(run_id, follow, raw):
+    """Stream agent logs for a flow run.
 
     Examples:
       llmflows agent logs abc123 -f
-      llmflows agent logs --run xyz789 -f
     """
-    if run_id:
-        stream_run_logs(run_id, follow=follow, raw=raw)
-    elif task_id:
-        stream_task_logs(task_id, follow=follow, raw=raw)
-    else:
-        click.echo("Provide a task_id or --run <run_id>.")
-        raise SystemExit(1)
+    stream_run_logs(run_id, follow=follow, raw=raw)
 
 
 def _shorten(path: str, strip_prefix: str | None) -> str:

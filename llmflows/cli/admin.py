@@ -266,7 +266,8 @@ def project_var():
     """Manage project variables.
 
     Variables are available in flow step content, gates, and IFs as
-    {{project.<KEY>}} template placeholders.
+    {{project.<KEY>}} template placeholders. Also injected as environment
+    variables into the agent runtime.
     """
     pass
 

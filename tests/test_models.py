@@ -3,11 +3,9 @@
 from llmflows.db.models import (
     Base,
     Flow,
+    FlowRun,
     FlowStep,
     Project,
-    Task,
-    TaskRun,
-    TaskType,
     generate_id,
 )
 
@@ -18,14 +16,6 @@ def test_generate_id():
     assert len(id1) == 6
     assert id1 != id2
     assert id1.isalnum()
-
-
-
-def test_task_type_values():
-    assert TaskType.FEATURE.value == "feature"
-    assert TaskType.FIX.value == "fix"
-    assert TaskType.REFACTOR.value == "refactor"
-    assert TaskType.CHORE.value == "chore"
 
 
 def test_create_project(test_db):
@@ -52,50 +42,9 @@ def test_project_to_dict(test_db):
     assert "created_at" in d
 
 
-def test_create_task(test_db, test_project):
-    task = Task(
-        project_id=test_project.id,
-        name="Test task",
-        description="A test task",
-        type=TaskType.FEATURE,
-    )
-    test_db.add(task)
-    test_db.commit()
-
-    fetched = test_db.query(Task).first()
-    assert fetched.name == "Test task"
-    assert fetched.project_id == test_project.id
-
-
-def test_task_to_dict(test_db, test_project):
-    task = Task(
-        project_id=test_project.id,
-        name="Dict test",
-        type=TaskType.FIX,
-    )
-    test_db.add(task)
-    test_db.commit()
-
-    d = task.to_dict()
-    assert d["name"] == "Dict test"
-    assert d["type"] == "fix"
-    assert "status" not in d
-
-
-def test_project_task_cascade(test_db, test_project):
-    task = Task(project_id=test_project.id, name="Cascade test")
-    test_db.add(task)
-    test_db.commit()
-
-    test_db.delete(test_project)
-    test_db.commit()
-
-    assert test_db.query(Task).count() == 0
-
-
 class TestFlowModel:
-    def test_create_flow(self, test_db):
-        flow = Flow(name="test-flow", description="A test flow")
+    def test_create_flow(self, test_db, test_project):
+        flow = Flow(name="test-flow", description="A test flow", project_id=test_project.id)
         test_db.add(flow)
         test_db.commit()
 
@@ -104,8 +53,8 @@ class TestFlowModel:
         assert fetched.description == "A test flow"
         assert len(fetched.id) == 6
 
-    def test_flow_to_dict(self, test_db):
-        flow = Flow(name="dict-flow", description="A test flow")
+    def test_flow_to_dict(self, test_db, test_project):
+        flow = Flow(name="dict-flow", description="A test flow", project_id=test_project.id)
         test_db.add(flow)
         test_db.commit()
 
@@ -115,8 +64,8 @@ class TestFlowModel:
         assert "steps" in d
         assert d["steps"] == []
 
-    def test_flow_step_relationship(self, test_db):
-        flow = Flow(name="with-steps")
+    def test_flow_step_relationship(self, test_db, test_project):
+        flow = Flow(name="with-steps", project_id=test_project.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -130,8 +79,8 @@ class TestFlowModel:
         assert fetched.steps[0].name == "research"
         assert fetched.steps[1].name == "execute"
 
-    def test_flow_cascade_deletes_steps(self, test_db):
-        flow = Flow(name="cascade-flow")
+    def test_flow_cascade_deletes_steps(self, test_db, test_project):
+        flow = Flow(name="cascade-flow", project_id=test_project.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -144,23 +93,23 @@ class TestFlowModel:
 
         assert test_db.query(FlowStep).count() == 0
 
-    def test_flow_name_unique(self, test_db):
+    def test_flow_name_unique(self, test_db, test_project):
         import pytest
         from sqlalchemy.exc import IntegrityError
 
-        f1 = Flow(name="unique-flow")
+        f1 = Flow(name="unique-flow", project_id=test_project.id)
         test_db.add(f1)
         test_db.commit()
 
-        f2 = Flow(name="unique-flow")
+        f2 = Flow(name="unique-flow", project_id=test_project.id)
         test_db.add(f2)
         with pytest.raises(IntegrityError):
             test_db.commit()
 
 
 class TestFlowStepModel:
-    def test_create_step(self, test_db):
-        flow = Flow(name="step-test")
+    def test_create_step(self, test_db, test_project):
+        flow = Flow(name="step-test", project_id=test_project.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -178,8 +127,8 @@ class TestFlowStepModel:
         assert fetched.position == 0
         assert "Research" in fetched.content
 
-    def test_step_to_dict(self, test_db):
-        flow = Flow(name="step-dict")
+    def test_step_to_dict(self, test_db, test_project):
+        flow = Flow(name="step-dict", project_id=test_project.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -193,35 +142,33 @@ class TestFlowStepModel:
         assert d["content"] == "# Execute"
 
 
-class TestTaskRunModel:
-    def test_create_task_run(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="run-test")
-        test_db.add(task)
+class TestFlowRunModel:
+    def test_create_flow_run(self, test_db, test_project):
+        flow = Flow(name="run-flow", project_id=test_project.id)
+        test_db.add(flow)
         test_db.flush()
 
-        run = TaskRun(
+        run = FlowRun(
             project_id=test_project.id,
-            task_id=task.id,
-            flow_name="default",
+            flow_id=flow.id,
         )
         test_db.add(run)
         test_db.commit()
 
-        fetched = test_db.query(TaskRun).first()
-        assert fetched.flow_name == "default"
+        fetched = test_db.query(FlowRun).first()
+        assert fetched.flow_id == flow.id
         assert fetched.outcome is None
         assert fetched.started_at is None
         assert fetched.completed_at is None
 
-    def test_task_run_to_dict(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="dict-run")
-        test_db.add(task)
+    def test_flow_run_to_dict(self, test_db, test_project):
+        flow = Flow(name="dict-run-flow", project_id=test_project.id)
+        test_db.add(flow)
         test_db.flush()
 
-        run = TaskRun(
+        run = FlowRun(
             project_id=test_project.id,
-            task_id=task.id,
-            flow_name="custom",
+            flow_id=flow.id,
             current_step="research",
             log_path="/tmp/wt/.llmflows/agent-abc123.log",
             prompt="# Test prompt\nDo the thing.",
@@ -230,55 +177,39 @@ class TestTaskRunModel:
         test_db.commit()
 
         d = run.to_dict()
-        assert d["flow_name"] == "custom"
+        assert d["flow_name"] == "dict-run-flow"
         assert d["current_step"] == "research"
         assert d["outcome"] is None
         assert d["log_path"] == "/tmp/wt/.llmflows/agent-abc123.log"
         assert d["prompt"] == "# Test prompt\nDo the thing."
 
-    def test_task_run_cascade_on_task_delete(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="cascade-run")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+    def test_flow_run_cascade_on_project_delete(self, test_db, test_project):
+        run = FlowRun(project_id=test_project.id)
         test_db.add(run)
         test_db.commit()
 
-        test_db.delete(task)
+        test_db.delete(test_project)
         test_db.commit()
 
-        assert test_db.query(TaskRun).count() == 0
+        assert test_db.query(FlowRun).count() == 0
 
-    def test_task_runs_relationship(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="runs-rel")
-        test_db.add(task)
-        test_db.flush()
-
-        r1 = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
-        r2 = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="custom")
+    def test_flow_runs_relationship(self, test_db, test_project):
+        r1 = FlowRun(project_id=test_project.id)
+        r2 = FlowRun(project_id=test_project.id)
         test_db.add_all([r1, r2])
         test_db.commit()
 
-        assert len(task.runs) == 2
+        assert len(test_project.flow_runs) == 2
 
     def test_recovery_count_defaults_to_zero(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="recovery-default")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         test_db.add(run)
         test_db.commit()
 
         assert run.recovery_count == 0
 
     def test_recovery_count_in_to_dict(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="recovery-dict")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         test_db.add(run)
         test_db.commit()
 
@@ -289,11 +220,7 @@ class TestTaskRunModel:
     def test_status_returns_interrupted_when_outcome_is_interrupted(self, test_db, test_project):
         from datetime import datetime, timezone
 
-        task = Task(project_id=test_project.id, name="status-interrupted")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "interrupted"
@@ -305,11 +232,7 @@ class TestTaskRunModel:
     def test_status_returns_timeout_when_outcome_is_timeout(self, test_db, test_project):
         from datetime import datetime, timezone
 
-        task = Task(project_id=test_project.id, name="status-timeout")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "timeout"
@@ -321,11 +244,7 @@ class TestTaskRunModel:
     def test_status_returns_error_when_outcome_is_error(self, test_db, test_project):
         from datetime import datetime, timezone
 
-        task = Task(project_id=test_project.id, name="status-error")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "error"
@@ -337,11 +256,7 @@ class TestTaskRunModel:
     def test_status_returns_completed_for_successful_outcome(self, test_db, test_project):
         from datetime import datetime, timezone
 
-        task = Task(project_id=test_project.id, name="status-completed")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "completed"
@@ -353,11 +268,7 @@ class TestTaskRunModel:
     def test_status_returns_completed_when_outcome_is_none(self, test_db, test_project):
         from datetime import datetime, timezone
 
-        task = Task(project_id=test_project.id, name="status-none-outcome")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
+        run = FlowRun(project_id=test_project.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = None
@@ -366,35 +277,3 @@ class TestTaskRunModel:
 
         assert run.status == "completed"
 
-    def test_step_overrides_default(self, test_db, test_project):
-        task = Task(project_id=test_project.id, name="overrides-default")
-        test_db.add(task)
-        test_db.flush()
-
-        run = TaskRun(project_id=test_project.id, task_id=task.id, flow_name="default")
-        test_db.add(run)
-        test_db.commit()
-
-        assert run.step_overrides == "{}"
-
-    def test_step_overrides_stored_and_returned(self, test_db, test_project):
-        import json
-
-        task = Task(project_id=test_project.id, name="overrides-stored")
-        test_db.add(task)
-        test_db.flush()
-
-        overrides = {"default/research": {"agent": "claude-code", "model": "sonnet"}}
-        run = TaskRun(
-            project_id=test_project.id,
-            task_id=task.id,
-            flow_name="default",
-            step_overrides=json.dumps(overrides),
-        )
-        test_db.add(run)
-        test_db.commit()
-
-        d = run.to_dict()
-        assert "step_overrides" in d
-        parsed = json.loads(d["step_overrides"])
-        assert parsed["default/research"]["agent"] == "claude-code"

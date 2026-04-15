@@ -36,10 +36,6 @@ class AgentService:
     def prepare_and_launch_step(
         self,
         run_id: str,
-        task_id: str,
-        task_name: str,
-        task_description: str,
-        user_prompt: str,
         step_name: str,
         step_position: int,
         step_content: str,
@@ -48,12 +44,12 @@ class AgentService:
         agent: str = "cursor",
         artifacts_dir: Optional[Path] = None,
         gate_failures: Optional[list[dict]] = None,
-        use_task_subdir: bool = False,
-        execution_history: Optional[list[dict]] = None,
         resume_prompt: str = "",
         attempt: int = 1,
         user_responses: Optional[list[dict]] = None,
         step_type: str = "agent",
+        project_variables: Optional[dict] = None,
+        skills: Optional[list[dict]] = None,
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -61,14 +57,11 @@ class AgentService:
         """
         if artifacts_dir is None:
             artifacts_dir = ContextService.get_artifacts_dir(
-                self.project_dir.parent, task_id, run_id,
+                self.project_dir.parent, run_id,
             )
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        if use_task_subdir:
-            wt_llmflows = self.worktree_path / ".llmflows" / task_id
-        else:
-            wt_llmflows = self.worktree_path / ".llmflows"
+        wt_llmflows = self.worktree_path / ".llmflows"
         wt_llmflows.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(wt_llmflows)
 
@@ -79,49 +72,50 @@ class AgentService:
         is_summary = step_name == "__summary__"
         step_output_dir = artifacts_dir / f"{step_position:02d}-{step_name}" if not is_summary else None
 
+        proj_vars = project_variables or {}
         prompt_vars = {
-            "worktree_path": str(self.worktree_path) if self.worktree_path != self.project_dir.parent else None,
-            "task_id": task_id,
-            "task_name": task_name,
-            "task_description": task_description,
-            "user_prompt": user_prompt,
+            "run_id": run_id,
+            "flow_name": flow_name,
             "step_name": step_name,
             "step_content": step_content,
-            "flow_name": flow_name,
             "artifacts": previous_artifacts,
-            "artifacts_output_dir": str(step_output_dir) if step_output_dir else "",
+            "artifacts_dir": str(step_output_dir) if step_output_dir else "",
             "gate_failures": gate_failures,
-            "execution_history": execution_history,
             "resume_prompt": resume_prompt,
             "user_responses": user_responses or [],
             "step_type": step_type,
+            "project_variables": proj_vars,
+            "skills": skills or [],
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
-        prompt_md = prompts_dir / f"{task_id}-{run_id}-{step_position:02d}-{step_name}.md"
+        prompt_md = prompts_dir / f"{run_id}-{step_position:02d}-{step_name}.md"
         prompt_md.write_text(prompt_content)
 
         attempt_suffix = f"-a{attempt}" if attempt and attempt > 1 else ""
         log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}{attempt_suffix}.log"
-        pid_file = wt_llmflows / "agent.pid"
+        pid_dir = wt_llmflows / run_id
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "agent.pid"
         launched = self._launch_agent(
             self.worktree_path, prompt_md, log_file, pid_file,
             model=model, agent=agent,
+            project_variables=proj_vars,
         )
         return launched, prompt_content, str(log_file)
 
     @staticmethod
     def _rewrite_attachment_urls(text: str) -> str:
-        """Replace /api/attachments/<task_id>/<file> with absolute local paths."""
+        """Replace /api/attachments/<run_id>/<file> with absolute local paths."""
         import re
         attachments_base = Path.home() / ".llmflows" / "attachments"
 
         def replace(m: re.Match) -> str:
-            task_id, filename = m.group(1), m.group(2)
-            abs_path = attachments_base / task_id / filename
+            run_id, filename = m.group(1), m.group(2)
+            abs_path = attachments_base / run_id / filename
             return str(abs_path)
 
         return re.sub(r"/api/attachments/([^/]+)/([^\s\)\"']+)", replace, text)
@@ -144,6 +138,7 @@ class AgentService:
     def _launch_agent(
         self, directory: Path, prompt_file: Path, log_file: Path, pid_file: Path,
         model: str = "", agent: str = "cursor",
+        project_variables: Optional[dict] = None,
     ) -> bool:
         """Launch the selected agent backend with output streamed to a log file."""
         reg = AGENT_REGISTRY.get(agent)
@@ -166,6 +161,9 @@ class AgentService:
                     env[cfg.key] = cfg.value
             finally:
                 session.close()
+
+            for k, v in (project_variables or {}).items():
+                env[k] = str(v)
 
             fh = open(log_file, "w")
             proc = subprocess.Popen(
@@ -229,23 +227,17 @@ class AgentService:
 
     @staticmethod
     def _resolve_pid_file(
-        project_path: str, worktree_branch: str, task_id: str = ""
+        project_path: str, run_id: str = ""
     ) -> Optional[Path]:
-        """Return the agent.pid path for a task, or None if not locatable."""
-        if worktree_branch:
-            from .worktree import WorktreeService
-            wt_path = WorktreeService(project_path).get_worktree_path(worktree_branch)
-            if not wt_path:
-                return None
-            return wt_path / ".llmflows" / "agent.pid"
-        if task_id:
-            return Path(project_path) / ".llmflows" / task_id / "agent.pid"
+        """Return the agent.pid path for a run, or None if not locatable."""
+        if run_id:
+            return Path(project_path) / ".llmflows" / run_id / "agent.pid"
         return None
 
     @staticmethod
-    def kill_agent(project_path: str, worktree_branch: str, task_id: str = "") -> bool:
-        """Kill the agent process for a task. Returns True if a process was killed."""
-        pid_file = AgentService._resolve_pid_file(project_path, worktree_branch, task_id)
+    def kill_agent(project_path: str, run_id: str = "") -> bool:
+        """Kill the agent process for a run. Returns True if a process was killed."""
+        pid_file = AgentService._resolve_pid_file(project_path, run_id)
         if not pid_file or not pid_file.exists():
             return False
         try:
@@ -267,9 +259,9 @@ class AgentService:
             return False
 
     @staticmethod
-    def is_agent_running(project_path: str, worktree_branch: str, task_id: str = "") -> bool:
-        """Check if an agent process is alive for a given task."""
-        pid_file = AgentService._resolve_pid_file(project_path, worktree_branch, task_id)
+    def is_agent_running(project_path: str, run_id: str = "") -> bool:
+        """Check if an agent process is alive for a given run."""
+        pid_file = AgentService._resolve_pid_file(project_path, run_id)
         if not pid_file or not pid_file.exists():
             return False
         try:
