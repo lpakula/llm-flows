@@ -10,6 +10,7 @@ import { TaskView } from "@/views/Task";
 import { ProjectFlowsView } from "@/views/Flows";
 import { FlowEditorView } from "@/views/FlowEditor";
 import { AgentsView } from "@/views/Agents";
+import { GatewayView } from "@/views/Gateway";
 import { SettingsView } from "@/views/Settings";
 import { ProjectSettingsView } from "@/views/ProjectSettings";
 
@@ -68,6 +69,7 @@ function AppInner() {
           <Route path="/project/:projectId/settings" element={<ProjectSettingsView />} />
           <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />
+          <Route path="/gateway" element={<GatewayView />} />
           <Route path="/settings" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

@@ -101,6 +101,12 @@ class DaemonConfigBody(BaseModel):
     gate_timeout_seconds: Optional[int] = None
 
 
+class GatewayConfigBody(BaseModel):
+    telegram_enabled: Optional[bool] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_allowed_chat_ids: Optional[list[int]] = None
+
+
 class ProjectSettingsUpdate(BaseModel):
     is_git_repo: Optional[bool] = None
     max_concurrent_tasks: Optional[int] = None
@@ -198,6 +204,37 @@ async def update_daemon_config(body: DaemonConfigBody):
         config["daemon"]["gate_timeout_seconds"] = body.gate_timeout_seconds
     save_system_config(config)
     return config["daemon"]
+
+
+@app.get("/api/config/gateway")
+async def get_gateway_config():
+    config = load_system_config()
+    tg = config.get("telegram", {})
+    return {
+        "telegram_enabled": tg.get("enabled", False),
+        "telegram_bot_token": tg.get("bot_token", ""),
+        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+    }
+
+
+@app.patch("/api/config/gateway")
+async def update_gateway_config(body: GatewayConfigBody):
+    config = load_system_config()
+    if "telegram" not in config:
+        config["telegram"] = {}
+    if body.telegram_enabled is not None:
+        config["telegram"]["enabled"] = body.telegram_enabled
+    if body.telegram_bot_token is not None:
+        config["telegram"]["bot_token"] = body.telegram_bot_token
+    if body.telegram_allowed_chat_ids is not None:
+        config["telegram"]["allowed_chat_ids"] = body.telegram_allowed_chat_ids
+    save_system_config(config)
+    tg = config["telegram"]
+    return {
+        "telegram_enabled": tg.get("enabled", False),
+        "telegram_bot_token": tg.get("bot_token", ""),
+        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+    }
 
 
 @app.post("/api/daemon/stop")

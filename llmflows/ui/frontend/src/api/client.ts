@@ -50,6 +50,7 @@ import type {
   InboxResponse,
   AgentInfo,
   AgentConfigEntry,
+  GatewayConfig,
 } from "./types";
 
 export const api = {
@@ -165,6 +166,10 @@ export const api = {
     post<AgentConfigEntry[]>(`/api/agents/${agent}/config`, { key, value }),
   deleteAgentConfig: (agent: string, configId: string) =>
     del<{ ok: boolean }>(`/api/agents/${agent}/config/${configId}`),
+
+  // Gateway
+  getGatewayConfig: () => get<GatewayConfig>("/api/config/gateway"),
+  updateGatewayConfig: (body: Partial<GatewayConfig>) => patch<GatewayConfig>("/api/config/gateway", body),
 
 };
 

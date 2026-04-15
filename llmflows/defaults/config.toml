@@ -5,3 +5,7 @@ gate_timeout_seconds = 60
 [ui]
 port = 4300
 host = "localhost"
+[telegram]
+enabled = false
+bot_token = ""
+allowed_chat_ids = []

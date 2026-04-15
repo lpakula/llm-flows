@@ -110,6 +110,12 @@ export interface DaemonConfig {
   gate_timeout_seconds: number;
 }
 
+export interface GatewayConfig {
+  telegram_enabled: boolean;
+  telegram_bot_token: string;
+  telegram_allowed_chat_ids: number[];
+}
+
 export interface DashboardEntry {
   project: Project;
   task_counts: { running: number; queued: number; idle: number };

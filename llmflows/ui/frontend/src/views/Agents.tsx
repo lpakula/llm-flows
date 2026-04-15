@@ -80,6 +80,7 @@ export function AgentsView() {
   const [agentNames, setAgentNames] = useState<string[]>([]);
   const [models, setModels] = useState<Record<string, string[]>>({});
 
+
   useEffect(() => {
     (async () => {
       try {
@@ -369,6 +370,7 @@ export function AgentsView() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

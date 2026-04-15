@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { CheckSquare, Workflow, Settings, Bot, SlidersHorizontal, Inbox } from "lucide-react";
+import { CheckSquare, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -158,6 +158,10 @@ export function Sidebar() {
           <NavLink to="/agents" className={navClass}>
             <Bot size={14} className="flex-shrink-0" />
             Agents
+          </NavLink>
+          <NavLink to="/gateway" className={navClass}>
+            <Radio size={14} className="flex-shrink-0" />
+            Gateway
           </NavLink>
           <NavLink to="/settings" className={navClass}>
             <SlidersHorizontal size={14} className="flex-shrink-0" />

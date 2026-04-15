@@ -31,6 +31,9 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
+        from .gateway.notifications import NotificationService
+        self.notifications = NotificationService()
+        self._telegram = None
 
     @staticmethod
     def _build_step_vars(base_vars: dict, project) -> dict:
@@ -40,12 +43,32 @@ class Daemon:
             merged[f"project.{k}"] = v
         return merged
 
+    def _maybe_start_telegram(self) -> None:
+        """Start the Telegram bot if configured."""
+        tg_config = self.config.get("telegram", {})
+        if not tg_config.get("enabled") or not tg_config.get("bot_token"):
+            return
+        try:
+            from .gateway.telegram import TelegramBot
+            from ..db.database import get_session
+
+            self._telegram = TelegramBot(
+                config=tg_config,
+                session_factory=get_session,
+                notification_service=self.notifications,
+            )
+            self._telegram.start_background()
+            logger.info("Telegram bot started")
+        except Exception:
+            logger.exception("Failed to start Telegram bot")
+
     def start(self) -> None:
         """Start the daemon loop."""
         self.running = True
         self._stop_event.clear()
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+        self._maybe_start_telegram()
 
         logger.info("Daemon started (poll every %ds)", self.poll_interval)
 
@@ -56,6 +79,8 @@ class Daemon:
                 logger.exception("Error in daemon tick")
             self._stop_event.wait(self.poll_interval)
 
+        if self._telegram:
+            self._telegram.stop()
         logger.info("Daemon stopped")
 
     def _handle_signal(self, signum, frame):
@@ -264,6 +289,13 @@ class Daemon:
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     run_svc.mark_completed(run.id, outcome="timeout")
                     task_svc.update(run.task_id, task_status="stopped")
+                    self.notifications.notify("run.timeout", {
+                        "task_name": task.name or task.id,
+                        "run_id": run.id,
+                        "task_id": task.id,
+                        "project_name": project.name,
+                        "timeout_minutes": int(elapsed / 60),
+                    })
             return
 
         run_svc.session.refresh(step_run)
@@ -293,7 +325,7 @@ class Daemon:
         step_type = (snap_step_def or {}).get("step_type", "agent")
         if step_type in ("manual", "prompt"):
             run_svc.mark_awaiting_user(step_run.id)
-            run_svc.create_inbox_item(
+            inbox_item = run_svc.create_inbox_item(
                 type="awaiting_user", reference_id=step_run.id,
                 task_id=task.id, project_id=task.project_id,
                 title=f"{task.name or task.id} — {step_run.step_name} ({step_type})",
@@ -302,6 +334,25 @@ class Daemon:
                 "Task %s run %s step '%s' awaiting user (%s)",
                 task.id, run.id, step_run.step_name, step_type,
             )
+            user_message = ""
+            try:
+                result_file = ContextService.get_artifacts_dir(
+                    project_root, task.id, run.id,
+                ) / f"{step_run.step_position:02d}-{step_run.step_name}" / "_result.md"
+                if result_file.exists():
+                    user_message = result_file.read_text().strip()
+            except (PermissionError, OSError):
+                pass
+            self.notifications.notify("step.awaiting_user", {
+                "task_name": task.name or task.id,
+                "task_id": task.id,
+                "run_id": run.id,
+                "step_name": step_run.step_name,
+                "step_run_id": step_run.id,
+                "step_type": step_type,
+                "inbox_id": inbox_item.id,
+                "user_message": user_message,
+            })
             return
 
         run_svc.mark_step_completed(step_run.id, outcome="completed")
@@ -410,6 +461,13 @@ class Daemon:
                         task.id, run.id, step_run.step_name, retry_count,
                     )
                     run_svc.mark_completed(run.id, outcome="interrupted")
+                    self.notifications.notify("run.completed", {
+                        "task_name": task.name or task.id,
+                        "task_id": task.id,
+                        "run_id": run.id,
+                        "outcome": "interrupted",
+                        "summary": f"Step '{step_run.step_name}' failed gate checks after {retry_count} retries.",
+                    })
                     return
 
         self._advance_to_next_step(
@@ -870,19 +928,28 @@ class Daemon:
             self._maybe_create_completed_inbox(run, task, run_svc)
             task_svc.update(task.id, task_status="completed")
 
-    @staticmethod
-    def _maybe_create_completed_inbox(run, task, run_svc: RunService) -> None:
-        """Create a completed_run inbox item if the project opts in."""
+    def _maybe_create_completed_inbox(self, run, task, run_svc: RunService) -> None:
+        """Create a completed_run inbox item and send notification if the project opts in."""
+        inbox_id = None
         try:
             project = run_svc.session.query(Project).filter_by(id=task.project_id).first()
             if project and project.inbox_completed_runs is not False:
-                run_svc.create_inbox_item(
+                inbox_item = run_svc.create_inbox_item(
                     type="completed_run", reference_id=run.id,
                     task_id=task.id, project_id=task.project_id,
                     title=task.name or task.id,
                 )
+                inbox_id = inbox_item.id
         except Exception:
             logger.debug("Failed to create completed inbox item for run %s", run.id, exc_info=True)
+        self.notifications.notify("run.completed", {
+            "task_name": task.name or task.id,
+            "task_id": task.id,
+            "run_id": run.id,
+            "outcome": run.outcome or "completed",
+            "summary": run.summary or "",
+            "inbox_id": inbox_id,
+        })
 
     @staticmethod
     def _publish_attachments(src_dir: Path, task_id: str, run_id: str) -> None:

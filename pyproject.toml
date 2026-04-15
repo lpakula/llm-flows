@@ -43,6 +43,9 @@ Documentation = "https://github.com/lpakula/llm-flows#readme"
 Issues = "https://github.com/lpakula/llm-flows/issues"
 
 [project.optional-dependencies]
+telegram = [
+    "python-telegram-bot>=20.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
