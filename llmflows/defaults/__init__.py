@@ -1,4 +1,4 @@
-"""Package defaults -- used as fallback when no project override exists."""
+"""Package defaults -- used as fallback when no space override exists."""
 
 from pathlib import Path
 

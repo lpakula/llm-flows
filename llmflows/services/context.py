@@ -24,9 +24,9 @@ BINARY_EXTENSIONS = frozenset({
 })
 
 class ContextService:
-    def __init__(self, project_dir: Path):
-        """Initialize with the .llmflows/ directory in a project or worktree."""
-        self.project_dir = project_dir
+    def __init__(self, space_dir: Path):
+        """Initialize with the .llmflows/ directory in a space or worktree."""
+        self.space_dir = space_dir
 
     def render_step_instructions(self, context: dict) -> str:
         """Render step_start.md as the prompt for a single step agent."""
@@ -155,5 +155,5 @@ class ContextService:
 
     @staticmethod
     def get_artifacts_dir(project_path: Path, run_id: str) -> Path:
-        """Return the artifacts directory for a run, always under the main project root."""
+        """Return the artifacts directory for a run, always under the main space root."""
         return project_path / ".llmflows" / "runs" / run_id / "artifacts"

@@ -37,8 +37,8 @@ function del<T>(url: string) {
 }
 
 import type {
-  Project,
-  ProjectSettings,
+  Space,
+  SpaceSettings,
   FlowRun,
   Flow,
   FlowStep,
@@ -50,6 +50,7 @@ import type {
   InboxResponse,
   AgentInfo,
   AgentConfigEntry,
+  ProviderInfo,
   GatewayConfig,
   SkillInfo,
 } from "./types";
@@ -58,36 +59,33 @@ export const api = {
   // Dashboard
   getDashboard: () => get<DashboardEntry[]>("/api/dashboard"),
 
-  // Projects
-  listProjects: () => get<Project[]>("/api/projects"),
-  getProject: (id: string) => get<Project>(`/api/projects/${id}`),
-  updateProject: (id: string, body: Partial<{ name: string }>) =>
-    patch<Project>(`/api/projects/${id}`, body),
-  deleteProject: (id: string) => del<{ ok: boolean }>(`/api/projects/${id}`),
-  getProjectSettings: (id: string) => get<ProjectSettings>(`/api/projects/${id}/settings`),
-  updateProjectSettings: (id: string, body: Partial<ProjectSettings>) =>
-    patch<ProjectSettings>(`/api/projects/${id}/settings`, body),
-  getProjectVariables: (id: string) =>
-    get<Record<string, string>>(`/api/projects/${id}/variables`),
-  setProjectVariable: (id: string, key: string, value: string) =>
-    put<Record<string, string>>(`/api/projects/${id}/variables/${encodeURIComponent(key)}`, { value }),
-  deleteProjectVariable: (id: string, key: string) =>
-    del<Record<string, string>>(`/api/projects/${id}/variables/${encodeURIComponent(key)}`),
+  // Spaces
+  listSpaces: () => get<Space[]>("/api/spaces"),
+  getSpace: (id: string) => get<Space>(`/api/spaces/${id}`),
+  updateSpace: (id: string, body: Partial<{ name: string }>) =>
+    patch<Space>(`/api/spaces/${id}`, body),
+  deleteSpace: (id: string) => del<{ ok: boolean }>(`/api/spaces/${id}`),
+  getSpaceSettings: (id: string) => get<SpaceSettings>(`/api/spaces/${id}/settings`),
+  updateSpaceSettings: (id: string, body: Partial<SpaceSettings>) =>
+    patch<SpaceSettings>(`/api/spaces/${id}/settings`, body),
+  getSpaceVariables: (id: string) =>
+    get<Record<string, string>>(`/api/spaces/${id}/variables`),
+  setSpaceVariable: (id: string, key: string, value: string) =>
+    put<Record<string, string>>(`/api/spaces/${id}/variables/${encodeURIComponent(key)}`, { value }),
+  deleteSpaceVariable: (id: string, key: string) =>
+    del<Record<string, string>>(`/api/spaces/${id}/variables/${encodeURIComponent(key)}`),
 
-  // Agent Aliases
+  // Agent Aliases (pre-defined, edit agent/model only)
   listAgentAliases: () => get<AgentAlias[]>("/api/agent-aliases"),
-  createAgentAlias: (body: { name: string; agent: string; model: string }) =>
-    post<AgentAlias>("/api/agent-aliases", body),
-  updateAgentAlias: (id: string, body: Partial<AgentAlias>) =>
+  updateAgentAlias: (id: string, body: { agent?: string; model?: string }) =>
     patch<AgentAlias>(`/api/agent-aliases/${id}`, body),
-  deleteAgentAlias: (id: string) => del<{ ok: boolean }>(`/api/agent-aliases/${id}`),
 
   // Scheduling
-  scheduleFlow: (projectId: string, flowId: string, oneShot = false) =>
-    post<FlowRun>(`/api/projects/${projectId}/schedule`, { flow_id: flowId, one_shot: oneShot }),
+  scheduleFlow: (spaceId: string, flowId: string, oneShot = false) =>
+    post<FlowRun>(`/api/spaces/${spaceId}/schedule`, { flow_id: flowId, one_shot: oneShot }),
 
   // Flow Runs
-  listFlowRuns: (projectId: string) => get<FlowRun[]>(`/api/projects/${projectId}/runs`),
+  listFlowRuns: (spaceId: string) => get<FlowRun[]>(`/api/spaces/${spaceId}/runs`),
   stopRun: (runId: string) => post<{ ok: boolean; killed: boolean }>(`/api/runs/${runId}/stop`),
   pauseRun: (runId: string) => post<{ ok: boolean }>(`/api/runs/${runId}/pause`),
   resumeRun: (runId: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/resume`, { prompt }),
@@ -104,11 +102,11 @@ export const api = {
   // Queue
   getQueue: () => get<FlowRun[]>("/api/queue"),
 
-  // Flows (project-scoped)
-  listFlows: (projectId: string) => get<Flow[]>(`/api/projects/${projectId}/flows`),
+  // Flows (space-scoped)
+  listFlows: (spaceId: string) => get<Flow[]>(`/api/spaces/${spaceId}/flows`),
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
-  createFlow: (projectId: string, body: { name: string; description?: string; copy_from?: string }) =>
-    post<Flow>(`/api/projects/${projectId}/flows`, body),
+  createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
+    post<Flow>(`/api/spaces/${spaceId}/flows`, body),
   updateFlow: (id: string, body: Partial<{ name: string; description: string }>) =>
     patch<Flow>(`/api/flows/${id}`, body),
   deleteFlow: (id: string) => del<{ ok: boolean }>(`/api/flows/${id}`),
@@ -120,16 +118,16 @@ export const api = {
     del<{ ok: boolean }>(`/api/flows/${flowId}/steps/${stepId}`),
   reorderSteps: (flowId: string, stepIds: string[]) =>
     post<Flow>(`/api/flows/${flowId}/reorder`, { step_ids: stepIds }),
-  exportFlows: (projectId: string) => post<unknown>(`/api/projects/${projectId}/flows/export`),
-  importFlows: (projectId: string, file: File) => {
+  exportFlows: (spaceId: string) => post<unknown>(`/api/spaces/${spaceId}/flows/export`),
+  importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return fetch(`/api/projects/${projectId}/flows/import`, { method: "POST", body: formData }).then((r) => r.json());
+    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then((r) => r.json());
   },
 
   // Skills
-  listSkills: (projectId: string) => get<SkillInfo[]>(`/api/projects/${projectId}/skills`),
-  getSkillContent: (projectId: string, name: string) => get<{ content: string }>(`/api/projects/${projectId}/skills/${encodeURIComponent(name)}/content`),
+  listSkills: (spaceId: string) => get<SkillInfo[]>(`/api/spaces/${spaceId}/skills`),
+  getSkillContent: (spaceId: string, name: string) => get<{ content: string }>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}/content`),
 
   // Daemon
   getDaemonStatus: () => get<DaemonStatus>("/api/daemon/status"),
@@ -142,6 +140,7 @@ export const api = {
   // Agents
   listAgents: () => get<string[]>("/api/agents"),
   getAgentsStatus: () => get<Record<string, AgentInfo>>("/api/agents/status"),
+  getProvidersStatus: () => get<Record<string, ProviderInfo>>("/api/providers/status"),
   listModels: (agent?: string) =>
     get<string[]>(agent ? `/api/models?agent=${encodeURIComponent(agent)}` : "/api/models"),
   getAgentConfig: (agent: string) => get<AgentConfigEntry[]>(`/api/agents/${agent}/config`),

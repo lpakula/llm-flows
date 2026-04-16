@@ -8,9 +8,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from llmflows.db.models import Base, Flow, FlowStep, Project
+from llmflows.db.models import Base, Flow, FlowStep, Space
 from llmflows.services.flow import FlowService
-from llmflows.services.project import ProjectService
+from llmflows.services.space import SpaceService
 from llmflows.ui.server import app
 
 
@@ -26,27 +26,27 @@ def api_db():
     Session = sessionmaker(bind=engine)
 
     setup_session = Session()
-    project = Project(name="test-project", path="/tmp/test-project")
-    setup_session.add(project)
+    space = Space(name="test-space", path="/tmp/test-space")
+    setup_session.add(space)
     setup_session.flush()
 
-    flow = Flow(name="default", description="Default flow", project_id=project.id)
+    flow = Flow(name="default", description="Default flow", space_id=space.id)
     setup_session.add(flow)
     setup_session.flush()
     step = FlowStep(flow_id=flow.id, name="research", position=0, content="# Research")
     setup_session.add(step)
     setup_session.commit()
 
-    project_id = project.id
+    space_id = space.id
     flow_id = flow.id
     setup_session.close()
 
     def mock_get_services():
         s = Session()
-        return s, ProjectService(s)
+        return s, SpaceService(s)
 
     with patch("llmflows.ui.server._get_services", mock_get_services):
-        yield {"project_id": project_id, "flow_id": flow_id}
+        yield {"space_id": space_id, "flow_id": flow_id}
 
     Base.metadata.drop_all(engine)
 
@@ -56,28 +56,28 @@ def client(api_db):
     return TestClient(app)
 
 
-class TestProjectsAPI:
-    def test_list_projects(self, client, api_db):
-        response = client.get("/api/projects")
+class TestSpacesAPI:
+    def test_list_spaces(self, client, api_db):
+        response = client.get("/api/spaces")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
-        assert data[0]["name"] == "test-project"
+        assert data[0]["name"] == "test-space"
 
-    def test_get_project(self, client, api_db):
-        response = client.get(f"/api/projects/{api_db['project_id']}")
+    def test_get_space(self, client, api_db):
+        response = client.get(f"/api/spaces/{api_db['space_id']}")
         assert response.status_code == 200
-        assert response.json()["name"] == "test-project"
+        assert response.json()["name"] == "test-space"
 
-    def test_get_project_not_found(self, client):
-        response = client.get("/api/projects/nope")
+    def test_get_space_not_found(self, client):
+        response = client.get("/api/spaces/nope")
         assert response.status_code == 404
 
 
 class TestFlowsAPI:
     def test_list_flows(self, client, api_db):
-        pid = api_db["project_id"]
-        response = client.get(f"/api/projects/{pid}/flows")
+        sid = api_db["space_id"]
+        response = client.get(f"/api/spaces/{sid}/flows")
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 1
@@ -103,27 +103,27 @@ class TestDashboardAPI:
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 1
-        assert "project" in data[0]
+        assert "space" in data[0]
         assert "run_counts" in data[0]
 
 
 class TestScheduleAPI:
     def test_schedule_flow_run(self, client, api_db):
-        pid = api_db["project_id"]
+        sid = api_db["space_id"]
         fid = api_db["flow_id"]
         response = client.post(
-            f"/api/projects/{pid}/schedule",
+            f"/api/spaces/{sid}/schedule",
             json={"flow_id": fid, "one_shot": False},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["flow_id"] == fid
-        assert data["project_id"] == pid
+        assert data["space_id"] == sid
 
     def test_schedule_flow_not_found(self, client, api_db):
-        pid = api_db["project_id"]
+        sid = api_db["space_id"]
         response = client.post(
-            f"/api/projects/{pid}/schedule",
+            f"/api/spaces/{sid}/schedule",
             json={"flow_id": "nope", "one_shot": False},
         )
         assert response.status_code == 404

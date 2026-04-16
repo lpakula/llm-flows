@@ -7,22 +7,22 @@ import type { SkillInfo } from "@/api/types";
 
 function SkillPreviewModal({
   skill,
-  projectId,
+  spaceId,
   onClose,
 }: {
   skill: SkillInfo;
-  projectId: string;
+  spaceId: string;
   onClose: () => void;
 }) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.getSkillContent(projectId, skill.name)
+    api.getSkillContent(spaceId, skill.name)
       .then((res) => setContent(res.content))
       .catch(() => setContent("*Failed to load skill content.*"))
       .finally(() => setLoading(false));
-  }, [projectId, skill.name]);
+  }, [spaceId, skill.name]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -77,19 +77,19 @@ function SkillCard({ skill, onClick }: { skill: SkillInfo; onClick: () => void }
 }
 
 export function SkillsView() {
-  const { projectId } = useParams<{ projectId: string }>();
+  const { spaceId } = useParams<{ spaceId: string }>();
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [previewSkill, setPreviewSkill] = useState<SkillInfo | null>(null);
 
   const load = useCallback(async () => {
-    if (!projectId) return;
+    if (!spaceId) return;
     try {
-      const sk = await api.listSkills(projectId);
+      const sk = await api.listSkills(spaceId);
       setSkills(sk);
     } catch (e) {
       console.error("Skills load error:", e);
     }
-  }, [projectId]);
+  }, [spaceId]);
 
   useEffect(() => { load(); }, [load]);
   useInterval(load, 10000);
@@ -112,10 +112,10 @@ export function SkillsView() {
         )}
       </div>
 
-      {previewSkill && projectId && (
+      {previewSkill && spaceId && (
         <SkillPreviewModal
           skill={previewSkill}
-          projectId={projectId}
+          spaceId={spaceId}
           onClose={() => setPreviewSkill(null)}
         />
       )}

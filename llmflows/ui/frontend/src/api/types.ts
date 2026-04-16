@@ -1,18 +1,21 @@
-export interface Project {
+export interface Space {
   id: string;
   name: string;
   path: string;
   created_at: string;
 }
 
-export interface ProjectSettings {
+export interface SpaceSettings {
   is_git_repo: boolean;
   max_concurrent_tasks: number;
 }
 
+export type StepType = "code" | "chat" | "shell" | "manual";
+
 export interface AgentAlias {
   id: string;
   name: string;
+  type: "code" | "chat";
   agent: string;
   model: string;
   position: number;
@@ -22,7 +25,7 @@ export interface AgentAlias {
 
 export interface FlowRun {
   id: string;
-  project_id: string;
+  space_id: string;
   flow_id: string | null;
   flow_name: string | null;
   current_step: string | null;
@@ -38,17 +41,24 @@ export interface FlowRun {
   paused_at: string | null;
   resume_prompt: string;
   duration_seconds: number | null;
-  project_name?: string;
+  space_name?: string;
   attachments?: { name: string; url: string }[];
+}
+
+export interface FlowWarning {
+  step_name: string;
+  warning_type: string;
+  message: string;
 }
 
 export interface Flow {
   id: string;
-  project_id: string;
+  space_id: string;
   name: string;
   description: string;
   step_count: number;
   steps: FlowStep[];
+  warnings?: FlowWarning[];
   created_at: string;
   updated_at: string;
 }
@@ -61,10 +71,11 @@ export interface FlowStep {
   gates: Gate[];
   ifs: Gate[];
   agent_alias: string;
-  step_type: string;
+  step_type: StepType;
   allow_max: boolean;
   max_gate_retries: number;
   skills: string[];
+  tools: string[];
 }
 
 export interface Gate {
@@ -90,7 +101,7 @@ export interface GatewayConfig {
 }
 
 export interface DashboardEntry {
-  project: Project;
+  space: Space;
   run_counts: { running: number; queued: number };
   queue_depth: number;
   active_runs: number;
@@ -139,8 +150,8 @@ export interface InboxItem {
   step_name: string;
   step_type: "manual";
   step_position: number;
-  project_id: string;
-  project_name: string;
+  space_id: string;
+  space_name: string;
   run_id: string;
   flow_name: string;
   prompt: string;
@@ -152,8 +163,8 @@ export interface InboxItem {
 export interface CompletedRunItem {
   inbox_id: string;
   run_id: string;
-  project_id: string;
-  project_name: string;
+  space_id: string;
+  space_name: string;
   flow_name: string;
   outcome: string;
   summary: string;
@@ -174,6 +185,15 @@ export interface AgentInfo {
   binary: string;
   binary_path: string | null;
   command: string;
+  api_key_env: string;
+  configured: boolean;
+}
+
+export interface ProviderInfo {
+  label: string;
+  api_key_env: string;
+  configured: boolean;
+  supports_tools: string[];
 }
 
 export interface AgentConfigEntry {

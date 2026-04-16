@@ -7,9 +7,9 @@ from llmflows.services.context import ContextService
 
 class TestContextService:
     def _setup_dirs(self, tmp_path: Path) -> ContextService:
-        project_dir = tmp_path / ".llmflows"
-        project_dir.mkdir()
-        return ContextService(project_dir)
+        space_dir = tmp_path / ".llmflows"
+        space_dir.mkdir()
+        return ContextService(space_dir)
 
     def test_render_step_instructions(self, temp_dir):
         svc = self._setup_dirs(temp_dir)

@@ -7,7 +7,7 @@ import click
 
 from ..db.database import get_session, init_db
 from ..services.flow import FlowService
-from ..services.project import ProjectService
+from ..services.space import SpaceService
 
 
 def _get_session():
@@ -15,14 +15,14 @@ def _get_session():
     return get_session()
 
 
-def _resolve_project(session):
-    """Resolve the current project or exit."""
-    project_svc = ProjectService(session)
-    project = project_svc.resolve_current()
-    if project is None:
-        click.echo("Not inside a registered project. Run 'llmflows register' first.")
+def _resolve_space(session):
+    """Resolve the current space or exit."""
+    space_svc = SpaceService(session)
+    space = space_svc.resolve_current()
+    if space is None:
+        click.echo("Not inside a registered space. Run 'llmflows register' first.")
         raise SystemExit(1)
-    return project
+    return space
 
 
 @click.group()
@@ -36,9 +36,9 @@ def flow_list():
     """List all flows with step counts."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        flows = flow_svc.list_by_project(project.id)
+        flows = flow_svc.list_by_space(space.id)
         if not flows:
             click.echo("No flows found. Run 'llmflows register' to seed defaults.")
             return
@@ -74,9 +74,9 @@ def flow_show(name):
     """Show flow details and ordered steps."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(name, project.id)
+        f = flow_svc.get_by_name(name, space.id)
         if not f:
             click.echo(f"Flow '{name}' not found.")
             raise SystemExit(1)
@@ -101,17 +101,17 @@ def flow_create(name, copy_from, description):
     """Create a new flow (optionally duplicate an existing flow)."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
         if copy_from:
-            f = flow_svc.duplicate(copy_from, name, project_id=project.id)
+            f = flow_svc.duplicate(copy_from, name, space_id=space.id)
             if not f:
                 click.echo(f"Source flow '{copy_from}' not found.")
                 raise SystemExit(1)
             if description:
                 flow_svc.update(f.id, description=description)
         else:
-            f = flow_svc.create(name=name, project_id=project.id, description=description)
+            f = flow_svc.create(name=name, space_id=space.id, description=description)
         click.echo(f"Created flow {click.style(f.name, fg='cyan')} ({f.id})")
     except ValueError as e:
         click.echo(str(e), err=True)
@@ -127,9 +127,9 @@ def flow_delete(name, yes):
     """Delete a flow (cannot delete 'default')."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(name, project.id)
+        f = flow_svc.get_by_name(name, space.id)
         if not f:
             click.echo(f"Flow '{name}' not found.")
             raise SystemExit(1)
@@ -152,14 +152,14 @@ def flow_export(output):
     """Export all flows to JSON."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
         if output:
-            flow_svc.export_flows(project.id, Path(output))
+            flow_svc.export_flows(space.id, Path(output))
             click.echo(f"Exported to {output}")
         else:
             import json
-            data = flow_svc.export_flows(project.id)
+            data = flow_svc.export_flows(space.id)
             click.echo(json.dumps(data, indent=2))
     finally:
         session.close()
@@ -171,9 +171,9 @@ def flow_import(file):
     """Import flows from a JSON file."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        count = flow_svc.import_flows(Path(file), project.id)
+        count = flow_svc.import_flows(Path(file), space.id)
         click.echo(f"Imported {count} flow(s) from {file}")
     finally:
         session.close()
@@ -191,9 +191,9 @@ def step_list(flow_name):
     """List steps in a flow with positions."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(flow_name, project.id)
+        f = flow_svc.get_by_name(flow_name, space.id)
         if not f:
             click.echo(f"Flow '{flow_name}' not found.")
             raise SystemExit(1)
@@ -213,9 +213,9 @@ def step_add(flow_name, step_name, content, position):
     """Add a step to a flow."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(flow_name, project.id)
+        f = flow_svc.get_by_name(flow_name, space.id)
         if not f:
             click.echo(f"Flow '{flow_name}' not found.")
             raise SystemExit(1)
@@ -245,9 +245,9 @@ def step_edit(flow_name, step_name, content):
     """Update a step's content."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(flow_name, project.id)
+        f = flow_svc.get_by_name(flow_name, space.id)
         if not f:
             click.echo(f"Flow '{flow_name}' not found.")
             raise SystemExit(1)
@@ -276,9 +276,9 @@ def step_remove(flow_name, step_name):
     """Remove a step from a flow."""
     session = _get_session()
     try:
-        project = _resolve_project(session)
+        space = _resolve_space(session)
         flow_svc = FlowService(session)
-        f = flow_svc.get_by_name(flow_name, project.id)
+        f = flow_svc.get_by_name(flow_name, space.id)
         if not f:
             click.echo(f"Flow '{flow_name}' not found.")
             raise SystemExit(1)

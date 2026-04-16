@@ -172,29 +172,29 @@ Step content, gate commands, gate messages, and IF commands support template var
 - `{{task.id}}` — current task ID
 - `{{flow.name}}` — current flow name
 - `{{artifacts_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
-- `{{project.<KEY>}}` — project-level variable (set via `llmflows project var set KEY VALUE`)
+- `{{space.<KEY>}}` — space-level variable (set via `llmflows space var set KEY VALUE`)
 
-### Project variables
+### Space variables
 
-Project variables are key-value pairs stored in the database and available to all flows. They are interpolated before shell execution, so they work in gate commands, IF commands, and step content.
+Space variables are key-value pairs stored in the database and available to all flows. They are interpolated before shell execution, so they work in gate commands, IF commands, and step content.
 
 ```bash
 # Set a variable
-llmflows project var set REPOS_PATH /Users/me/repos
-llmflows project var set DEFAULT_ORG mycompany
+llmflows space var set REPOS_PATH /Users/me/repos
+llmflows space var set DEFAULT_ORG mycompany
 
 # List all variables
-llmflows project var list
+llmflows space var list
 
 # Remove a variable
-llmflows project var remove REPOS_PATH
+llmflows space var remove REPOS_PATH
 ```
 
-Use in gates and step content as `{{project.REPOS_PATH}}`:
+Use in gates and step content as `{{space.REPOS_PATH}}`:
 
 ```json
 {
-  "command": "test -d {{project.REPOS_PATH}}/my-service/.worktrees/task-{{task.id}}",
+  "command": "test -d {{space.REPOS_PATH}}/my-service/.worktrees/task-{{task.id}}",
   "message": "Worktree not found."
 }
 ```

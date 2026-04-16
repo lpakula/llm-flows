@@ -158,7 +158,7 @@ Or with [uv](https://docs.astral.sh/uv/):
 uv tool install git+https://github.com/lpakula/llm-flows
 ```
 
-### 2. Register your project
+### 2. Register your space
 
 ```bash
 cd your-project
@@ -196,7 +196,7 @@ llmflows ui
 
 - Python 3.11+
 - Git
-- a Git-based project
+- a working directory for your flows
 - at least one supported agent CLI installed on the VM
 
 > [!WARNING]

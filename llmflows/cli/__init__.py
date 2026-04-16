@@ -3,7 +3,7 @@
 import click
 
 from .. import __version__
-from .admin import register_cmd, db, project
+from .admin import register_cmd, db, space
 from .agent import agent
 from .daemon import daemon
 from .flow import flow
@@ -20,7 +20,7 @@ def cli():
 
 cli.add_command(register_cmd)
 cli.add_command(db)
-cli.add_command(project)
+cli.add_command(space)
 cli.add_command(agent)
 cli.add_command(daemon)
 cli.add_command(flow)

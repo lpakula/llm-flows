@@ -4,7 +4,7 @@ import click
 
 from ..db.database import get_session, init_db
 from ..services.flow import FlowService
-from ..services.project import ProjectService
+from ..services.space import SpaceService
 from ..services.run import RunService
 
 
@@ -31,7 +31,7 @@ RUN_STATUS_COLORS = {
 }
 
 
-def _render_run_table(runs, show_project: bool = False) -> None:
+def _render_run_table(runs, show_space: bool = False) -> None:
     if not runs:
         click.echo("No runs found.")
         return
@@ -45,8 +45,8 @@ def _render_run_table(runs, show_project: bool = False) -> None:
             click.style("FLOW".ljust(flow_w), bold=True),
             click.style("STEP".ljust(step_w), bold=True),
         ]
-        if show_project:
-            cols.append(click.style("PROJECT", bold=True))
+        if show_space:
+            cols.append(click.style("SPACE", bold=True))
         return "  ".join(cols)
 
     def separator():
@@ -70,8 +70,8 @@ def _render_run_table(runs, show_project: bool = False) -> None:
             flow = flow[:flow_w - 1] + "…"
 
         last_col = ""
-        if show_project and r.project:
-            last_col = r.project.name
+        if show_space and r.space:
+            last_col = r.space.name
         if len(last_col) > 40:
             last_col = last_col[:37] + "..."
 
@@ -86,43 +86,43 @@ def _render_run_table(runs, show_project: bool = False) -> None:
 
 
 @run.command("list")
-@click.option("--all", "-a", "show_all", is_flag=True, help="Show runs across all projects")
-@click.option("--project", "-p", "project_id", default=None, help="Project ID")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show runs across all spaces")
+@click.option("--space", "-s", "space_id", default=None, help="Space ID")
 @click.option("--limit", "-n", default=20, show_default=True, help="Max runs to show")
-def run_list(show_all, project_id, limit):
-    """List flow runs for a project.
+def run_list(show_all, space_id, limit):
+    """List flow runs for a space.
 
     Examples:
       llmflows run list
       llmflows run list --all
-      llmflows run list --project abc123
+      llmflows run list --space abc123
     """
     session = _get_session()
     try:
         run_svc = RunService(session)
-        project_svc = ProjectService(session)
+        space_svc = SpaceService(session)
 
         if show_all:
-            projects = project_svc.list_all()
-        elif project_id:
-            p = project_svc.get(project_id)
+            spaces = space_svc.list_all()
+        elif space_id:
+            p = space_svc.get(space_id)
             if not p:
-                click.echo(f"Project {project_id} not found.")
+                click.echo(f"Space {space_id} not found.")
                 raise SystemExit(1)
-            projects = [p]
+            spaces = [p]
         else:
-            p = project_svc.resolve_current()
+            p = space_svc.resolve_current()
             if not p:
-                click.echo("Not inside a registered project. Use --all or --project <id>.")
+                click.echo("Not inside a registered space. Use --all or --space <id>.")
                 raise SystemExit(1)
-            projects = [p]
+            spaces = [p]
 
         all_runs = []
-        for proj in projects:
-            all_runs.extend(run_svc.list_by_project(proj.id))
+        for spc in spaces:
+            all_runs.extend(run_svc.list_by_space(spc.id))
 
         all_runs.sort(key=lambda r: r.created_at or "", reverse=True)
-        _render_run_table(all_runs[:limit], show_project=show_all or len(projects) > 1)
+        _render_run_table(all_runs[:limit], show_space=show_all or len(spaces) > 1)
     finally:
         session.close()
 
@@ -146,7 +146,7 @@ def run_show(run_id):
 
         status_fg = RUN_STATUS_COLORS.get(r.status, "bright_black")
         click.echo(f"Run ID:   {click.style(r.id, fg='cyan')}")
-        click.echo(f"Project:  {r.project.name if r.project else r.project_id}")
+        click.echo(f"Space:    {r.space.name if r.space else r.space_id}")
         click.echo(f"Status:   {click.style(r.status, fg=status_fg)}")
         click.echo(f"Flow:     {r.flow_name or '-'}")
         click.echo(f"Step:     {r.current_step or '-'}")
@@ -164,8 +164,8 @@ def run_show(run_id):
 @click.option("--flow", "-f", "flow_id", required=True, help="Flow ID to run")
 @click.option("--one-shot", "one_shot", is_flag=True,
               help="Run all steps in a single prompt (for capable models)")
-@click.option("--project", "-p", "project_id", default=None, help="Project ID")
-def run_schedule(flow_id, one_shot, project_id):
+@click.option("--space", "-s", "space_id", default=None, help="Space ID")
+def run_schedule(flow_id, one_shot, space_id):
     """Schedule a new flow run.
 
     Examples:
@@ -174,17 +174,17 @@ def run_schedule(flow_id, one_shot, project_id):
     """
     session = _get_session()
     try:
-        project_svc = ProjectService(session)
+        space_svc = SpaceService(session)
         run_svc = RunService(session)
         flow_svc = FlowService(session)
 
-        if project_id:
-            project = project_svc.get(project_id)
+        if space_id:
+            space = space_svc.get(space_id)
         else:
-            project = project_svc.resolve_current()
+            space = space_svc.resolve_current()
 
-        if not project:
-            click.echo("Not inside a registered project. Use --project <id>.")
+        if not space:
+            click.echo("Not inside a registered space. Use --space <id>.")
             raise SystemExit(1)
 
         flow = flow_svc.get(flow_id)
@@ -192,14 +192,14 @@ def run_schedule(flow_id, one_shot, project_id):
             click.echo(f"Flow {flow_id} not found.")
             raise SystemExit(1)
 
-        if one_shot and flow_svc.has_human_steps(flow.name, project_id=project.id):
+        if one_shot and flow_svc.has_human_steps(flow.name, space_id=space.id):
             click.echo(
                 click.style("Warning: ", fg="yellow")
                 + f"flow '{flow.name}' contains manual/prompt steps — ignoring --one-shot"
             )
             one_shot = False
 
-        new_run = run_svc.enqueue(project.id, flow_id, one_shot=one_shot)
+        new_run = run_svc.enqueue(space.id, flow_id, one_shot=one_shot)
         click.echo(
             f"Scheduled run {click.style(new_run.id, fg='cyan')} "
             f"for flow {click.style(flow.name, fg='bright_green')} "

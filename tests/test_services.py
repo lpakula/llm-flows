@@ -10,126 +10,126 @@ from llmflows.db.models import FlowStep
 from llmflows.services.agent import AgentService
 from llmflows.services.flow import FlowService
 from llmflows.services.gate import evaluate_gates
-from llmflows.services.project import ProjectService
+from llmflows.services.space import SpaceService
 from llmflows.services.run import RunService
 
 
-class TestProjectService:
+class TestSpaceService:
     def test_register(self, test_db):
-        svc = ProjectService(test_db)
-        project = svc.register("test", "/tmp/test")
-        assert project.name == "test"
-        assert project.path == "/tmp/test"
+        svc = SpaceService(test_db)
+        space = svc.register("test", "/tmp/test")
+        assert space.name == "test"
+        assert space.path == "/tmp/test"
 
     def test_register_idempotent(self, test_db):
-        svc = ProjectService(test_db)
-        p1 = svc.register("test", "/tmp/test")
-        p2 = svc.register("test", "/tmp/test")
-        assert p1.id == p2.id
+        svc = SpaceService(test_db)
+        s1 = svc.register("test", "/tmp/test")
+        s2 = svc.register("test", "/tmp/test")
+        assert s1.id == s2.id
 
     def test_unregister(self, test_db):
-        svc = ProjectService(test_db)
-        project = svc.register("test", "/tmp/test")
-        assert svc.unregister(project.id) is True
-        assert svc.get(project.id) is None
+        svc = SpaceService(test_db)
+        space = svc.register("test", "/tmp/test")
+        assert svc.unregister(space.id) is True
+        assert svc.get(space.id) is None
 
     def test_unregister_nonexistent(self, test_db):
-        svc = ProjectService(test_db)
+        svc = SpaceService(test_db)
         assert svc.unregister("nope") is False
 
     def test_list_all(self, test_db):
-        svc = ProjectService(test_db)
+        svc = SpaceService(test_db)
         svc.register("a", "/tmp/a")
         svc.register("b", "/tmp/b")
         assert len(svc.list_all()) == 2
 
     def test_get_by_path(self, test_db):
-        svc = ProjectService(test_db)
+        svc = SpaceService(test_db)
         svc.register("test", "/tmp/test")
         found = svc.get_by_path("/tmp/test")
         assert found is not None
         assert found.name == "test"
 
     def test_get_by_path_not_found(self, test_db):
-        svc = ProjectService(test_db)
+        svc = SpaceService(test_db)
         assert svc.get_by_path("/tmp/nope") is None
 
 
 class TestFlowService:
-    def test_create_flow(self, test_db, test_project):
+    def test_create_flow(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("test-flow", project_id=test_project.id, description="A test flow")
+        flow = svc.create("test-flow", space_id=test_space.id, description="A test flow")
         assert flow.name == "test-flow"
         assert flow.description == "A test flow"
 
-    def test_create_flow_with_steps(self, test_db, test_project):
+    def test_create_flow_with_steps(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("with-steps", project_id=test_project.id, steps=[
+        flow = svc.create("with-steps", space_id=test_space.id, steps=[
             {"name": "research", "position": 0, "content": "# Research"},
             {"name": "execute", "position": 1, "content": "# Execute"},
         ])
         assert len(flow.steps) == 2
         assert flow.steps[0].name == "research"
 
-    def test_create_flow_duplicate_name(self, test_db, test_project):
+    def test_create_flow_duplicate_name(self, test_db, test_space):
         import pytest
         svc = FlowService(test_db)
-        svc.create("dup-test", project_id=test_project.id)
+        svc.create("dup-test", space_id=test_space.id)
         with pytest.raises(ValueError, match="already exists"):
-            svc.create("dup-test", project_id=test_project.id)
+            svc.create("dup-test", space_id=test_space.id)
 
-    def test_get_by_name(self, test_db, test_project):
+    def test_get_by_name(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("lookup", project_id=test_project.id)
-        found = svc.get_by_name("lookup", test_project.id)
+        svc.create("lookup", space_id=test_space.id)
+        found = svc.get_by_name("lookup", test_space.id)
         assert found is not None
         assert found.name == "lookup"
 
-    def test_list_by_project(self, test_db, test_project):
+    def test_list_by_space(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("flow-a", project_id=test_project.id)
-        svc.create("flow-b", project_id=test_project.id)
-        flows = svc.list_by_project(test_project.id)
+        svc.create("flow-a", space_id=test_space.id)
+        svc.create("flow-b", space_id=test_space.id)
+        flows = svc.list_by_space(test_space.id)
         assert len(flows) == 2
 
-    def test_update(self, test_db, test_project):
+    def test_update(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("update-test", project_id=test_project.id, description="Old")
+        flow = svc.create("update-test", space_id=test_space.id, description="Old")
         svc.update(flow.id, description="New")
         updated = svc.get(flow.id)
         assert updated.description == "New"
 
-    def test_delete(self, test_db, test_project):
+    def test_delete(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("delete-me", project_id=test_project.id)
+        flow = svc.create("delete-me", space_id=test_space.id)
         assert svc.delete(flow.id) is True
         assert svc.get(flow.id) is None
 
-    def test_add_step(self, test_db, test_project):
+    def test_add_step(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("step-test", project_id=test_project.id)
+        flow = svc.create("step-test", space_id=test_space.id)
         step = svc.add_step(flow.id, "research", "# Research content")
         assert step.name == "research"
         assert step.content == "# Research content"
 
-    def test_update_step(self, test_db, test_project):
+    def test_update_step(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("step-update", project_id=test_project.id)
+        flow = svc.create("step-update", space_id=test_space.id)
         step = svc.add_step(flow.id, "test", "old content")
         svc.update_step(step.id, content="new content")
         updated = test_db.query(FlowStep).filter_by(id=step.id).first()
         assert updated.content == "new content"
 
-    def test_remove_step(self, test_db, test_project):
+    def test_remove_step(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("step-remove", project_id=test_project.id)
+        flow = svc.create("step-remove", space_id=test_space.id)
         step = svc.add_step(flow.id, "test", "content")
         assert svc.remove_step(step.id) is True
         assert test_db.query(FlowStep).filter_by(id=step.id).first() is None
 
-    def test_reorder_steps(self, test_db, test_project):
+    def test_reorder_steps(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("reorder", project_id=test_project.id)
+        flow = svc.create("reorder", space_id=test_space.id)
         s1 = svc.add_step(flow.id, "a", "", 0)
         s2 = svc.add_step(flow.id, "b", "", 1)
         s3 = svc.add_step(flow.id, "c", "", 2)
@@ -138,55 +138,55 @@ class TestFlowService:
         names = [s.name for s in sorted(flow.steps, key=lambda s: s.position)]
         assert names == ["c", "a", "b"]
 
-    def test_get_step_obj(self, test_db, test_project):
+    def test_get_step_obj(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("content-test", project_id=test_project.id, steps=[
+        svc.create("content-test", space_id=test_space.id, steps=[
             {"name": "research", "content": "# Do Research"},
         ])
-        step = svc.get_step_obj("content-test", "research", project_id=test_project.id)
+        step = svc.get_step_obj("content-test", "research", space_id=test_space.id)
         assert step is not None
         assert step.content == "# Do Research"
 
-    def test_get_step_obj_not_found(self, test_db, test_project):
+    def test_get_step_obj_not_found(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("no-step", project_id=test_project.id)
-        assert svc.get_step_obj("no-step", "nonexistent", project_id=test_project.id) is None
+        svc.create("no-step", space_id=test_space.id)
+        assert svc.get_step_obj("no-step", "nonexistent", space_id=test_space.id) is None
 
-    def test_get_flow_steps(self, test_db, test_project):
+    def test_get_flow_steps(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("ordered", project_id=test_project.id, steps=[
+        svc.create("ordered", space_id=test_space.id, steps=[
             {"name": "b", "position": 1},
             {"name": "a", "position": 0},
             {"name": "c", "position": 2},
         ])
-        steps = svc.get_flow_steps("ordered", project_id=test_project.id)
+        steps = svc.get_flow_steps("ordered", space_id=test_space.id)
         assert steps == ["a", "b", "c"]
 
-    def test_get_next_step(self, test_db, test_project):
+    def test_get_next_step(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("next-test", project_id=test_project.id, steps=[
+        svc.create("next-test", space_id=test_space.id, steps=[
             {"name": "research", "position": 0},
             {"name": "execute", "position": 1},
             {"name": "summary", "position": 2},
         ])
-        assert svc.get_next_step("next-test", "research", project_id=test_project.id) == "execute"
-        assert svc.get_next_step("next-test", "execute", project_id=test_project.id) == "summary"
-        assert svc.get_next_step("next-test", "summary", project_id=test_project.id) is None
+        assert svc.get_next_step("next-test", "research", space_id=test_space.id) == "execute"
+        assert svc.get_next_step("next-test", "execute", space_id=test_space.id) == "summary"
+        assert svc.get_next_step("next-test", "summary", space_id=test_space.id) is None
 
-    def test_duplicate(self, test_db, test_project):
+    def test_duplicate(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("source", project_id=test_project.id, description="Original", steps=[
+        svc.create("source", space_id=test_space.id, description="Original", steps=[
             {"name": "step1", "position": 0, "content": "Content 1"},
         ])
-        copy = svc.duplicate("source", "copy", project_id=test_project.id)
+        copy = svc.duplicate("source", "copy", space_id=test_space.id)
         assert copy.name == "copy"
         assert copy.description == "Original"
         assert len(copy.steps) == 1
         assert copy.steps[0].content == "Content 1"
 
-    def test_export_import_round_trip(self, test_db, test_project):
+    def test_export_import_round_trip(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("export-test", project_id=test_project.id, description="For export", steps=[
+        svc.create("export-test", space_id=test_space.id, description="For export", steps=[
             {"name": "step1", "position": 0, "content": "# Step 1"},
             {"name": "step2", "position": 1, "content": "# Step 2"},
         ])
@@ -194,7 +194,7 @@ class TestFlowService:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             path = Path(f.name)
 
-        svc.export_flows(test_project.id, path)
+        svc.export_flows(test_space.id, path)
 
         data = json.loads(path.read_text())
         assert data["version"] == 1
@@ -202,22 +202,22 @@ class TestFlowService:
         assert data["flows"][0]["name"] == "export-test"
         assert len(data["flows"][0]["steps"]) == 2
 
-        for step in list(svc.get_by_name("export-test", test_project.id).steps):
+        for step in list(svc.get_by_name("export-test", test_space.id).steps):
             test_db.delete(step)
-        test_db.delete(svc.get_by_name("export-test", test_project.id))
+        test_db.delete(svc.get_by_name("export-test", test_space.id))
         test_db.commit()
 
-        count = svc.import_flows(path, test_project.id)
+        count = svc.import_flows(path, test_space.id)
         assert count == 1
-        reimported = svc.get_by_name("export-test", test_project.id)
+        reimported = svc.get_by_name("export-test", test_space.id)
         assert reimported is not None
         assert len(reimported.steps) == 2
 
         path.unlink()
 
-    def test_create_flow_with_gates(self, test_db, test_project):
+    def test_create_flow_with_gates(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("gated-flow", project_id=test_project.id, steps=[
+        flow = svc.create("gated-flow", space_id=test_space.id, steps=[
             {
                 "name": "execute",
                 "position": 0,
@@ -234,18 +234,18 @@ class TestFlowService:
         ]
         assert flow.steps[1].get_gates() == []
 
-    def test_add_step_with_gates(self, test_db, test_project):
+    def test_add_step_with_gates(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("add-gated", project_id=test_project.id)
+        flow = svc.create("add-gated", space_id=test_space.id)
         step = svc.add_step(
             flow.id, "test", "# Test",
             gates=[{"command": "npm test", "message": "Tests pass"}],
         )
         assert step.get_gates() == [{"command": "npm test", "message": "Tests pass"}]
 
-    def test_step_obj_has_gates(self, test_db, test_project):
+    def test_step_obj_has_gates(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("gate-content", project_id=test_project.id, steps=[
+        svc.create("gate-content", space_id=test_space.id, steps=[
             {
                 "name": "build",
                 "position": 0,
@@ -253,16 +253,16 @@ class TestFlowService:
                 "gates": [{"command": "make build", "message": "Build succeeds"}],
             },
         ])
-        step = svc.get_step_obj("gate-content", "build", project_id=test_project.id)
+        step = svc.get_step_obj("gate-content", "build", space_id=test_space.id)
         assert step is not None
         assert step.content == "# Build"
         gates = step.get_gates()
         assert len(gates) == 1
         assert gates[0]["command"] == "make build"
 
-    def test_duplicate_preserves_gates(self, test_db, test_project):
+    def test_duplicate_preserves_gates(self, test_db, test_space):
         svc = FlowService(test_db)
-        svc.create("src-gates", project_id=test_project.id, steps=[
+        svc.create("src-gates", space_id=test_space.id, steps=[
             {
                 "name": "test",
                 "position": 0,
@@ -270,31 +270,31 @@ class TestFlowService:
                 "gates": [{"command": "pytest", "message": "Tests pass"}],
             },
         ])
-        copy = svc.duplicate("src-gates", "dst-gates", project_id=test_project.id)
+        copy = svc.duplicate("src-gates", "dst-gates", space_id=test_space.id)
         assert copy.steps[0].get_gates() == [{"command": "pytest", "message": "Tests pass"}]
 
-    def test_export_import_gates_round_trip(self, test_db, test_project):
+    def test_export_import_gates_round_trip(self, test_db, test_space):
         svc = FlowService(test_db)
         gates = [{"command": "ls *.png", "message": "Screenshots exist"}]
-        svc.create("gate-export", project_id=test_project.id, steps=[
+        svc.create("gate-export", space_id=test_space.id, steps=[
             {"name": "test", "position": 0, "content": "# Test", "gates": gates},
         ])
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             path = Path(f.name)
 
-        svc.export_flows(test_project.id, path)
+        svc.export_flows(test_space.id, path)
         data = json.loads(path.read_text())
         exported_gates = data["flows"][0]["steps"][0].get("gates", [])
         assert exported_gates == gates
 
-        for step in list(svc.get_by_name("gate-export", test_project.id).steps):
+        for step in list(svc.get_by_name("gate-export", test_space.id).steps):
             test_db.delete(step)
-        test_db.delete(svc.get_by_name("gate-export", test_project.id))
+        test_db.delete(svc.get_by_name("gate-export", test_space.id))
         test_db.commit()
 
-        svc.import_flows(path, test_project.id)
-        reimported = svc.get_by_name("gate-export", test_project.id)
+        svc.import_flows(path, test_space.id)
+        reimported = svc.get_by_name("gate-export", test_space.id)
         assert reimported.steps[0].get_gates() == gates
         path.unlink()
 
@@ -396,40 +396,40 @@ class TestGateEvaluation:
 
 
 class TestRunService:
-    def test_enqueue(self, test_db, test_project):
+    def test_enqueue(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("enqueue-flow", project_id=test_project.id)
+        flow = flow_svc.create("enqueue-flow", space_id=test_space.id)
 
-        run = run_svc.enqueue(test_project.id, flow.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         assert run.flow_id == flow.id
         assert run.started_at is None
         assert run.status == "queued"
 
-    def test_get_pending(self, test_db, test_project):
+    def test_get_pending(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("pending-flow", project_id=test_project.id)
-        run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("pending-flow", space_id=test_space.id)
+        run_svc.enqueue(test_space.id, flow.id)
 
-        pending = run_svc.get_pending(test_project.id)
+        pending = run_svc.get_pending(test_space.id)
         assert pending is not None
 
-    def test_mark_started(self, test_db, test_project):
+    def test_mark_started(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("start-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("start-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
 
         run_svc.mark_started(run.id)
         assert run.started_at is not None
         assert run.status == "running"
 
-    def test_update_run_step(self, test_db, test_project):
+    def test_update_run_step(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("step-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("step-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         run_svc.update_run_step(run.id, "research", "step-flow")
@@ -437,11 +437,11 @@ class TestRunService:
         completed = json.loads(run.steps_completed)
         assert "research" in completed
 
-    def test_create_step_run(self, test_db, test_project):
+    def test_create_step_run(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("step-run-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("step-run-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "step-run-flow", "cursor", "auto")
@@ -450,11 +450,11 @@ class TestRunService:
         assert sr.agent == "cursor"
         assert sr.started_at is not None
 
-    def test_mark_step_completed(self, test_db, test_project):
+    def test_mark_step_completed(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("step-complete-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("step-complete-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "step-complete-flow")
@@ -463,11 +463,11 @@ class TestRunService:
         assert sr.completed_at is not None
         assert sr.outcome == "completed"
 
-    def test_get_active_step(self, test_db, test_project):
+    def test_get_active_step(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("active-step-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("active-step-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "active-step-flow")
@@ -475,11 +475,11 @@ class TestRunService:
         assert active is not None
         assert active.id == sr.id
 
-    def test_list_step_runs(self, test_db, test_project):
+    def test_list_step_runs(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("list-steps-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("list-steps-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         run_svc.create_step_run(run.id, "research", 0, "list-steps-flow")
@@ -489,11 +489,11 @@ class TestRunService:
         assert steps[0].step_name == "research"
         assert steps[1].step_name == "implement"
 
-    def test_mark_completed(self, test_db, test_project):
+    def test_mark_completed(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("complete-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("complete-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         run_svc.mark_completed(run.id, outcome="completed")
@@ -501,33 +501,33 @@ class TestRunService:
         assert run.outcome == "completed"
         assert run.status == "completed"
 
-    def test_mark_completed_failed(self, test_db, test_project):
+    def test_mark_completed_failed(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("fail-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("fail-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         run_svc.mark_completed(run.id, outcome="failed")
         assert run.outcome == "failed"
 
-    def test_list_by_project(self, test_db, test_project):
+    def test_list_by_space(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("list-project-flow", project_id=test_project.id)
-        run_svc.enqueue(test_project.id, flow.id)
-        run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("list-space-flow", space_id=test_space.id)
+        run_svc.enqueue(test_space.id, flow.id)
+        run_svc.enqueue(test_space.id, flow.id)
 
-        runs = run_svc.list_by_project(test_project.id)
+        runs = run_svc.list_by_space(test_space.id)
         assert len(runs) == 2
 
 
 class TestStepRunService:
-    def test_step_run_log_and_prompt(self, test_db, test_project):
+    def test_step_run_log_and_prompt(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("log-prompt-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("log-prompt-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "log-prompt-flow")
@@ -537,11 +537,11 @@ class TestStepRunService:
         assert sr.log_path == "/tmp/test.log"
         assert sr.prompt == "# Do research"
 
-    def test_get_step_run(self, test_db, test_project):
+    def test_get_step_run(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("get-step-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("get-step-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "get-step-flow")
@@ -549,11 +549,11 @@ class TestStepRunService:
         assert fetched is not None
         assert fetched.step_name == "research"
 
-    def test_step_run_to_dict(self, test_db, test_project):
+    def test_step_run_to_dict(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
-        flow = flow_svc.create("to-dict-flow", project_id=test_project.id)
-        run = run_svc.enqueue(test_project.id, flow.id)
+        flow = flow_svc.create("to-dict-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
         sr = run_svc.create_step_run(run.id, "research", 0, "to-dict-flow", "cursor", "auto")

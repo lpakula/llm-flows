@@ -137,7 +137,7 @@ export function ScheduleModal({
           </div>
 
           {flows.length === 0 && (
-            <p className="text-xs text-gray-600 italic">No flows defined for this project.</p>
+            <p className="text-xs text-gray-600 italic">No flows defined for this space.</p>
           )}
 
           {/* One-shot */}
@@ -160,6 +160,20 @@ export function ScheduleModal({
             </p>
           </div>
         </div>
+
+        {selectedFlow?.warnings && selectedFlow.warnings.length > 0 && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2 mt-4">
+            <p className="text-xs text-amber-400 font-medium mb-1">Configuration warnings:</p>
+            <ul className="space-y-0.5">
+              {selectedFlow.warnings.map((w, i) => (
+                <li key={i} className="text-xs text-amber-300/80">
+                  {w.step_name && <span className="font-mono mr-1">{w.step_name}:</span>}
+                  {w.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="flex justify-end gap-3 mt-6">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">

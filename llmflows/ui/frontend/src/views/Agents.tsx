@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
-import type { AgentInfo, AgentAlias, AgentConfigEntry } from "@/api/types";
+import type { AgentInfo, AgentAlias, AgentConfigEntry, ProviderInfo } from "@/api/types";
 
 function ModelCombobox({
   value,
@@ -65,65 +65,281 @@ function ModelCombobox({
   );
 }
 
+function InlineAliasTier({
+  alias,
+  agentOptions,
+  modelOptions,
+  isChatType,
+  onSave,
+}: {
+  alias: AgentAlias;
+  agentOptions: string[];
+  modelOptions: Record<string, string[]>;
+  isChatType: boolean;
+  onSave: (id: string, agent: string, model: string) => void;
+}) {
+  const [agent, setAgent] = useState(alias.agent);
+  const [model, setModel] = useState(alias.model);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const hasOptions = agentOptions.length > 0;
+
+  useEffect(() => {
+    setAgent(alias.agent);
+    setModel(alias.model);
+    setDirty(false);
+  }, [alias.agent, alias.model]);
+
+  const handleAgentChange = (v: string) => {
+    setAgent(v);
+    if (!isChatType) setModel("");
+    setDirty(true);
+  };
+  const handleModelChange = (v: string) => {
+    setModel(v);
+    setDirty(true);
+  };
+  const save = async () => {
+    if (!agent.trim() || !model.trim()) return;
+    setSaving(true);
+    await onSave(alias.id, agent, model);
+    setDirty(false);
+    setSaving(false);
+  };
+
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      <span className="text-[10px] font-semibold text-cyan-400 uppercase tracking-wide w-12 shrink-0">{alias.name}</span>
+      <select
+        value={hasOptions ? agent : ""}
+        onChange={(e) => handleAgentChange(e.target.value)}
+        disabled={!hasOptions}
+        className="bg-gray-800 border border-gray-700 rounded px-1.5 py-1 text-xs w-28 shrink-0 focus:outline-none focus:border-gray-600 disabled:opacity-40"
+      >
+        {!hasOptions && <option value="">—</option>}
+        {agentOptions.map((a) => (
+          <option key={a} value={a}>{a}</option>
+        ))}
+      </select>
+      {isChatType ? (
+        <input
+          value={hasOptions ? model : ""}
+          onChange={(e) => handleModelChange(e.target.value)}
+          placeholder={hasOptions ? "model" : "—"}
+          disabled={!hasOptions}
+          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-1 text-xs font-mono flex-1 min-w-0 focus:outline-none focus:border-gray-600 disabled:opacity-40"
+        />
+      ) : (
+        <div className="flex-1 min-w-0">
+          <ModelCombobox
+            value={hasOptions ? model : ""}
+            onChange={handleModelChange}
+            options={modelOptions[agent] || []}
+            placeholder={hasOptions ? "model" : "—"}
+            bg="bg-gray-800"
+          />
+        </div>
+      )}
+      {dirty && (
+        <button
+          onClick={save}
+          disabled={saving || !agent.trim() || !model.trim()}
+          className="text-[10px] px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white shrink-0"
+        >
+          {saving ? "..." : "Save"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ApiKeyInput({
+  agentKey,
+  envVar,
+  configs,
+  onAdd,
+  onDelete,
+}: {
+  agentKey: string;
+  envVar: string;
+  configs: AgentConfigEntry[];
+  onAdd: (agent: string, key: string, value: string) => Promise<void>;
+  onDelete: (agent: string, configId: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const entry = configs.find((c) => c.key === envVar);
+
+  if (!envVar) return <span className="text-gray-600">—</span>;
+
+  const save = async () => {
+    if (!value.trim()) return;
+    setSaving(true);
+    await onAdd(agentKey, envVar, value.trim());
+    setValue("");
+    setSaving(false);
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="password"
+        value={entry ? "••••••••" : value}
+        onChange={(e) => { if (!entry) setValue(e.target.value); }}
+        readOnly={!!entry}
+        placeholder={envVar}
+        className={`bg-gray-800 border rounded px-1.5 py-0.5 text-[11px] font-mono w-36 focus:outline-none ${entry ? "border-gray-700 text-gray-500 cursor-default" : "border-gray-700 focus:border-gray-500"}`}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+      />
+      {entry ? (
+        <button
+          onClick={() => onDelete(agentKey, entry.id)}
+          className="text-[10px] text-gray-600 hover:text-red-400 transition-colors shrink-0"
+        >
+          clear
+        </button>
+      ) : value.trim() ? (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-40 shrink-0"
+        >
+          {saving ? "…" : "Save"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function EnvConfigInline({
+  agentKey,
+  configs,
+  excludeKey,
+  onAdd,
+  onDelete,
+}: {
+  agentKey: string;
+  configs: AgentConfigEntry[];
+  excludeKey?: string;
+  onAdd: (agent: string, key: string, value: string) => Promise<void>;
+  onDelete: (agent: string, configId: string) => Promise<void>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  const filtered = excludeKey ? configs.filter((c) => c.key !== excludeKey) : configs;
+
+  const submit = async () => {
+    if (!key.trim()) return;
+    await onAdd(agentKey, key.trim(), value);
+    setKey("");
+    setValue("");
+    setAdding(false);
+  };
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {filtered.map((c) => (
+        <span
+          key={c.id}
+          className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
+        >
+          {c.key}
+          <button
+            onClick={() => onDelete(agentKey, c.id)}
+            className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      {adding ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="KEY"
+            className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs font-mono w-28 focus:outline-none focus:border-gray-500"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="value"
+            className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs font-mono w-40 focus:outline-none focus:border-gray-500"
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <button onClick={submit} disabled={!key.trim()} className="text-xs text-blue-400 disabled:opacity-40 hover:text-blue-300">Add</button>
+          <button onClick={() => setAdding(false)} className="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
+        >
+          + Add
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function AgentsView() {
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({});
+  const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [loading, setLoading] = useState(true);
 
   const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentConfigEntry[]>>({});
-  const [addingEnvFor, setAddingEnvFor] = useState<string | null>(null);
-  const [newConfigKey, setNewConfigKey] = useState("");
-  const [newConfigValue, setNewConfigValue] = useState("");
-
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
-  const [editingAlias, setEditingAlias] = useState<string | null>(null);
-  const [aliasForm, setAliasForm] = useState({ name: "", agent: "", model: "" });
   const [agentNames, setAgentNames] = useState<string[]>([]);
   const [models, setModels] = useState<Record<string, string[]>>({});
 
+  const reload = async () => {
+    try {
+      const [agentsData, providersData] = await Promise.all([
+        api.getAgentsStatus(),
+        api.getProvidersStatus(),
+      ]);
+      setAgents(agentsData);
+      setProviders(providersData);
+
+      const allConfigAgents = [...Object.keys(agentsData), ...Object.keys(providersData)];
+      const configMap: Record<string, AgentConfigEntry[]> = {};
+      await Promise.all(
+        allConfigAgents.map(async (key) => {
+          try { configMap[key] = await api.getAgentConfig(key); } catch { configMap[key] = []; }
+        })
+      );
+      setAgentConfigs(configMap);
+    } catch {
+      setAgents({});
+      setProviders({});
+    }
+
+    try {
+      const [al, ag] = await Promise.all([
+        api.listAgentAliases(),
+        api.listAgents(),
+      ]);
+      setAliases(al);
+      setAgentNames(ag);
+      const modelMap: Record<string, string[]> = {};
+      for (const a of ag) {
+        modelMap[a] = await api.listModels(a);
+      }
+      setModels(modelMap);
+    } catch (e) {
+      console.error("Failed to load aliases:", e);
+    }
+  };
 
   useEffect(() => {
     (async () => {
-      try {
-        const agentsData = await api.getAgentsStatus();
-        setAgents(agentsData);
-
-        // Load all agent configs upfront
-        const configMap: Record<string, AgentConfigEntry[]> = {};
-        await Promise.all(
-          Object.keys(agentsData).map(async (key) => {
-            try {
-              configMap[key] = await api.getAgentConfig(key);
-            } catch {
-              configMap[key] = [];
-            }
-          })
-        );
-        setAgentConfigs(configMap);
-      } catch {
-        setAgents({});
-      }
-
-      try {
-        const [al, ag] = await Promise.all([
-          api.listAgentAliases(),
-          api.listAgents(),
-        ]);
-        setAliases(al);
-        setAgentNames(ag);
-        const modelMap: Record<string, string[]> = {};
-        for (const a of ag) {
-          modelMap[a] = await api.listModels(a);
-        }
-        setModels(modelMap);
-      } catch (e) {
-        console.error("Failed to load aliases:", e);
-      }
-
+      await reload();
       setLoading(false);
     })();
   }, []);
-
-  const agentList = Object.entries(agents).map(([key, info]) => ({ key, ...info }));
 
   const reloadAgentConfig = async (agentName: string) => {
     try {
@@ -132,15 +348,17 @@ export function AgentsView() {
     } catch {
       setAgentConfigs((prev) => ({ ...prev, [agentName]: [] }));
     }
+    const [agentsData, providersData] = await Promise.all([
+      api.getAgentsStatus(),
+      api.getProvidersStatus(),
+    ]);
+    setAgents(agentsData);
+    setProviders(providersData);
   };
 
-  const addConfig = async (agentName: string) => {
-    if (!newConfigKey.trim()) return;
-    await api.setAgentConfig(agentName, newConfigKey.trim(), newConfigValue);
+  const addConfig = async (agentName: string, key: string, value: string) => {
+    await api.setAgentConfig(agentName, key, value);
     await reloadAgentConfig(agentName);
-    setNewConfigKey("");
-    setNewConfigValue("");
-    setAddingEnvFor(null);
   };
 
   const deleteConfig = async (agentName: string, configId: string) => {
@@ -152,223 +370,176 @@ export function AgentsView() {
     setAliases(await api.listAgentAliases());
   };
 
-  const startEditAlias = (a: AgentAlias) => {
-    setEditingAlias(a.id);
-    setAliasForm({ name: a.name, agent: a.agent, model: a.model });
-  };
-
-  const saveAlias = async (id: string) => {
-    await api.updateAgentAlias(id, aliasForm);
-    setEditingAlias(null);
+  const saveAlias = async (id: string, agent: string, model: string) => {
+    await api.updateAgentAlias(id, { agent, model });
     reloadAliases();
   };
 
+  const tierOrder = ["mini", "normal", "max"];
+  const codeAliases = aliases.filter((a) => a.type === "code").sort((a, b) => tierOrder.indexOf(a.name) - tierOrder.indexOf(b.name));
+  const chatAliases = aliases.filter((a) => a.type === "chat").sort((a, b) => tierOrder.indexOf(a.name) - tierOrder.indexOf(b.name));
+  const agentList = Object.entries(agents).map(([key, info]) => ({ key, ...info }));
+  const providerList = Object.entries(providers).map(([key, info]) => ({ key, ...info }));
+  const availableAgents = agentList.filter((a) => a.available && a.configured).map((a) => a.key);
+  const configuredProviders = providerList.filter((p) => p.configured).map((p) => p.key);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <h2 className="text-xl font-semibold mb-6">Agents</h2>
+    <div className="flex-1 overflow-y-auto p-6 space-y-10">
 
       {loading && <div className="text-gray-500">Loading...</div>}
 
-      {/* Agents table */}
+      <h2 className="text-xl font-semibold mb-2">Agents</h2>
+      <p className="text-xs text-gray-500 mb-6">
+        Configure API keys for LLM providers and coding agents. Set alias tiers to control which model each step resolves to.
+      </p>
+
+      {/* ── Chat / Providers ── */}
       {!loading && (
-        <div className="mb-10">
-          <div className="border border-gray-800 rounded-xl overflow-hidden">
+        <section>
+          <div className="border border-gray-800 rounded-xl">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-800 bg-gray-900/60">
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-8"></th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Binary</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Path</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Env Variables</th>
+                <tr className="border-b border-gray-800 bg-gray-900/60 [&>th:first-child]:rounded-tl-xl [&>th:last-child]:rounded-tr-xl">
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide w-8"></th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Provider</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">API Key</th>
                 </tr>
               </thead>
               <tbody>
-                {agentList.map((agent, i) => {
-                  const configs = agentConfigs[agent.key] || [];
-                  const isAddingEnv = addingEnvFor === agent.key;
-                  return (
-                    <>
-                      <tr
-                        key={agent.key}
-                        className={`${i < agentList.length - 1 || isAddingEnv ? "border-b border-gray-800" : ""} bg-gray-900 hover:bg-gray-800/50 transition-colors`}
-                      >
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-block w-2 h-2 rounded-full ${agent.available ? "bg-green-400" : "bg-gray-600"}`}
-                          />
-                        </td>
-                        <td className="px-4 py-3 font-medium text-white">{agent.label}</td>
-                        <td className="px-4 py-3 font-mono text-gray-400">{agent.binary}</td>
-                        <td className="px-4 py-3">
-                          <span className={agent.available ? "text-green-400" : "text-gray-500"}>
-                            {agent.available ? "Available" : "Not found"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-gray-500 text-xs max-w-[220px] truncate">
-                          {agent.binary_path ?? "—"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {configs.map((c) => (
-                              <span
-                                key={c.id}
-                                className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
-                              >
-                                {c.key}
-                                <button
-                                  onClick={() => deleteConfig(agent.key, c.id)}
-                                  className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            ))}
-                            <button
-                              onClick={() => {
-                                setAddingEnvFor(isAddingEnv ? null : agent.key);
-                                setNewConfigKey("");
-                                setNewConfigValue("");
-                              }}
-                              className="text-gray-600 hover:text-blue-400 text-xs transition-colors"
-                              title="Add env variable"
-                            >
-                              + Add
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      {isAddingEnv && (
-                        <tr key={`${agent.key}-add-env`} className={`bg-gray-900/80 ${i < agentList.length - 1 ? "border-b border-gray-800" : ""}`}>
-                          <td colSpan={6} className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <input
-                                value={newConfigKey}
-                                onChange={(e) => setNewConfigKey(e.target.value)}
-                                placeholder="KEY"
-                                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-36 focus:outline-none focus:border-gray-500"
-                                autoFocus
-                                onKeyDown={(e) => e.key === "Enter" && addConfig(agent.key)}
-                              />
-                              <input
-                                value={newConfigValue}
-                                onChange={(e) => setNewConfigValue(e.target.value)}
-                                placeholder="value"
-                                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-52 focus:outline-none focus:border-gray-500"
-                                onKeyDown={(e) => e.key === "Enter" && addConfig(agent.key)}
-                              />
-                              <button
-                                onClick={() => addConfig(agent.key)}
-                                disabled={!newConfigKey.trim()}
-                                className="text-xs text-blue-400 disabled:opacity-40 hover:text-blue-300 transition-colors"
-                              >
-                                Add
-                              </button>
-                              <button
-                                onClick={() => setAddingEnvFor(null)}
-                                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  );
-                })}
-                {agentList.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500 bg-gray-900">
-                      No agents configured
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Aliases table */}
-      {!loading && (
-        <div>
-          <div className="mb-3">
-            <h3 className="text-base font-semibold">Aliases</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Agent/model combinations referenced by flow steps</p>
-          </div>
-
-          <div className="border border-gray-800 rounded-xl overflow-visible">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-800 bg-gray-900/60">
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Name</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Model</th>
-                  <th className="px-4 py-3 w-24"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {aliases.map((a, i) => (
+                {providerList.map((prov, i) => (
                   <tr
-                    key={a.id}
-                    className={`bg-gray-900 hover:bg-gray-800/50 transition-colors ${i < aliases.length - 1 ? "border-b border-gray-800" : ""}`}
+                    key={prov.key}
+                    className={`bg-gray-900 hover:bg-gray-800/50 transition-colors ${i < providerList.length - 1 ? "border-b border-gray-800" : ""}`}
                   >
-                    {editingAlias === a.id ? (
-                      <>
-                        <td className="px-4 py-2 font-medium text-cyan-400">{a.name}</td>
-                        <td className="px-4 py-2">
-                          <select
-                            value={aliasForm.agent}
-                            onChange={(e) => setAliasForm({ ...aliasForm, agent: e.target.value, model: "" })}
-                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm w-full focus:outline-none"
-                          >
-                            {agentNames.map((ag) => (
-                              <option key={ag} value={ag}>{ag}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-4 py-2">
-                          <ModelCombobox
-                            value={aliasForm.model}
-                            onChange={(v) => setAliasForm({ ...aliasForm, model: v })}
-                            options={models[aliasForm.agent] || []}
-                            bg="bg-gray-800"
-                          />
-                        </td>
-                        <td className="px-4 py-2">
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => saveAlias(a.id)} disabled={!aliasForm.agent.trim() || !aliasForm.model.trim()} className="text-xs text-blue-400 disabled:opacity-40 hover:text-blue-300 transition-colors">Save</button>
-                            <button onClick={() => setEditingAlias(null)} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Cancel</button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="px-4 py-3 font-medium text-cyan-400">{a.name}</td>
-                        <td className="px-4 py-3 text-gray-400">{a.agent}</td>
-                        <td className="px-4 py-3 text-gray-500 font-mono text-xs">{a.model}</td>
-                        <td className="px-4 py-3 text-right">
-                          <button onClick={() => startEditAlias(a)} className="text-xs text-gray-500 hover:text-blue-400 transition-colors">Edit</button>
-                        </td>
-                      </>
-                    )}
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-block w-2 h-2 rounded-full ${prov.configured ? "bg-green-400" : "bg-gray-600"}`} />
+                    </td>
+                    <td className="px-4 py-2.5 font-medium text-white">{prov.label}</td>
+                    <td className="px-4 py-2.5">
+                      <ApiKeyInput
+                        agentKey={prov.key}
+                        envVar={prov.api_key_env}
+                        configs={agentConfigs[prov.key] || []}
+                        onAdd={addConfig}
+                        onDelete={deleteConfig}
+                      />
+                    </td>
                   </tr>
                 ))}
-
-                {aliases.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-gray-500 bg-gray-900">
-                      No aliases defined
+              </tbody>
+              {chatAliases.length > 0 && (
+                <tfoot>
+                  <tr className="border-t border-gray-700 bg-gray-900/80 [&>td:first-child]:rounded-bl-xl [&>td:last-child]:rounded-br-xl">
+                    <td colSpan={3} className="px-4 py-3">
+                      <div className="flex items-center gap-6">
+                        <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide shrink-0">Tiers</span>
+                        <div className="flex gap-6 flex-1 min-w-0">
+                          {chatAliases.map((a) => (
+                            <InlineAliasTier
+                              key={a.id}
+                              alias={a}
+                              agentOptions={configuredProviders}
+                              modelOptions={{}}
+                              isChatType={true}
+                              onSave={saveAlias}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     </td>
                   </tr>
-                )}
-              </tbody>
+                </tfoot>
+              )}
             </table>
           </div>
-        </div>
+        </section>
+      )}
+
+      {/* ── Code section ── */}
+      {!loading && (
+        <section>
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-blue-400">Code</h2>
+            <p className="text-xs text-gray-500 mt-0.5">CLI coding agents. Configure env variables and alias tiers.</p>
+          </div>
+
+          <div className="border border-gray-800 rounded-xl">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 bg-gray-900/60 [&>th:first-child]:rounded-tl-xl [&>th:last-child]:rounded-tr-xl">
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide w-8"></th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Binary</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">API Key</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Env Variables</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentList.map((agent, i) => (
+                  <tr
+                    key={agent.key}
+                    className={`bg-gray-900 hover:bg-gray-800/50 transition-colors ${i < agentList.length - 1 ? "border-b border-gray-800" : ""}`}
+                  >
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-block w-2 h-2 rounded-full ${agent.available && agent.configured ? "bg-green-400" : agent.available ? "bg-yellow-400" : "bg-gray-600"}`} />
+                    </td>
+                    <td className="px-4 py-2.5 font-medium text-white">{agent.label}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-400">
+                      <span className="inline-flex items-center gap-1.5">
+                        {agent.binary}
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${agent.available ? "bg-green-400" : "bg-gray-600"}`} />
+                        {agent.available && agent.binary_path && (
+                          <span className="text-gray-600 text-[10px]">{agent.binary_path}</span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <ApiKeyInput
+                        agentKey={agent.key}
+                        envVar={agent.api_key_env}
+                        configs={agentConfigs[agent.key] || []}
+                        onAdd={addConfig}
+                        onDelete={deleteConfig}
+                      />
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <EnvConfigInline
+                        agentKey={agent.key}
+                        configs={agentConfigs[agent.key] || []}
+                        excludeKey={agent.api_key_env || undefined}
+                        onAdd={addConfig}
+                        onDelete={deleteConfig}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {codeAliases.length > 0 && (
+                <tfoot>
+                  <tr className="border-t border-gray-700 bg-gray-900/80 [&>td:first-child]:rounded-bl-xl [&>td:last-child]:rounded-br-xl">
+                    <td colSpan={5} className="px-4 py-3">
+                      <div className="flex items-center gap-6">
+                        <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide shrink-0">Tiers</span>
+                        <div className="flex gap-6 flex-1 min-w-0">
+                          {codeAliases.map((a) => (
+                            <InlineAliasTier
+                              key={a.id}
+                              alias={a}
+                              agentOptions={availableAgents}
+                              modelOptions={models}
+                              isChatType={false}
+                              onSave={saveAlias}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </section>
       )}
 
     </div>

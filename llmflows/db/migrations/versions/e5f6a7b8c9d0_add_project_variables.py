@@ -1,4 +1,4 @@
-"""add variables column to projects
+"""add variables column to spaces
 
 Revision ID: e5f6a7b8c9d0
 Revises: d4e5f6a7b8c9
@@ -17,10 +17,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table('projects') as batch_op:
+    with op.batch_alter_table('spaces') as batch_op:
         batch_op.add_column(sa.Column('variables', sa.Text(), nullable=True, server_default='{}'))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('projects') as batch_op:
+    with op.batch_alter_table('spaces') as batch_op:
         batch_op.drop_column('variables')

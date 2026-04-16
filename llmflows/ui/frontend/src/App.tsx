@@ -1,31 +1,31 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 import { api } from "@/api/client";
-import type { Project } from "@/api/types";
+import type { Space } from "@/api/types";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/views/Dashboard";
 import { InboxView } from "@/views/Inbox";
-import { ProjectView } from "@/views/Project";
+import { SpaceView } from "@/views/Space";
 import { RunDetailView } from "@/views/RunDetail";
-import { ProjectFlowsView } from "@/views/Flows";
+import { SpaceFlowsView } from "@/views/Flows";
 import { FlowEditorView } from "@/views/FlowEditor";
 import { AgentsView } from "@/views/Agents";
 import { GatewayView } from "@/views/Gateway";
 import { SettingsView } from "@/views/Settings";
-import { ProjectSettingsView } from "@/views/ProjectSettings";
+import { SpaceSettingsView } from "@/views/SpaceSettings";
 import { SkillsView } from "@/views/Skills";
 
 interface AppContextType {
-  projects: Project[];
-  selectedProjectId: string | null;
-  setSelectedProjectId: (id: string | null) => void;
+  spaces: Space[];
+  selectedSpaceId: string | null;
+  setSelectedSpaceId: (id: string | null) => void;
   reload: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType>({
-  projects: [],
-  selectedProjectId: null,
-  setSelectedProjectId: () => {},
+  spaces: [],
+  selectedSpaceId: null,
+  setSelectedSpaceId: () => {},
   reload: async () => {},
 });
 
@@ -34,41 +34,41 @@ export function useApp() {
 }
 
 function AppInner() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [manualProjectId, setManualProjectId] = useState<string | null>(null);
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [manualSpaceId, setManualSpaceId] = useState<string | null>(null);
   const location = useLocation();
 
   const reload = useCallback(async () => {
-    const p = await api.listProjects();
-    setProjects(p);
+    const s = await api.listSpaces();
+    setSpaces(s);
   }, []);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
-  const urlProjectId = useMemo(() => {
-    const m = location.pathname.match(/\/project\/([a-z0-9]+)/);
+  const urlSpaceId = useMemo(() => {
+    const m = location.pathname.match(/\/space\/([a-z0-9]+)/);
     return m ? m[1] : null;
   }, [location.pathname]);
 
   useEffect(() => {
-    if (urlProjectId) setManualProjectId(urlProjectId);
-  }, [urlProjectId]);
+    if (urlSpaceId) setManualSpaceId(urlSpaceId);
+  }, [urlSpaceId]);
 
-  const selectedProjectId = urlProjectId || manualProjectId;
+  const selectedSpaceId = urlSpaceId || manualSpaceId;
 
   return (
-    <AppContext.Provider value={{ projects, selectedProjectId, setSelectedProjectId: setManualProjectId, reload }}>
+    <AppContext.Provider value={{ spaces, selectedSpaceId, setSelectedSpaceId: setManualSpaceId, reload }}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/inbox" element={<InboxView />} />
-          <Route path="/project/:projectId" element={<ProjectView />} />
-          <Route path="/project/:projectId/flows" element={<ProjectFlowsView />} />
-          <Route path="/project/:projectId/run/:runId" element={<RunDetailView />} />
-          <Route path="/project/:projectId/skills" element={<SkillsView />} />
-          <Route path="/project/:projectId/settings" element={<ProjectSettingsView />} />
+          <Route path="/space/:spaceId" element={<SpaceView />} />
+          <Route path="/space/:spaceId/flows" element={<SpaceFlowsView />} />
+          <Route path="/space/:spaceId/run/:runId" element={<RunDetailView />} />
+          <Route path="/space/:spaceId/skills" element={<SkillsView />} />
+          <Route path="/space/:spaceId/settings" element={<SpaceSettingsView />} />
           <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />
           <Route path="/gateway" element={<GatewayView />} />

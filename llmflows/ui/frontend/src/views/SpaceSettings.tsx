@@ -2,15 +2,15 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Project, ProjectSettings } from "@/api/types";
+import type { Space, SpaceSettings } from "@/api/types";
 
-export function ProjectSettingsView() {
-  const { projectId } = useParams<{ projectId: string }>();
+export function SpaceSettingsView() {
+  const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
   const { reload: reloadApp } = useApp();
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [settings, setSettings] = useState<ProjectSettings>({ is_git_repo: true, max_concurrent_tasks: 1 });
+  const [space, setSpace] = useState<Space | null>(null);
+  const [settings, setSettings] = useState<SpaceSettings>({ is_git_repo: true, max_concurrent_tasks: 1 });
   const [loading, setLoading] = useState(true);
 
   const [nameValue, setNameValue] = useState("");
@@ -30,48 +30,48 @@ export function ProjectSettingsView() {
   const [editingVar, setEditingVar] = useState<{ key: string; value: string } | null>(null);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!spaceId) return;
     (async () => {
       try {
-        const [p, s, v] = await Promise.all([
-          api.getProject(projectId),
-          api.getProjectSettings(projectId),
-          api.getProjectVariables(projectId),
+        const [s, st, v] = await Promise.all([
+          api.getSpace(spaceId),
+          api.getSpaceSettings(spaceId),
+          api.getSpaceVariables(spaceId),
         ]);
-        setProject(p);
-        setSettings(s);
+        setSpace(s);
+        setSettings(st);
         setVariables(v);
-        setNameValue(p.name);
-        setConcurrencyValue(s.max_concurrent_tasks ?? 1);
+        setNameValue(s.name);
+        setConcurrencyValue(st.max_concurrent_tasks ?? 1);
       } catch (e) {
-        console.error("Failed to load project settings:", e);
+        console.error("Failed to load space settings:", e);
       }
       setLoading(false);
     })();
-  }, [projectId]);
+  }, [spaceId]);
 
   const saveName = async () => {
-    if (!project || !nameValue.trim()) return;
+    if (!space || !nameValue.trim()) return;
     setNameSaving(true);
     try {
-      const updated = await api.updateProject(project.id, { name: nameValue.trim() });
-      setProject(updated);
+      const updated = await api.updateSpace(space.id, { name: nameValue.trim() });
+      setSpace(updated);
       setNameDirty(false);
       setNameSaved(true);
       setTimeout(() => setNameSaved(false), 2000);
       reloadApp();
     } catch (e) {
-      console.error("Failed to rename project:", e);
+      console.error("Failed to rename space:", e);
     }
     setNameSaving(false);
   };
 
   const saveConcurrency = async () => {
-    if (!projectId) return;
+    if (!spaceId) return;
     const val = Math.max(1, concurrencyValue);
     setConcurrencySaving(true);
     try {
-      const updated = await api.updateProjectSettings(projectId, { max_concurrent_tasks: val });
+      const updated = await api.updateSpaceSettings(spaceId, { max_concurrent_tasks: val });
       setSettings(updated);
       setConcurrencyValue(updated.max_concurrent_tasks ?? val);
       setConcurrencyDirty(false);
@@ -83,18 +83,18 @@ export function ProjectSettingsView() {
     setConcurrencySaving(false);
   };
 
-  const deleteProject = async () => {
-    if (!project || !confirm(`Delete project "${project.name}"? All runs and flows will be lost.`)) return;
-    await api.deleteProject(project.id);
+  const deleteSpace = async () => {
+    if (!space || !confirm(`Delete space "${space.name}"? All runs and flows will be lost.`)) return;
+    await api.deleteSpace(space.id);
     reloadApp();
     navigate("/");
   };
 
   const addVariable = async () => {
-    if (!projectId || !newVarKey.trim()) return;
+    if (!spaceId || !newVarKey.trim()) return;
     setVarSaving(newVarKey);
     try {
-      const updated = await api.setProjectVariable(projectId, newVarKey.trim(), newVarValue);
+      const updated = await api.setSpaceVariable(spaceId, newVarKey.trim(), newVarValue);
       setVariables(updated);
       setNewVarKey("");
       setNewVarValue("");
@@ -105,10 +105,10 @@ export function ProjectSettingsView() {
   };
 
   const saveEditingVar = async () => {
-    if (!projectId || !editingVar) return;
+    if (!spaceId || !editingVar) return;
     setVarSaving(editingVar.key);
     try {
-      const updated = await api.setProjectVariable(projectId, editingVar.key, editingVar.value);
+      const updated = await api.setSpaceVariable(spaceId, editingVar.key, editingVar.value);
       setVariables(updated);
       setEditingVar(null);
     } catch (e) {
@@ -118,10 +118,10 @@ export function ProjectSettingsView() {
   };
 
   const removeVariable = async (key: string) => {
-    if (!projectId) return;
+    if (!spaceId) return;
     setVarSaving(key);
     try {
-      const updated = await api.deleteProjectVariable(projectId, key);
+      const updated = await api.deleteSpaceVariable(spaceId, key);
       setVariables(updated);
     } catch (e) {
       console.error("Failed to remove variable:", e);
@@ -137,14 +137,14 @@ export function ProjectSettingsView() {
     <div className="flex-1 overflow-y-auto p-6">
       <div className="mb-6">
         <button
-          onClick={() => navigate(`/project/${projectId}`)}
+          onClick={() => navigate(`/space/${spaceId}`)}
           className="text-xs text-gray-500 hover:text-gray-300 mb-3 block"
         >
           &larr; Back to board
         </button>
-        <h2 className="text-xl font-semibold">Project Settings</h2>
-        {project && (
-          <p className="text-xs text-gray-500 mt-1 font-mono">{project.path}</p>
+        <h2 className="text-xl font-semibold">Space Settings</h2>
+        {space && (
+          <p className="text-xs text-gray-500 mt-1 font-mono">{space.path}</p>
         )}
       </div>
 
@@ -163,7 +163,7 @@ export function ProjectSettingsView() {
             {/* Name */}
             <tr className="bg-gray-900 border-b border-gray-800">
               <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Name</td>
-              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">Display name for this project</td>
+              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">Display name for this space</td>
               <td className="px-4 py-3">
                 <input
                   value={nameValue}
@@ -225,7 +225,7 @@ export function ProjectSettingsView() {
           <div>
             <h3 className="text-sm font-medium text-white">Variables</h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              Available in flow steps, gates, and IFs as <code className="text-gray-400">{"{{project.<KEY>}}"}</code>. Injected as environment variables into the agent runtime.
+              Available in flow steps, gates, and IFs as <code className="text-gray-400">{"{{space.<KEY>}}"}</code>. Injected as environment variables into the agent runtime.
             </p>
           </div>
         </div>
@@ -330,14 +330,14 @@ export function ProjectSettingsView() {
         </div>
         <div className="px-4 py-4 bg-gray-900 flex items-center justify-between">
           <div>
-            <p className="text-sm text-white">Delete this project</p>
-            <p className="text-xs text-gray-500 mt-0.5">All flow runs and flows associated with this project will be permanently deleted.</p>
+            <p className="text-sm text-white">Delete this space</p>
+            <p className="text-xs text-gray-500 mt-0.5">All flow runs and flows associated with this space will be permanently deleted.</p>
           </div>
           <button
-            onClick={deleteProject}
+            onClick={deleteSpace}
             className="ml-6 px-4 py-1.5 text-xs bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors shrink-0"
           >
-            Delete project
+            Delete space
           </button>
         </div>
       </div>

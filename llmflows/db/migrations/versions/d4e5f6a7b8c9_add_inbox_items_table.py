@@ -23,7 +23,7 @@ def upgrade() -> None:
         sa.Column('type', sa.String(32), nullable=False),
         sa.Column('reference_id', sa.String(6), nullable=False),
         sa.Column('task_id', sa.String(6), sa.ForeignKey('tasks.id'), nullable=False),
-        sa.Column('project_id', sa.String(6), sa.ForeignKey('projects.id'), nullable=False),
+        sa.Column('space_id', sa.String(6), sa.ForeignKey('spaces.id'), nullable=False),
         sa.Column('title', sa.Text(), server_default=''),
         sa.Column('created_at', sa.DateTime()),
         sa.Column('archived_at', sa.DateTime(), nullable=True),

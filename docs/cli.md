@@ -1,6 +1,6 @@
 # CLI Reference
 
-All `llmflows` commands. Run them inside a registered project unless noted otherwise.
+All `llmflows` commands. Run them inside a registered space unless noted otherwise.
 
 ## Version
 
@@ -10,31 +10,31 @@ llmflows --version
 
 ## Register
 
-Register the current directory as a project and create `.llmflows/`.
+Register the current directory as a space and create `.llmflows/`.
 
 ```bash
 llmflows register
 llmflows register --name "My App"
 ```
 
-## Project
+## Space
 
 ```bash
-# List registered projects
-llmflows project list
+# List registered spaces
+llmflows space list
 
-# Rename a project
-llmflows project update --name "New Name"
-llmflows project update --id <project-id> --name "New Name"
+# Rename a space
+llmflows space update --name "New Name"
+llmflows space update --id <space-id> --name "New Name"
 
-# Unregister a project
-llmflows project delete
-llmflows project delete --id <project-id>
+# Unregister a space
+llmflows space delete
+llmflows space delete --id <space-id>
 
-# View/update project settings
-llmflows project settings
-llmflows project settings --id <project-id>
-llmflows project settings --git-repo false
+# View/update space settings
+llmflows space settings
+llmflows space settings --id <space-id>
+llmflows space settings --git-repo false
 ```
 
 ## Tasks
@@ -43,7 +43,7 @@ llmflows project settings --git-repo false
 # List tasks
 llmflows task list
 llmflows task list --all
-llmflows task list --project <project-id>
+llmflows task list --space <space-id>
 
 # Show one task with run history
 llmflows task show --id <task-id>
@@ -103,7 +103,7 @@ llmflows task start --id <task-id> --flow default --one-shot
 llmflows run list
 llmflows run list --task <task-id>
 llmflows run list --all
-llmflows run list --project <project-id>
+llmflows run list --space <space-id>
 llmflows run list --limit 50
 
 # Show one run
@@ -161,14 +161,14 @@ Step content is markdown. See [Flow Authoring](flows.md).
 
 ## Aliases
 
-Aliases are project-level presets for agent, model, flow chain, and optional per-step overrides.
+Aliases are space-level presets for agent, model, flow chain, and optional per-step overrides.
 
 ```bash
 # List/show aliases
 llmflows alias list
-llmflows alias list --project <project-id>
+llmflows alias list --space <space-id>
 llmflows alias show <name>
-llmflows alias show <name> --project <project-id>
+llmflows alias show <name> --space <space-id>
 
 # Create or update aliases
 llmflows alias set fast --agent cursor --model sonnet-4.6 --flow default

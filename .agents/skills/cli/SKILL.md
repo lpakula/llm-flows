@@ -1,6 +1,6 @@
 ---
 name: llmflows-cli
-description: Use the llmflows CLI to manage projects, tasks, runs, flows, aliases, and the daemon. Use when the user wants to register a project, create or start tasks, manage flows and steps, configure aliases, check run status, or perform any llmflows operation from the terminal.
+description: Use the llmflows CLI to manage spaces, tasks, runs, flows, aliases, and the daemon. Use when the user wants to register a space, create or start tasks, manage flows and steps, configure aliases, check run status, or perform any llmflows operation from the terminal.
 ---
 
 # llmflows CLI
@@ -10,30 +10,30 @@ llmflows is a workflow orchestrator for autonomous coding agents. All operations
 ## Prerequisites
 
 - llmflows must be installed (`llmflows --version` to verify)
-- For most commands, run from inside a registered project directory
+- For most commands, run from inside a registered space directory
 - Register first if needed: `llmflows register`
 
-## Project Setup
+## Space Setup
 
 ```bash
-# Register current directory as a project
+# Register current directory as a space
 llmflows register
 llmflows register --name "My App"
 
-# List all registered projects
-llmflows project list
+# List all registered spaces
+llmflows space list
 
-# Rename a project
-llmflows project update --name "New Name"
+# Rename a space
+llmflows space update --name "New Name"
 
 # View/update settings
-llmflows project settings
-llmflows project settings --git-repo false
+llmflows space settings
+llmflows space settings --git-repo false
 
-# Project variables (available as {{project.<KEY>}} in flows)
-llmflows project var set REPOS_PATH /Users/me/repos
-llmflows project var list
-llmflows project var remove REPOS_PATH
+# Space variables (available as {{space.<KEY>}} in flows)
+llmflows space var set REPOS_PATH /Users/me/repos
+llmflows space var list
+llmflows space var remove REPOS_PATH
 ```
 
 ## Task Lifecycle
@@ -131,7 +131,7 @@ llmflows flow delete my-flow --yes
 
 ## Aliases
 
-Aliases are project-level presets that bundle agent, model, and flow chain.
+Aliases are space-level presets that bundle agent, model, and flow chain.
 
 ```bash
 # List aliases
@@ -176,7 +176,7 @@ llmflows agent logs --run <run-id> --follow
 ## Database
 
 ```bash
-# Reset database (all data lost — must re-register projects)
+# Reset database (all data lost — must re-register spaces)
 llmflows db reset --yes
 ```
 
@@ -185,7 +185,7 @@ llmflows db reset --yes
 When an agent asks you to set up and run a task via llmflows:
 
 ```bash
-# 1. Register the project (if not already done)
+# 1. Register the space (if not already done)
 llmflows register
 
 # 2. Start the daemon
@@ -206,8 +206,8 @@ llmflows run logs <run-id> --follow
 
 | Action | Command |
 |--------|---------|
-| Register project | `llmflows register` |
-| List projects | `llmflows project list` |
+| Register space | `llmflows register` |
+| List spaces | `llmflows space list` |
 | Create task | `llmflows task create -t "..." -d "..."` |
 | List tasks | `llmflows task list` |
 | Start run (daemon) | `llmflows task start --id <id> --flow default` |
@@ -220,9 +220,9 @@ llmflows run logs <run-id> --follow
 | Add step | `llmflows flow step add --flow <name> --name <step> --content file.md` |
 | Export flows | `llmflows flow export --output flows.json` |
 | Import flows | `llmflows flow import flows.json` |
-| Set variable | `llmflows project var set KEY VALUE` |
-| List variables | `llmflows project var list` |
-| Remove variable | `llmflows project var remove KEY` |
+| Set variable | `llmflows space var set KEY VALUE` |
+| List variables | `llmflows space var list` |
+| Remove variable | `llmflows space var remove KEY` |
 | List aliases | `llmflows alias list` |
 | Set alias | `llmflows alias set <name> --flow default --model ...` |
 | Daemon start | `llmflows daemon start` |

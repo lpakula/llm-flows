@@ -8,7 +8,7 @@ from alembic.config import Config as _AlembicConfig
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..config import SYSTEM_DB, ensure_system_dir
+from ..config import AGENT_REGISTRY, SYSTEM_DB, ensure_system_dir
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -29,19 +29,33 @@ def get_db_path() -> Path:
 
 
 def _seed_agent_aliases(session):
-    """Seed default agent aliases if the table is empty."""
+    """Seed default agent aliases if the table is empty.
+
+    Creates 3 tiers (max/normal/low) for each type (code/chat),
+    using the first registered agent of that type as the default.
+    """
     from .models import AgentAlias
     if session.query(AgentAlias).count() > 0:
         return
-    defaults = [
-        ("max", "cursor", "claude-4.6-opus-max-thinking", 0),
-        ("high", "cursor", "claude-4.6-sonnet-medium-thinking", 1),
-        ("standard", "cursor", "composer-2", 2),
-        ("fast", "cursor", "composer-2-fast", 3),
-        ("low", "cursor", "gemini-3-flash", 4),
-    ]
-    for name, agent, model, pos in defaults:
-        session.add(AgentAlias(name=name, agent=agent, model=model, position=pos))
+    pos = 0
+    for alias_type in ("code", "chat"):
+        default_agent = None
+        default_tiers = None
+        for agent_key, reg in AGENT_REGISTRY.items():
+            if reg.get("type") == alias_type and reg.get("tiers"):
+                default_agent = agent_key
+                default_tiers = reg["tiers"]
+                break
+        if not default_agent or not default_tiers:
+            continue
+        for tier_name in ("max", "normal", "mini"):
+            model = default_tiers.get(tier_name, "")
+            if model:
+                session.add(AgentAlias(
+                    name=tier_name, type=alias_type,
+                    agent=default_agent, model=model, position=pos,
+                ))
+                pos += 1
     session.commit()
 
 
@@ -70,7 +84,7 @@ def get_engine(db_path: Optional[Path] = None):
     path = db_path or SYSTEM_DB
     if not path.exists():
         raise FileNotFoundError(
-            "No llmflows database found. Run 'llmflows register' to register a project."
+            "No llmflows database found. Run 'llmflows register' to register a space."
         )
     _engine = create_engine(f"sqlite:///{path}", echo=False)
     return _engine

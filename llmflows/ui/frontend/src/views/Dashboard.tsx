@@ -40,9 +40,9 @@ export function Dashboard() {
       <div className="mb-6">
         <h2 className="text-xl font-semibold mb-1">Dashboard</h2>
         <p className="text-sm text-gray-500">
-          To add a project, run{" "}
+          To add a space, run{" "}
           <code className="text-cyan-400 bg-gray-800 px-1.5 py-0.5 rounded text-xs">llmflows register</code>{" "}
-          in any project folder.
+          in any folder.
         </p>
       </div>
 
@@ -52,15 +52,15 @@ export function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {data.map((entry) => (
             <div
-              key={entry.project.id}
-              onClick={() => navigate(`/project/${entry.project.id}`)}
+              key={entry.space.id}
+              onClick={() => navigate(`/space/${entry.space.id}`)}
               className="group bg-gray-900 border border-gray-800 rounded-xl cursor-pointer hover:border-gray-600 hover:bg-gray-800/60 transition-all duration-150 overflow-hidden"
             >
               {/* Card header */}
               <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-white truncate">{entry.project.name}</h3>
-                  <p className="text-xs text-gray-500 font-mono mt-0.5 truncate">{shortPath(entry.project.path)}</p>
+                  <h3 className="font-semibold text-white truncate">{entry.space.name}</h3>
+                  <p className="text-xs text-gray-500 font-mono mt-0.5 truncate">{shortPath(entry.space.path)}</p>
                 </div>
                 {isActive(entry) ? (
                   <span className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 border border-green-400/20 rounded-full px-2 py-0.5 flex-shrink-0">
@@ -120,7 +120,8 @@ export function Dashboard() {
 
       {!loading && (!data || data.length === 0) && (
         <div className="text-gray-500 text-center py-12">
-          No projects registered. Run <code className="text-cyan-400">llmflows register</code> in any project folder.
+          <p>No spaces registered. Run <code className="text-cyan-400">llmflows register</code> in any folder.</p>
+          <p className="mt-2 text-gray-600 text-sm">Flows and skills will be imported automatically from the space folder.</p>
         </div>
       )}
     </div>

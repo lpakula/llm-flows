@@ -52,15 +52,15 @@ This step was attempted before but the following gate checks failed. Fix these i
 {%- endfor %}
 {%- endif %}
 
-{%- if project_variables %}
+{%- if space_variables %}
 
 ---
 
 ## Environment Variables
 
-The following project variables are available as environment variables in this session:
+The following space variables are available as environment variables in this session:
 
-{% for key, value in project_variables.items() -%}
+{% for key, value in space_variables.items() -%}
 - `{{ key }}`: `{{ value }}`
 {% endfor %}
 {%- endif %}

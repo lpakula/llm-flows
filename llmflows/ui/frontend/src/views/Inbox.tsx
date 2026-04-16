@@ -55,7 +55,7 @@ function InboxCard({
             </span>
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mt-1">
-            <span>{item.project_name}</span>
+            <span>{item.space_name}</span>
             <span className="text-gray-700">·</span>
             <span>{item.step_name.replace(/-/g, " ")}</span>
             <span className="text-gray-700">·</span>
@@ -114,7 +114,7 @@ function InboxCard({
               </button>
               <span className="text-[10px] text-gray-700 flex-1">Enter to submit, Shift+Enter for new line</span>
               <button
-                onClick={() => navigate(`/project/${item.project_id}/run/${item.run_id}`)}
+                onClick={() => navigate(`/space/${item.space_id}/run/${item.run_id}`)}
                 className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
               >
                 View run <ArrowRight size={10} />
@@ -149,7 +149,7 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
               </span>
             </div>
             <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mt-1">
-              <span>{item.project_name}</span>
+              <span>{item.space_name}</span>
               {item.duration_seconds != null && (
                 <>
                   <span className="text-gray-700">·</span>
@@ -179,7 +179,7 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
           </div>
           <div className="flex items-center justify-end gap-2">
             <button
-              onClick={() => navigate(`/project/${item.project_id}/run/${item.run_id}`)}
+              onClick={() => navigate(`/space/${item.space_id}/run/${item.run_id}`)}
               className="text-xs text-blue-400 hover:text-blue-300 transition"
             >
               View run

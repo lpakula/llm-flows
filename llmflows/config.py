@@ -1,10 +1,9 @@
 """Configuration management for llmflows.
 
 System-wide config lives in ~/.llmflows/config.toml.
-Per-project config is discovered via .llmflows/ in each repo.
+Per-space config is discovered via .llmflows/ in each directory.
 """
 
-import os
 import shutil
 import tomllib
 from pathlib import Path
@@ -15,8 +14,10 @@ SYSTEM_DIR = Path.home() / ".llmflows"
 SYSTEM_DB = SYSTEM_DIR / "llmflows.db"
 SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 
-PROJECT_DIR = ".llmflows"
+SPACE_DIR = ".llmflows"
 
+
+VALID_STEP_TYPES = ("code", "chat", "shell", "manual")
 
 KNOWN_AGENTS = [
     "cursor",
@@ -26,13 +27,24 @@ KNOWN_AGENTS = [
     "pi",
 ]
 
+KNOWN_LLM_PROVIDERS = [
+    "openai",
+    "anthropic",
+    "google",
+    "ollama",
+]
+
 AGENT_REGISTRY = {
+    # -- CLI coding agents (step_type=code) --
     "cursor": {
+        "type": "code",
         "label": "Cursor",
         "binary": "agent",
+        "api_key_env": "CURSOR_API_KEY",
         "command": "agent -p -f \"<prompt>\"",
         "prompt_mode": "file",
         "output_format": "stream-json",
+        "tiers": {"max": "claude-4.6-opus-max-thinking", "normal": "composer-2", "mini": "gemini-3-flash"},
         "models": [
             "auto",
             "claude-4.6-opus-high-thinking", "claude-4.6-opus-high",
@@ -49,11 +61,14 @@ AGENT_REGISTRY = {
         ],
     },
     "claude-code": {
+        "type": "code",
         "label": "Claude Code",
         "binary": "claude",
+        "api_key_env": "ANTHROPIC_API_KEY",
         "command": "claude -p \"<prompt>\"",
         "prompt_mode": "arg",
         "output_format": "stream-json",
+        "tiers": {"max": "opus", "normal": "sonnet", "mini": "haiku"},
         "models": [
             "default",
             "sonnet", "opus", "haiku",
@@ -62,31 +77,40 @@ AGENT_REGISTRY = {
         ],
     },
     "codex": {
+        "type": "code",
         "label": "Codex",
         "binary": "codex",
+        "api_key_env": "OPENAI_API_KEY",
         "command": "codex exec --json \"<prompt>\"",
         "prompt_mode": "arg",
         "output_format": "json",
+        "tiers": {"max": "gpt-5.4", "normal": "gpt-5.4", "mini": "gpt-5.3-codex-spark"},
         "models": [
             "gpt-5.4", "gpt-5.3-codex-spark",
         ],
     },
     "qwen": {
+        "type": "code",
         "label": "Qwen Code",
         "binary": "qwen",
+        "api_key_env": "DASHSCOPE_API_KEY",
         "command": "qwen -p \"<prompt>\" -y --output-format stream-json",
         "prompt_mode": "arg",
         "output_format": "stream-json",
+        "tiers": {"max": "default", "normal": "default", "mini": "default"},
         "models": [
             "default",
         ],
     },
     "pi": {
+        "type": "code",
         "label": "Pi",
         "binary": "pi",
+        "api_key_env": "PI_API_KEY",
         "command": "pi -p \"<prompt>\" --mode json",
         "prompt_mode": "arg",
         "output_format": "stream-json",
+        "tiers": {"max": "anthropic/claude-opus-4-5", "normal": "anthropic/claude-sonnet-4-5", "mini": "anthropic/claude-haiku-4-5"},
         "models": [
             "anthropic/claude-opus-4-5",
             "anthropic/claude-sonnet-4-5",
@@ -102,9 +126,38 @@ AGENT_REGISTRY = {
             "groq/llama-3.3-70b",
         ],
     },
+    # -- Chat/LLM providers (step_type=chat, manual) --
+    "openai": {
+        "type": "chat",
+        "label": "OpenAI",
+        "api_key_env": "OPENAI_API_KEY",
+        "supports_tools": ["web_search"],
+        "tiers": {"max": "gpt-4o", "normal": "gpt-4o-mini", "mini": "gpt-4o-mini"},
+    },
+    "anthropic": {
+        "type": "chat",
+        "label": "Anthropic",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "supports_tools": ["web_search"],
+        "tiers": {"max": "claude-sonnet-4-20250514", "normal": "claude-sonnet-4-20250514", "mini": "claude-haiku-3-5-20241022"},
+    },
+    "google": {
+        "type": "chat",
+        "label": "Google",
+        "api_key_env": "GOOGLE_API_KEY",
+        "supports_tools": ["web_search"],
+        "tiers": {"max": "gemini-2.5-pro", "normal": "gemini-2.5-flash", "mini": "gemini-2.5-flash"},
+    },
+    "ollama": {
+        "type": "chat",
+        "label": "Ollama",
+        "api_key_env": "OLLAMA_HOST",
+        "supports_tools": [],
+        "tiers": {"max": "llama3.1:70b", "normal": "llama3.1:8b", "mini": "llama3.1:8b"},
+    },
 }
 
-KNOWN_MODELS = list({m for reg in AGENT_REGISTRY.values() for m in reg["models"]})
+KNOWN_MODELS = list({m for reg in AGENT_REGISTRY.values() for m in reg.get("models", [])})
 
 _DEFAULTS_FILE = Path(__file__).parent / "defaults" / "config.toml"
 
@@ -116,6 +169,9 @@ def _load_defaults() -> dict[str, Any]:
             return tomllib.load(f)
     except Exception:
         return {}
+
+
+DEFAULT_CONFIG = _load_defaults()
 
 
 def ensure_system_dir() -> Path:
@@ -169,25 +225,40 @@ def save_system_config(config: dict[str, Any]) -> Path:
     return _write_config(config)
 
 
-def resolve_alias(session, name: str) -> tuple[str, str]:
-    """Look up an agent alias by name. Returns (agent, model). Raises ValueError if not found."""
+def resolve_alias(session, alias_type: str, alias_name: str = "normal") -> tuple[str, str]:
+    """Look up (agent, model) for a type + alias tier.
+
+    Falls back to the first matching agent's default tiers from AGENT_REGISTRY.
+    """
     from .db.models import AgentAlias
-    alias = session.query(AgentAlias).filter_by(name=name).first()
-    if not alias:
-        raise ValueError(f"Agent alias '{name}' not found")
-    return alias.agent, alias.model
+    alias = session.query(AgentAlias).filter_by(type=alias_type, name=alias_name).first()
+    if alias:
+        return alias.agent, alias.model
+    for agent_key, reg in AGENT_REGISTRY.items():
+        if reg.get("type") != alias_type:
+            continue
+        tiers = reg.get("tiers", {})
+        if alias_name in tiers:
+            return agent_key, tiers[alias_name]
+    raise ValueError(f"Alias '{alias_name}' not found for type '{alias_type}'")
 
 
-def find_project_dir(start_path: Optional[Path] = None) -> Optional[Path]:
+def infer_step_type(agent: str) -> str:
+    """Derive step_type from agent's registry type. Returns 'code' or 'chat'."""
+    reg = AGENT_REGISTRY.get(agent, {})
+    return reg.get("type", "code")
+
+
+def find_space_dir(start_path: Optional[Path] = None) -> Optional[Path]:
     """Find .llmflows/ directory by walking up from start_path."""
     if start_path is None:
         start_path = Path.cwd()
 
     current = start_path.resolve()
     while current != current.parent:
-        project_dir = current / PROJECT_DIR
-        if project_dir.is_dir():
-            return project_dir
+        space_dir = current / SPACE_DIR
+        if space_dir.is_dir():
+            return space_dir
         current = current.parent
     return None
 

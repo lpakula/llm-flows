@@ -13,13 +13,13 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 export function Sidebar() {
-  const { projects, selectedProjectId, setSelectedProjectId } = useApp();
+  const { spaces, selectedSpaceId, setSelectedSpaceId } = useApp();
   const navigate = useNavigate();
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const projectPickerRef = useRef<HTMLDivElement>(null);
+  const [spaceMenuOpen, setSpaceMenuOpen] = useState(false);
+  const spacePickerRef = useRef<HTMLDivElement>(null);
   const [inboxCount, setInboxCount] = useState(0);
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
+  const selectedSpace = spaces.find((s) => s.id === selectedSpaceId) || null;
 
   const refreshInbox = useCallback(async () => {
     try {
@@ -32,21 +32,21 @@ export function Sidebar() {
 
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      if (projectPickerRef.current && !projectPickerRef.current.contains(e.target as Node)) {
-        setProjectMenuOpen(false);
+      if (spacePickerRef.current && !spacePickerRef.current.contains(e.target as Node)) {
+        setSpaceMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, []);
 
-  const pickProject = (id: string | null) => {
-    setProjectMenuOpen(false);
+  const pickSpace = (id: string | null) => {
+    setSpaceMenuOpen(false);
     if (id) {
-      setSelectedProjectId(id);
-      navigate(`/project/${id}`);
+      setSelectedSpaceId(id);
+      navigate(`/space/${id}`);
     } else {
-      setSelectedProjectId(null);
+      setSelectedSpaceId(null);
       navigate("/");
     }
   };
@@ -60,7 +60,7 @@ export function Sidebar() {
         </NavLink>
       </div>
 
-      {/* Inbox — project-agnostic, always visible */}
+      {/* Inbox — space-agnostic, always visible */}
       <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2">
         <NavLink to="/inbox" className={navClass}>
           <Inbox size={14} className="flex-shrink-0" />
@@ -73,56 +73,56 @@ export function Sidebar() {
         </NavLink>
       </nav>
 
-      {/* Project picker (inline expand) + project nav */}
-      <div className="flex-shrink-0 border-b border-gray-800 px-3 pt-3 pb-2" ref={projectPickerRef}>
+      {/* Space picker (inline expand) + space nav */}
+      <div className="flex-shrink-0 border-b border-gray-800 px-3 pt-3 pb-2" ref={spacePickerRef}>
         <span className="text-[10px] uppercase tracking-widest text-gray-500 font-medium px-1 block mb-1.5">
-          Project
+          Space
         </span>
         <div className="rounded-lg border border-gray-700 bg-gray-800/80 overflow-hidden">
           <button
             type="button"
-            onClick={() => setProjectMenuOpen((o) => !o)}
-            aria-expanded={projectMenuOpen}
+            onClick={() => setSpaceMenuOpen((o) => !o)}
+            aria-expanded={spaceMenuOpen}
             aria-haspopup="listbox"
             className="w-full text-left px-2.5 py-2 text-sm text-gray-200 flex items-center gap-2 hover:bg-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset"
           >
             <span className="text-gray-400 shrink-0 w-3 text-center" aria-hidden>
-              {selectedProject ? "✓" : ""}
+              {selectedSpace ? "✓" : ""}
             </span>
-            <span className="truncate">{selectedProject?.name ?? "Select project..."}</span>
+            <span className="truncate">{selectedSpace?.name ?? "Select space..."}</span>
           </button>
-          {projectMenuOpen && (
+          {spaceMenuOpen && (
             <ul
               role="listbox"
               className="border-t border-gray-700 max-h-52 overflow-y-auto divide-y divide-gray-800/80"
             >
-              <li role="option" aria-selected={!selectedProjectId}>
+              <li role="option" aria-selected={!selectedSpaceId}>
                 <button
                   type="button"
-                  onClick={() => pickProject(null)}
+                  onClick={() => pickSpace(null)}
                   className={`w-full text-left px-2.5 py-2 text-sm flex items-center gap-2 transition-colors duration-100 ${
-                    !selectedProjectId
+                    !selectedSpaceId
                       ? "bg-blue-600/25 text-white hover:bg-blue-500/40"
                       : "text-gray-300 hover:bg-gray-700"
                   }`}
                 >
-                  <span className="w-3 shrink-0 text-center text-xs">{!selectedProjectId ? "✓" : ""}</span>
-                  <span className="truncate">Select project...</span>
+                  <span className="w-3 shrink-0 text-center text-xs">{!selectedSpaceId ? "✓" : ""}</span>
+                  <span className="truncate">Select space...</span>
                 </button>
               </li>
-              {projects.map((p) => (
-                <li key={p.id} role="option" aria-selected={p.id === selectedProjectId}>
+              {spaces.map((s) => (
+                <li key={s.id} role="option" aria-selected={s.id === selectedSpaceId}>
                   <button
                     type="button"
-                    onClick={() => pickProject(p.id)}
+                    onClick={() => pickSpace(s.id)}
                     className={`w-full text-left px-2.5 py-2 text-sm flex items-center gap-2 transition-colors duration-100 ${
-                      p.id === selectedProjectId
+                      s.id === selectedSpaceId
                         ? "bg-blue-600/25 text-white hover:bg-blue-500/40"
                         : "text-gray-300 hover:bg-gray-700"
                     }`}
                   >
-                    <span className="w-3 shrink-0 text-center text-xs">{p.id === selectedProjectId ? "✓" : ""}</span>
-                    <span className="truncate">{p.name}</span>
+                    <span className="w-3 shrink-0 text-center text-xs">{s.id === selectedSpaceId ? "✓" : ""}</span>
+                    <span className="truncate">{s.name}</span>
                   </button>
                 </li>
               ))}
@@ -132,21 +132,21 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 pt-2 space-y-0.5">
-        {selectedProject && (
+        {selectedSpace && (
           <>
-            <NavLink to={`/project/${selectedProject.id}`} end className={navClass}>
+            <NavLink to={`/space/${selectedSpace.id}`} end className={navClass}>
               <LayoutDashboard size={14} className="flex-shrink-0" />
               Board
             </NavLink>
-            <NavLink to={`/project/${selectedProject.id}/flows`} className={navClass}>
+            <NavLink to={`/space/${selectedSpace.id}/flows`} className={navClass}>
               <Workflow size={14} className="flex-shrink-0" />
               Flows
             </NavLink>
-            <NavLink to={`/project/${selectedProject.id}/skills`} className={navClass}>
+            <NavLink to={`/space/${selectedSpace.id}/skills`} className={navClass}>
               <BookOpen size={14} className="flex-shrink-0" />
               Skills
             </NavLink>
-            <NavLink to={`/project/${selectedProject.id}/settings`} className={navClass}>
+            <NavLink to={`/space/${selectedSpace.id}/settings`} className={navClass}>
               <Settings size={14} className="flex-shrink-0" />
               Settings
             </NavLink>

@@ -8,18 +8,18 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import FlowRun, InboxItem, Project, StepRun
+from ..db.models import FlowRun, InboxItem, Space, StepRun
 
 
 class RunService:
     def __init__(self, session: Session):
         self.session = session
 
-    def enqueue(self, project_id: str, flow_id: str,
+    def enqueue(self, space_id: str, flow_id: str,
                 one_shot: bool = False) -> FlowRun:
         """Create a FlowRun in the queue."""
         run = FlowRun(
-            project_id=project_id,
+            space_id=space_id,
             flow_id=flow_id,
             one_shot=one_shot,
         )
@@ -27,22 +27,22 @@ class RunService:
         self.session.commit()
         return run
 
-    def get_pending(self, project_id: str) -> Optional[FlowRun]:
+    def get_pending(self, space_id: str) -> Optional[FlowRun]:
         """Return the oldest FlowRun with no started_at (daemon picks this up)."""
         return (
             self.session.query(FlowRun)
-            .filter_by(project_id=project_id)
+            .filter_by(space_id=space_id)
             .filter(FlowRun.started_at.is_(None))
             .filter(FlowRun.completed_at.is_(None))
             .order_by(FlowRun.created_at)
             .first()
         )
 
-    def get_all_pending(self, project_id: str) -> list[FlowRun]:
-        """Return all pending FlowRuns for a project, oldest first."""
+    def get_all_pending(self, space_id: str) -> list[FlowRun]:
+        """Return all pending FlowRuns for a space, oldest first."""
         return (
             self.session.query(FlowRun)
-            .filter_by(project_id=project_id)
+            .filter_by(space_id=space_id)
             .filter(FlowRun.started_at.is_(None))
             .filter(FlowRun.completed_at.is_(None))
             .order_by(FlowRun.created_at)
@@ -115,10 +115,10 @@ class RunService:
             StepRun.step_position >= pivot_position,
         ).all()
 
-        if steps_to_delete and run.project:
+        if steps_to_delete and run.space:
             from .context import ContextService
             artifacts_dir = ContextService.get_artifacts_dir(
-                Path(run.project.path), run_id,
+                Path(run.space.path), run_id,
             )
             for sr in steps_to_delete:
                 step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}"
@@ -237,22 +237,22 @@ class RunService:
         """Get a StepRun by ID."""
         return self.session.query(StepRun).filter_by(id=step_run_id).first()
 
-    def get_active_by_project(self, project_id: str) -> list[FlowRun]:
-        """All active runs for a project (started but not completed)."""
+    def get_active_by_space(self, space_id: str) -> list[FlowRun]:
+        """All active runs for a space (started but not completed)."""
         return (
             self.session.query(FlowRun)
-            .filter_by(project_id=project_id)
+            .filter_by(space_id=space_id)
             .filter(FlowRun.completed_at.is_(None))
             .filter(FlowRun.started_at.isnot(None))
             .order_by(FlowRun.created_at)
             .all()
         )
 
-    def list_by_project(self, project_id: str) -> list[FlowRun]:
-        """All runs for a project (active + history)."""
+    def list_by_space(self, space_id: str) -> list[FlowRun]:
+        """All runs for a space (active + history)."""
         return (
             self.session.query(FlowRun)
-            .filter_by(project_id=project_id)
+            .filter_by(space_id=space_id)
             .order_by(FlowRun.created_at)
             .all()
         )
@@ -294,20 +294,20 @@ class RunService:
         return sr
 
     def list_awaiting_user(self) -> list[dict]:
-        """Return all steps awaiting user action, with project context."""
+        """Return all steps awaiting user action, with space context."""
         from .context import ContextService
 
         rows = (
-            self.session.query(StepRun, FlowRun, Project)
+            self.session.query(StepRun, FlowRun, Space)
             .join(FlowRun, StepRun.flow_run_id == FlowRun.id)
-            .join(Project, FlowRun.project_id == Project.id)
+            .join(Space, FlowRun.space_id == Space.id)
             .filter(StepRun.awaiting_user_at.isnot(None))
             .filter(StepRun.completed_at.is_(None))
             .order_by(StepRun.awaiting_user_at)
             .all()
         )
         results = []
-        for sr, run, project in rows:
+        for sr, run, space in rows:
             step_type = "agent"
             if run.flow_snapshot:
                 try:
@@ -322,7 +322,7 @@ class RunService:
             user_message = ""
             try:
                 artifacts_dir = ContextService.get_artifacts_dir(
-                    Path(project.path), run.id,
+                    Path(space.path), run.id,
                 )
                 result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                 if result_file.exists():
@@ -335,8 +335,8 @@ class RunService:
                 "step_name": sr.step_name,
                 "step_type": step_type,
                 "step_position": sr.step_position,
-                "project_id": project.id,
-                "project_name": project.name,
+                "space_id": space.id,
+                "space_name": space.name,
                 "run_id": run.id,
                 "flow_name": run.flow_name or "",
                 "prompt": sr.prompt or "",
@@ -352,8 +352,8 @@ class RunService:
 
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         rows = (
-            self.session.query(FlowRun, Project)
-            .join(Project, FlowRun.project_id == Project.id)
+            self.session.query(FlowRun, Space)
+            .join(Space, FlowRun.space_id == Space.id)
             .filter(FlowRun.completed_at.isnot(None))
             .filter(FlowRun.completed_at >= cutoff)
             .filter(FlowRun.summary.isnot(None))
@@ -364,15 +364,15 @@ class RunService:
         return [
             {
                 "run_id": run.id,
-                "project_id": project.id,
-                "project_name": project.name,
+                "space_id": space.id,
+                "space_name": space.name,
                 "flow_name": run.flow_name or "",
                 "outcome": run.outcome or "",
                 "summary": run.summary or "",
                 "duration_seconds": run.duration_seconds,
                 "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,
             }
-            for run, project in rows
+            for run, space in rows
         ]
 
     def get_latest_step_run(self, run_id: str, step_name: str) -> Optional[StepRun]:
@@ -387,11 +387,11 @@ class RunService:
     # ── Inbox helpers ───────────────────────────────────────────────────────
 
     def create_inbox_item(
-        self, type: str, reference_id: str, project_id: str, title: str = "",
+        self, type: str, reference_id: str, space_id: str, title: str = "",
     ) -> InboxItem:
         item = InboxItem(
             type=type, reference_id=reference_id,
-            project_id=project_id, title=title,
+            space_id=space_id, title=title,
         )
         self.session.add(item)
         self.session.commit()

@@ -23,7 +23,7 @@ function formatTimestamp(iso: string | undefined | null): string {
 }
 
 export function RunDetailView() {
-  const { projectId, runId } = useParams<{ projectId: string; runId: string }>();
+  const { spaceId, runId } = useParams<{ spaceId: string; runId: string }>();
   const navigate = useNavigate();
 
   const [run, setRun] = useState<FlowRun | null>(null);
@@ -48,9 +48,9 @@ export function RunDetailView() {
   const isActive = run ? !!run.started_at && !run.completed_at : false;
 
   const loadRun = useCallback(async () => {
-    if (!runId || !projectId) return;
+    if (!runId || !spaceId) return;
     try {
-      const allRuns = await api.listFlowRuns(projectId);
+      const allRuns = await api.listFlowRuns(spaceId);
       const found = allRuns.find((r) => r.id === runId);
       if (found) {
         setRun(found);
@@ -60,12 +60,12 @@ export function RunDetailView() {
     } catch (e) {
       console.error("Run load error:", e);
     }
-  }, [runId, projectId]);
+  }, [runId, spaceId]);
 
   useEffect(() => {
     const init = async () => {
-      if (!runId || !projectId) return;
-      const allRuns = await api.listFlowRuns(projectId);
+      if (!runId || !spaceId) return;
+      const allRuns = await api.listFlowRuns(spaceId);
       const found = allRuns.find((r) => r.id === runId);
       if (!found) return;
       setRun(found);
@@ -94,7 +94,7 @@ export function RunDetailView() {
       }
     };
     init();
-  }, [runId, projectId]);
+  }, [runId, spaceId]);
 
   useInterval(loadRun, 5000);
 
@@ -145,7 +145,7 @@ export function RunDetailView() {
     if (!run) return;
     if (!confirm("Delete this run?")) return;
     await api.deleteRun(run.id);
-    navigate(`/project/${projectId}`);
+    navigate(`/space/${spaceId}`);
   };
 
   const label = run ? displayStatus(run) : "";
@@ -155,7 +155,7 @@ export function RunDetailView() {
       {/* Header */}
       <header className="border-b border-gray-800 px-6 py-4">
         <button
-          onClick={() => navigate(`/project/${projectId}`)}
+          onClick={() => navigate(`/space/${spaceId}`)}
           className="text-xs text-gray-500 hover:text-gray-300"
         >
           &larr; Back to Board
@@ -269,6 +269,12 @@ export function RunDetailView() {
                       >
                         {step.step_type === "manual" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
                         {stepLabel}
+                        {step.step_type && step.step_type !== "code" && step.step_type !== "agent" && step.step_type !== "manual" && (
+                          <span className={`ml-1 text-[9px] ${
+                            step.step_type === "chat" ? "text-emerald-400" :
+                            step.step_type === "shell" ? "text-orange-400" : "text-gray-400"
+                          }`}>{step.step_type}</span>
+                        )}
                         {step.has_ifs && <span className="ml-1 text-purple-400 font-medium">if</span>}
                       </button>
                     </div>

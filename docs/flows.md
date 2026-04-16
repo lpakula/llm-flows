@@ -1,6 +1,6 @@
 # Flow Authoring
 
-Flows are fully customizable. You can define step order, markdown step instructions, gate commands, and project-specific validation logic.
+Flows are fully customizable. You can define step order, markdown step instructions, gate commands, and space-specific validation logic.
 
 A good flow is usually a small number of clear steps, with fast and reliable gates, instructions specific enough to guide the agent, and strict enough to block bad output without making progress impossible.
 

@@ -1,22 +1,22 @@
-"""System daemon -- watches all projects, orchestrates step-per-run execution."""
+"""System daemon -- watches all spaces, orchestrates step-per-run execution."""
 
 import json
 import logging
 import signal
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from ..config import load_system_config, resolve_alias
 from ..db.database import get_session, reset_engine
-from ..db.models import Project
+from ..db.models import Space
 from .agent import AgentService
 from .context import ContextService
-from .flow import FlowService
+from .executors import get_executor, StepContext
+from .flow import FlowService, _normalize_step_type
 from .gate import evaluate_gates, evaluate_ifs, _interpolate
-from .project import ProjectService
+from .space import SpaceService
 from .run import RunService
 
 logger = logging.getLogger("llmflows.daemon")
@@ -34,11 +34,11 @@ class Daemon:
         self._telegram = None
 
     @staticmethod
-    def _build_step_vars(base_vars: dict, project) -> dict:
-        """Build template variables by merging base vars with project-level variables."""
+    def _build_step_vars(base_vars: dict, space) -> dict:
+        """Build template variables by merging base vars with space-level variables."""
         merged = dict(base_vars)
-        for k, v in project.get_variables().items():
-            merged[f"project.{k}"] = v
+        for k, v in space.get_variables().items():
+            merged[f"space.{k}"] = v
         return merged
 
     def _maybe_start_telegram(self) -> None:
@@ -87,16 +87,16 @@ class Daemon:
         self._stop_event.set()
 
     def _tick(self) -> None:
-        """Single daemon tick -- check all projects for actionable transitions."""
+        """Single daemon tick -- check all spaces for actionable transitions."""
         reset_engine()
         session = get_session()
         try:
-            project_svc = ProjectService(session)
+            space_svc = SpaceService(session)
             run_svc = RunService(session)
             flow_svc = FlowService(session)
 
-            for project in project_svc.list_all():
-                self._process_project(project, run_svc, flow_svc)
+            for space in space_svc.list_all():
+                self._process_space(space, run_svc, flow_svc)
         finally:
             session.close()
 
@@ -127,14 +127,14 @@ class Daemon:
 
     # ── Core orchestration ────────────────────────────────────────────────────
 
-    def _process_project(
-        self, project,
+    def _process_space(
+        self, space,
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
-        """Process a single project: orchestrate active runs step-by-step, pick up pending."""
-        working_path = Path(project.path)
+        """Process a single space: orchestrate active runs step-by-step, pick up pending."""
+        working_path = Path(space.path)
 
-        active_runs = run_svc.get_active_by_project(project.id)
+        active_runs = run_svc.get_active_by_space(space.id)
 
         for run in active_runs:
             if run.paused_at:
@@ -146,13 +146,13 @@ class Daemon:
                 if active_step.awaiting_user_at and not active_step.completed_at:
                     continue
                 self._process_active_step(
-                    run, project, active_step, working_path,
+                    run, space, active_step, working_path,
                     run_svc, flow_svc,
                 )
             else:
                 if not run.current_step:
                     self._launch_first_step(
-                        run, project, working_path,
+                        run, space, working_path,
                         run_svc, flow_svc,
                     )
                 else:
@@ -178,13 +178,13 @@ class Daemon:
                             run_svc, flow_svc,
                         )
 
-        max_concurrent = project.max_concurrent_tasks or 1
+        max_concurrent = space.max_concurrent_tasks or 1
         active_count = len(active_runs)
 
-        for pending in run_svc.get_all_pending(project.id):
+        for pending in run_svc.get_all_pending(space.id):
             if active_count < max_concurrent:
                 active_count += 1
-                self._start_run(pending, run_svc, flow_svc, project)
+                self._start_run(pending, run_svc, flow_svc, space)
 
     def _relaunch_current_step(
         self, run, working_path: Path,
@@ -194,7 +194,7 @@ class Daemon:
         step_name = run.current_step
         flow_name = run.flow_name or ""
         position = 0
-        steps = self._get_snapshot_steps(run) or flow_svc.get_flow_steps(flow_name, project_id=run.project_id)
+        steps = self._get_snapshot_steps(run) or flow_svc.get_flow_steps(flow_name, space_id=run.space_id)
         if step_name in steps:
             position = steps.index(step_name)
         self._launch_step(
@@ -204,12 +204,33 @@ class Daemon:
         )
 
     def _process_active_step(
-        self, run, project, step_run,
+        self, run, space, step_run,
         working_path: Path,
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Handle a running step: check liveness, evaluate gates on completion, advance."""
-        agent_running = AgentService.is_agent_running(project.path, run_id=run.id)
+        snap_step_def = self._get_snapshot_step(run, step_run.step_name)
+        step_type = _normalize_step_type(
+            (snap_step_def or {}).get("step_type", "code")
+        )
+        executor = get_executor(step_type)
+
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
+        ctx = StepContext(
+            run_id=run.id,
+            step_name=step_run.step_name,
+            step_position=step_run.step_position,
+            step_content="",
+            flow_name=step_run.flow_name,
+            agent=step_run.agent or "cursor",
+            model=step_run.model or "",
+            step_type=step_type,
+            working_path=working_path,
+            space_dir=Path(space.path) / ".llmflows",
+            artifacts_dir=artifacts_dir,
+        )
+        agent_running = executor.is_running(ctx)
 
         if agent_running:
             if self.run_timeout_minutes and step_run.started_at:
@@ -227,13 +248,13 @@ class Daemon:
                         "Run %s timed out after %dm (step '%s')",
                         run.id, int(elapsed / 60), step_run.step_name,
                     )
-                    AgentService.kill_agent(project.path, run_id=run.id)
+                    AgentService.kill_agent(space.path, run_id=run.id)
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     run_svc.mark_completed(run.id, outcome="timeout")
                     self.notifications.notify("run.timeout", {
                         "flow_name": run.flow_name or run.id,
                         "run_id": run.id,
-                        "project_name": project.name,
+                        "space_name": space.name,
                         "timeout_minutes": int(elapsed / 60),
                     })
             return
@@ -254,19 +275,17 @@ class Daemon:
         prompt_file = Path.home() / ".llmflows" / "prompts" / f"{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
         prompt_file.unlink(missing_ok=True)
 
-        project_root = Path(project.path)
-        step_artifacts = ContextService.get_artifacts_dir(project_root, run.id) / \
+        space_root = Path(space.path)
+        step_artifacts = ContextService.get_artifacts_dir(space_root, run.id) / \
             f"{step_run.step_position:02d}-{step_run.step_name}" / "attachments"
         if step_artifacts.is_dir():
             self._publish_attachments(step_artifacts, run.id)
 
-        snap_step_def = self._get_snapshot_step(run, step_run.step_name)
-        step_type = (snap_step_def or {}).get("step_type", "agent")
         if step_type == "manual":
             run_svc.mark_awaiting_user(step_run.id)
             inbox_item = run_svc.create_inbox_item(
                 type="awaiting_user", reference_id=step_run.id,
-                project_id=run.project_id,
+                space_id=run.space_id,
                 title=f"{run.flow_name or run.id} — {step_run.step_name} (manual)",
             )
             logger.info(
@@ -276,7 +295,7 @@ class Daemon:
             user_message = ""
             try:
                 result_file = ContextService.get_artifacts_dir(
-                    project_root, run.id,
+                    space_root, run.id,
                 ) / f"{step_run.step_position:02d}-{step_run.step_name}" / "_result.md"
                 if result_file.exists():
                     user_message = result_file.read_text().strip()
@@ -300,25 +319,35 @@ class Daemon:
         )
 
         if step_run.step_name == "__one_shot__":
-            artifacts_dir = ContextService.get_artifacts_dir(Path(project.path), run.id)
+            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Run %s one-shot completed", run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
             return
 
+        self._post_step_completion(
+            run, space, step_run, working_path, run_svc, flow_svc,
+        )
+
+    def _post_step_completion(
+        self, run, space, step_run,
+        working_path: Path,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Run gate evaluation and advance after a step completes (shared by sync and async paths)."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        project_root = Path(project.path)
-        artifact_dir = ContextService.get_artifacts_dir(project_root, run.id)
+        space_root = Path(space.path)
+        artifact_dir = ContextService.get_artifacts_dir(space_root, run.id)
         step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": step_run.flow_name,
             "artifacts_dir": str(step_artifact_dir),
-        }, project)
+        }, space)
 
         snap_step = self._get_snapshot_step(run, step_run.step_name)
-        step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, project_id=run.project_id)
+        step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, space_id=run.space_id)
         step_src = snap_step or step_obj
         max_retries = None
         step_allow_max = False
@@ -340,7 +369,6 @@ class Daemon:
                 "Run %s was cancelled before gate evaluation for step '%s', skipping",
                 run.id, step_run.step_name,
             )
-            run_svc.mark_step_completed(step_run.id, outcome="cancelled")
             return
 
         if gates:
@@ -358,7 +386,6 @@ class Daemon:
                         "Run %s cancelled during gate evaluation for step '%s', skipping retry",
                         run.id, step_run.step_name,
                     )
-                    run_svc.mark_step_completed(step_run.id, outcome="cancelled")
                     return
 
                 if unlimited or retry_count < max_retries:
@@ -414,14 +441,14 @@ class Daemon:
     ) -> None:
         """Determine the next step and launch it, or complete the run."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        project = run_svc.session.query(Project).filter_by(id=run.project_id).first()
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": current_flow,
-        }, project)
+        }, space)
 
         if current_step_name == "__summary__":
-            artifacts_dir = ContextService.get_artifacts_dir(Path(project.path), run.id)
+            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Run %s completed", run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
@@ -439,7 +466,7 @@ class Daemon:
             except ValueError:
                 next_step_name = None
         else:
-            next_step_name = flow_svc.get_next_step(current_flow, current_step_name, project_id=run.project_id)
+            next_step_name = flow_svc.get_next_step(current_flow, current_step_name, space_id=run.space_id)
 
         if not next_step_name:
             self._launch_summary_step(
@@ -450,7 +477,7 @@ class Daemon:
 
         while next_step_name:
             snap_step = self._get_snapshot_step(run, next_step_name)
-            step_obj = flow_svc.get_step_obj(next_flow, next_step_name, project_id=run.project_id)
+            step_obj = flow_svc.get_step_obj(next_flow, next_step_name, space_id=run.space_id)
             step_src = snap_step or step_obj
             if not step_src:
                 break
@@ -468,7 +495,7 @@ class Daemon:
                 except ValueError:
                     nxt = None
             else:
-                nxt = flow_svc.get_next_step(next_flow, next_step_name, project_id=run.project_id)
+                nxt = flow_svc.get_next_step(next_flow, next_step_name, space_id=run.space_id)
             next_position += 1
             next_step_name = nxt
 
@@ -486,7 +513,7 @@ class Daemon:
         )
 
     def _launch_first_step(
-        self, run, project, working_path: Path,
+        self, run, space, working_path: Path,
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Launch the first step of a run that has been started but has no steps yet."""
@@ -499,7 +526,7 @@ class Daemon:
             return
 
         if run.one_shot:
-            if flow_name and flow_svc.has_human_steps(flow_name, project_id=run.project_id):
+            if flow_name and flow_svc.has_human_steps(flow_name, space_id=run.space_id):
                 logger.warning(
                     "Run %s: one-shot disabled — flow '%s' contains manual/prompt steps",
                     run.id, flow_name,
@@ -512,7 +539,7 @@ class Daemon:
                 return
 
         if not run.flow_snapshot:
-            snapshot = flow_svc.build_flow_snapshot(flow_name, project_id=run.project_id)
+            snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=run.space_id)
             if not snapshot:
                 logger.error("Flow '%s' not found for run %s", flow_name, run.id)
                 run_svc.mark_completed(run.id, outcome="error")
@@ -523,7 +550,7 @@ class Daemon:
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = self._build_step_vars({
             "run.id": run.id, "flow.name": flow_name,
-        }, project)
+        }, space)
 
         steps = self._get_snapshot_steps(run)
         if not steps:
@@ -570,7 +597,7 @@ class Daemon:
     ) -> None:
         """Assemble all steps into a single prompt and launch one agent."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        project = run_svc.session.query(Project).filter_by(id=run.project_id).first()
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
 
         collected_steps = []
         active_flow = run.flow_name or "default"
@@ -578,10 +605,10 @@ class Daemon:
         if run.flow_name:
             step_vars = self._build_step_vars({
                 "run.id": run.id, "flow.name": run.flow_name,
-            }, project)
-            step_names = flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id)
+            }, space)
+            step_names = flow_svc.get_flow_steps(run.flow_name, space_id=run.space_id)
             for sname in step_names:
-                step_obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
+                step_obj = flow_svc.get_step_obj(run.flow_name, sname, space_id=run.space_id)
                 if not step_obj:
                     continue
                 ifs = step_obj.get_ifs()
@@ -597,8 +624,8 @@ class Daemon:
                     "gates": gates,
                 })
 
-        project_root = Path(project.path)
-        artifacts_dir = ContextService.get_artifacts_dir(project_root, run.id)
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
         ctx = ContextService(working_path / ".llmflows")
         summary_content = ctx.render_summary_step({
             "artifacts_dir": str(artifacts_dir),
@@ -609,7 +636,7 @@ class Daemon:
             "gates": [],
         })
 
-        resolved_agent, resolved_model = resolve_alias(run_svc.session, "max")
+        resolved_agent, resolved_model = resolve_alias(run_svc.session, "code", "max")
 
         step_run = run_svc.create_step_run(
             run_id=run.id,
@@ -628,8 +655,8 @@ class Daemon:
             "artifacts_dir": str(artifacts_dir),
         })
 
-        project_dir = Path(project.path) / ".llmflows"
-        agent_svc = AgentService(project_dir, working_path)
+        space_dir = Path(space.path) / ".llmflows"
+        agent_svc = AgentService(space_dir, working_path)
 
         wt_llmflows = working_path / ".llmflows" / run.id
         wt_llmflows.mkdir(parents=True, exist_ok=True)
@@ -645,7 +672,7 @@ class Daemon:
         launched = agent_svc._launch_agent(
             working_path, prompt_file, log_file, pid_file,
             model=resolved_model, agent=resolved_agent,
-            project_variables=project.get_variables(),
+            space_variables=space.get_variables(),
         )
 
         if launched:
@@ -667,20 +694,20 @@ class Daemon:
         gate_failures: Optional[list[dict]] = None,
         force_alias: Optional[str] = None,
     ) -> None:
-        """Create a StepRun, render prompt, and launch agent for a step."""
+        """Create a StepRun, render prompt, and launch executor for a step."""
         snap_step = self._get_snapshot_step(run, step_name)
-        step_obj = flow_svc.get_step_obj(flow_name, step_name, project_id=run.project_id)
+        step_obj = flow_svc.get_step_obj(flow_name, step_name, space_id=run.space_id)
         step_content = ((snap_step or {}).get("content", "") or (step_obj.content if step_obj else "") or "").rstrip()
 
-        project = run_svc.session.query(Project).filter_by(id=run.project_id).first()
-        project_root = Path(project.path)
-        artifacts_dir = ContextService.get_artifacts_dir(project_root, run.id)
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
         step_artifact_dir = artifacts_dir / f"{step_position:02d}-{step_name}"
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": flow_name,
             "artifacts_dir": str(step_artifact_dir),
-        }, project)
+        }, space)
         for sr in run_svc.list_step_runs(run.id):
             if sr.completed_at and sr.user_response:
                 step_vars[f"steps.{sr.step_name}.user_response"] = sr.user_response
@@ -688,13 +715,23 @@ class Daemon:
             from .gate import _interpolate
             step_content = _interpolate(step_content, step_vars)
 
-        step_type = (snap_step or {}).get("step_type") or getattr(step_obj, 'step_type', None) or "agent"
+        step_type = _normalize_step_type(
+            (snap_step or {}).get("step_type")
+            or getattr(step_obj, 'step_type', None)
+            or "code"
+        )
 
-        alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "standard"
+        tools = (snap_step or {}).get("tools") or (
+            step_obj.get_tools() if step_obj and hasattr(step_obj, 'get_tools') else []
+        ) or []
+
+        alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "normal"
+        alias_type = "chat" if step_type in ("chat", "manual") else step_type
         try:
-            resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_name)
+            resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_type, alias_name)
         except ValueError:
-            resolved_agent, resolved_model = "cursor", ""
+            resolved_agent = "cursor" if alias_type == "code" else "openai"
+            resolved_model = ""
 
         attempt = len([
             sr for sr in run_svc.list_step_runs(run.id)
@@ -717,14 +754,13 @@ class Daemon:
 
         run_svc.update_run_step(run.id, step_name, flow_name)
 
-        project_dir = Path(project.path) / ".llmflows"
-        agent_svc = AgentService(project_dir, working_path)
-
         user_responses = []
         for sr in run_svc.list_step_runs(run.id):
             if sr.completed_at and sr.user_response:
                 snap_def = self._get_snapshot_step(run, sr.step_name)
-                sr_step_type = (snap_def or {}).get("step_type", "agent")
+                sr_step_type = _normalize_step_type(
+                    (snap_def or {}).get("step_type", "code")
+                )
                 user_responses.append({
                     "step_name": sr.step_name,
                     "step_type": sr_step_type,
@@ -740,36 +776,71 @@ class Daemon:
         skill_refs: list[dict] = []
         if skill_names:
             from .skill import SkillService
-            for info in SkillService.resolve_skills(project.path, skill_names):
+            for info in SkillService.resolve_skills(space.path, skill_names):
                 skill_refs.append({"name": info.name, "description": info.description, "path": info.path})
 
-        launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
+        space_dir = Path(space.path) / ".llmflows"
+        executor = get_executor(step_type)
+        ctx = StepContext(
             run_id=run.id,
             step_name=step_name,
             step_position=step_position,
             step_content=step_content,
             flow_name=flow_name,
-            model=resolved_model,
             agent=resolved_agent,
+            model=resolved_model,
+            step_type=step_type,
+            working_path=working_path,
+            space_dir=space_dir,
+            artifacts_dir=artifacts_dir,
+            tools=tools,
             gate_failures=gate_failures,
             resume_prompt=resume_prompt,
             attempt=attempt,
             user_responses=user_responses,
-            step_type=step_type,
-            project_variables=project.get_variables(),
+            space_variables=space.get_variables(),
             skills=skill_refs,
+            worktree_path=working_path,
         )
+        result = executor.launch(ctx)
 
-        if launched:
-            if prompt_content:
-                run_svc.set_step_prompt(step_run.id, prompt_content)
-            if log_path:
-                run_svc.set_step_log_path(step_run.id, log_path)
+        if result.success:
+            if result.prompt_content:
+                run_svc.set_step_prompt(step_run.id, result.prompt_content)
+            if result.log_path:
+                run_svc.set_step_log_path(step_run.id, result.log_path)
             logger.info(
-                "Launched step '%s' (pos=%d, agent=%s, model=%s) for run %s",
-                step_name, step_position, resolved_agent, resolved_model,
+                "Launched step '%s' (pos=%d, type=%s, agent=%s, model=%s) for run %s",
+                step_name, step_position, step_type, resolved_agent, resolved_model,
                 run.id,
             )
+
+            if result.is_sync:
+                run_svc.mark_step_completed(step_run.id, outcome="completed")
+                logger.info("Run %s step '%s' completed (sync)", run.id, step_name)
+
+                if step_type == "manual":
+                    run_svc.mark_awaiting_user(step_run.id)
+                    inbox_item = run_svc.create_inbox_item(
+                        type="awaiting_user", reference_id=step_run.id,
+                        space_id=run.space_id,
+                        title=f"{run.flow_name or run.id} — {step_name} (manual)",
+                    )
+                    user_message = result.output or ""
+                    self.notifications.notify("step.awaiting_user", {
+                        "flow_name": run.flow_name or run.id,
+                        "run_id": run.id,
+                        "step_name": step_name,
+                        "step_run_id": step_run.id,
+                        "step_type": step_type,
+                        "inbox_id": inbox_item.id,
+                        "user_message": user_message,
+                    })
+                else:
+                    self._post_step_completion(
+                        run, space, step_run, working_path,
+                        run_svc, flow_svc,
+                    )
         else:
             logger.error(
                 "Failed to launch step '%s' for run %s",
@@ -783,18 +854,18 @@ class Daemon:
         step_position: int, run_svc: RunService, flow_svc: FlowService,
     ) -> None:
         """Launch the auto-appended summary step."""
-        project = run_svc.session.query(Project).filter_by(id=run.project_id).first()
-        project_root = Path(project.path)
-        artifacts_dir = ContextService.get_artifacts_dir(project_root, run.id)
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
         ctx = ContextService(working_path / ".llmflows")
         summary_content = ctx.render_summary_step({
             "artifacts_dir": str(artifacts_dir),
         })
 
         try:
-            resolved_agent, resolved_model = resolve_alias(run_svc.session, "low")
+            summary_agent, resolved_model = resolve_alias(run_svc.session, "code", "mini")
         except ValueError:
-            resolved_agent, resolved_model = "cursor", ""
+            summary_agent, resolved_model = "cursor", ""
 
         flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(
@@ -802,14 +873,14 @@ class Daemon:
             step_name="__summary__",
             step_position=step_position,
             flow_name=flow_label,
-            agent=resolved_agent,
+            agent=summary_agent,
             model=resolved_model,
         )
 
         run_svc.update_run_step(run.id, "__summary__", flow_label)
 
-        project_dir = Path(project.path) / ".llmflows"
-        agent_svc = AgentService(project_dir, working_path)
+        space_dir = Path(space.path) / ".llmflows"
+        agent_svc = AgentService(space_dir, working_path)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
@@ -818,8 +889,8 @@ class Daemon:
             step_content=summary_content,
             flow_name=flow_label,
             model=resolved_model,
-            agent=resolved_agent,
-            project_variables=project.get_variables(),
+            agent=summary_agent,
+            space_variables=space.get_variables(),
         )
 
         if launched:
@@ -831,18 +902,18 @@ class Daemon:
         else:
             logger.error("Failed to launch summary step for run %s", run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
-            artifacts_dir = ContextService.get_artifacts_dir(Path(project.path), run.id)
+            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
 
     def _maybe_create_completed_inbox(self, run, run_svc: RunService) -> None:
-        """Create a completed_run inbox item and send notification if the project opts in."""
+        """Create a completed_run inbox item and send notification if the space opts in."""
         inbox_id = None
         try:
             inbox_item = run_svc.create_inbox_item(
                 type="completed_run", reference_id=run.id,
-                project_id=run.project_id,
+                space_id=run.space_id,
                 title=run.flow_name or run.id,
             )
             inbox_id = inbox_item.id
@@ -869,7 +940,7 @@ class Daemon:
 
     def _start_run(
         self, run, run_svc: RunService,
-        flow_svc: FlowService, project,
+        flow_svc: FlowService, space,
     ) -> None:
         """Mark run as started for step orchestration."""
         logger.info("Starting run %s (flow=%s)", run.id, run.flow_name)

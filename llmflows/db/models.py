@@ -4,7 +4,7 @@ import secrets
 import string
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint  # noqa: F401
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -20,9 +20,13 @@ class Base(DeclarativeBase):
 
 class AgentAlias(Base):
     __tablename__ = "agent_aliases"
+    __table_args__ = (
+        UniqueConstraint("type", "name", name="uq_agent_alias_type_name"),
+    )
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
-    name: str = Column(String(50), nullable=False, unique=True)
+    name: str = Column(String(50), nullable=False)
+    type: str = Column(String(20), nullable=False, default="code")
     agent: str = Column(String(50), nullable=False, default="cursor")
     model: str = Column(String(100), nullable=False)
     position: int = Column(Integer, default=0)
@@ -34,6 +38,7 @@ class AgentAlias(Base):
         return {
             "id": self.id,
             "name": self.name,
+            "type": self.type,
             "agent": self.agent,
             "model": self.model,
             "position": self.position or 0,
@@ -61,8 +66,8 @@ class AgentConfig(Base):
         }
 
 
-class Project(Base):
-    __tablename__ = "projects"
+class Space(Base):
+    __tablename__ = "spaces"
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
     name: str = Column(String(255), nullable=False)
@@ -73,8 +78,8 @@ class Project(Base):
     variables: str = Column(Text, default="{}")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    flows = relationship("Flow", back_populates="project", cascade="all, delete-orphan")
-    flow_runs = relationship("FlowRun", back_populates="project", cascade="all, delete-orphan",
+    flows = relationship("Flow", back_populates="space", cascade="all, delete-orphan")
+    flow_runs = relationship("FlowRun", back_populates="space", cascade="all, delete-orphan",
                              order_by="FlowRun.created_at")
 
     def get_variables(self) -> dict:
@@ -100,25 +105,25 @@ class Project(Base):
 class Flow(Base):
     __tablename__ = "flows"
     __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_flow_project_name"),
+        UniqueConstraint("space_id", "name", name="uq_flow_space_name"),
     )
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
-    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
+    space_id: str = Column(String(6), ForeignKey("spaces.id"), nullable=False)
     name: str = Column(String(255), nullable=False)
     description: str = Column(Text, default="")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
 
-    project = relationship("Project", back_populates="flows")
+    space = relationship("Space", back_populates="flows")
     steps = relationship("FlowStep", back_populates="flow", cascade="all, delete-orphan",
                          order_by="FlowStep.position")
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "project_id": self.project_id,
+            "space_id": self.space_id,
             "name": self.name,
             "description": self.description,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -137,11 +142,12 @@ class FlowStep(Base):
     content: str = Column(Text, default="")
     gates: str = Column(Text, default="[]")
     ifs: str = Column(Text, default="[]")
-    agent_alias: str = Column(String(50), default="standard")
-    step_type: str = Column(String(20), default="agent")
+    agent_alias: str = Column(String(50), default="normal")
+    step_type: str = Column(String(20), default="code")
     allow_max: bool = Column(Boolean, default=False)
     max_gate_retries: int = Column(Integer, default=5)
     skills: str = Column(Text, default="[]")
+    tools: str = Column(Text, default="[]")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -172,6 +178,14 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    def get_tools(self) -> list[str]:
+        """Parse tools JSON into a list of tool names."""
+        import json
+        try:
+            return json.loads(self.tools or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -181,11 +195,12 @@ class FlowStep(Base):
             "content": self.content,
             "gates": self.get_gates(),
             "ifs": self.get_ifs(),
-            "agent_alias": self.agent_alias or "standard",
-            "step_type": self.step_type or "agent",
+            "agent_alias": self.agent_alias or "normal",
+            "step_type": self.step_type or "code",
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
+            "tools": self.get_tools(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -195,7 +210,7 @@ class FlowRun(Base):
     __tablename__ = "flow_runs"
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
-    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
+    space_id: str = Column(String(6), ForeignKey("spaces.id"), nullable=False)
     flow_id: str = Column(String(6), ForeignKey("flows.id"), nullable=True)
     flow_snapshot: str = Column(Text, nullable=True)
     current_step: str = Column(String(255), default="")
@@ -212,7 +227,7 @@ class FlowRun(Base):
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
 
-    project = relationship("Project", back_populates="flow_runs")
+    space = relationship("Space", back_populates="flow_runs")
     flow = relationship("Flow")
     step_runs = relationship("StepRun", back_populates="run", cascade="all, delete-orphan",
                              order_by="StepRun.step_position")
@@ -261,7 +276,7 @@ class FlowRun(Base):
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "project_id": self.project_id,
+            "space_id": self.space_id,
             "flow_id": self.flow_id,
             "flow_name": self.flow_name,
             "current_step": self.current_step,
@@ -288,7 +303,7 @@ class InboxItem(Base):
     id: str = Column(String(6), primary_key=True, default=generate_id)
     type: str = Column(String(32), nullable=False)
     reference_id: str = Column(String(6), nullable=False)
-    project_id: str = Column(String(6), ForeignKey("projects.id"), nullable=False)
+    space_id: str = Column(String(6), ForeignKey("spaces.id"), nullable=False)
     title: str = Column(Text, default="")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     archived_at: datetime = Column(DateTime, nullable=True)
@@ -298,7 +313,7 @@ class InboxItem(Base):
             "id": self.id,
             "type": self.type,
             "reference_id": self.reference_id,
-            "project_id": self.project_id,
+            "space_id": self.space_id,
             "title": self.title,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
-import type { FlowRun, Flow, ProjectSettings } from "@/api/types";
+import type { FlowRun, Flow, SpaceSettings } from "@/api/types";
 import { statusBadge, statusDot, displayStatus, duration, formatSeconds } from "@/lib/format";
 import { ScheduleModal } from "@/components/RunModal";
 import { Play } from "lucide-react";
@@ -184,8 +184,8 @@ const KANBAN_ORDER: RunStatusKey[] = ["queue", "in_progress", "errored", "comple
 
 type ViewMode = "list" | "kanban";
 
-export function ProjectView() {
-  const { projectId } = useParams<{ projectId: string }>();
+export function SpaceView() {
+  const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
 
   const [flows, setFlows] = useState<Flow[]>([]);
@@ -196,25 +196,25 @@ export function ProjectView() {
   const [scheduleModal, setScheduleModal] = useState(false);
 
   const load = useCallback(async () => {
-    if (!projectId) return;
+    if (!spaceId) return;
     try {
       const [fl, r] = await Promise.all([
-        api.listFlows(projectId),
-        api.listFlowRuns(projectId),
+        api.listFlows(spaceId),
+        api.listFlowRuns(spaceId),
       ]);
       setFlows(fl);
       setRuns(r);
     } catch (e) {
       console.error("Board load error:", e);
     }
-  }, [projectId]);
+  }, [spaceId]);
 
   useEffect(() => {
     load();
-    if (projectId) {
-      api.getProjectSettings(projectId).then((s) => setMaxConcurrent(s.max_concurrent_tasks ?? 1)).catch(() => {});
+    if (spaceId) {
+      api.getSpaceSettings(spaceId).then((s) => setMaxConcurrent(s.max_concurrent_tasks ?? 1)).catch(() => {});
     }
-  }, [load, projectId]);
+  }, [load, spaceId]);
 
   useInterval(load, 5000);
 
@@ -223,11 +223,11 @@ export function ProjectView() {
     localStorage.setItem("board-view", mode);
   };
 
-  const openRunDetail = (runId: string) => navigate(`/project/${projectId}/run/${runId}`);
+  const openRunDetail = (runId: string) => navigate(`/space/${spaceId}/run/${runId}`);
 
   const submitSchedule = async (flowId: string, oneShot: boolean) => {
-    if (!projectId) return;
-    await api.scheduleFlow(projectId, flowId, oneShot);
+    if (!spaceId) return;
+    await api.scheduleFlow(spaceId, flowId, oneShot);
     load();
   };
 

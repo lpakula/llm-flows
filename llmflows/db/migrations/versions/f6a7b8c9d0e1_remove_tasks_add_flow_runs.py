@@ -64,7 +64,7 @@ def downgrade() -> None:
         op.create_table(
             'tasks',
             sa.Column('id', sa.String(6), primary_key=True),
-            sa.Column('project_id', sa.String(6), sa.ForeignKey('projects.id'), nullable=False),
+            sa.Column('space_id', sa.String(6), sa.ForeignKey('spaces.id'), nullable=False),
             sa.Column('name', sa.String(255), server_default=''),
             sa.Column('description', sa.Text, server_default=''),
             sa.Column('type', sa.String(20), server_default='feature'),

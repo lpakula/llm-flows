@@ -654,7 +654,7 @@ verify_installation() {
 
     echo ""
     echo "Get started:"
-    echo "  cd your-project"
+    echo "  cd your-folder"
     echo "  llmflows init"
     echo ""
 }

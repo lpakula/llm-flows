@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Flow, Project } from "@/api/types";
+import type { Flow, Space } from "@/api/types";
 
-export function ProjectFlowsView() {
-  const { projectId } = useParams<{ projectId: string }>();
-  const [project, setProject] = useState<Project | null>(null);
+export function SpaceFlowsView() {
+  const { spaceId } = useParams<{ spaceId: string }>();
+  const [space, setSpace] = useState<Space | null>(null);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newFlow, setNewFlow] = useState({ name: "", description: "", copy_from: "" });
@@ -14,25 +14,25 @@ export function ProjectFlowsView() {
   const { reload } = useApp();
 
   const load = useCallback(async () => {
-    if (!projectId) return;
-    const [p, f] = await Promise.all([api.getProject(projectId), api.listFlows(projectId)]);
-    setProject(p);
+    if (!spaceId) return;
+    const [s, f] = await Promise.all([api.getSpace(spaceId), api.listFlows(spaceId)]);
+    setSpace(s);
     setFlows(f);
-  }, [projectId]);
+  }, [spaceId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const createFlow = async () => {
-    if (!projectId) return;
+    if (!spaceId) return;
     const body: { name: string; description?: string; copy_from?: string } = {
       name: newFlow.name,
       description: newFlow.description,
     };
     if (newFlow.copy_from) body.copy_from = newFlow.copy_from;
     try {
-      await api.createFlow(projectId, body);
+      await api.createFlow(spaceId, body);
       setNewFlow({ name: "", description: "", copy_from: "" });
       setShowCreate(false);
       load();
@@ -54,22 +54,22 @@ export function ProjectFlowsView() {
   };
 
   const exportFlows = async () => {
-    if (!projectId) return;
-    const data = await api.exportFlows(projectId);
+    if (!spaceId) return;
+    const data = await api.exportFlows(spaceId);
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${project?.name || "flows"}.json`;
+    a.download = `${space?.name || "flows"}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const importFlows = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!projectId) return;
+    if (!spaceId) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await api.importFlows(projectId, file);
+    const result = await api.importFlows(spaceId, file);
     alert(`Imported ${result.imported} flow(s)`);
     load();
     reload();

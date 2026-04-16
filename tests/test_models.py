@@ -5,7 +5,7 @@ from llmflows.db.models import (
     Flow,
     FlowRun,
     FlowStep,
-    Project,
+    Space,
     generate_id,
 )
 
@@ -18,24 +18,24 @@ def test_generate_id():
     assert id1.isalnum()
 
 
-def test_create_project(test_db):
-    project = Project(name="my-project", path="/tmp/my-project")
-    test_db.add(project)
+def test_create_space(test_db):
+    space = Space(name="my-space", path="/tmp/my-space")
+    test_db.add(space)
     test_db.commit()
 
-    fetched = test_db.query(Project).first()
-    assert fetched.name == "my-project"
-    assert fetched.path == "/tmp/my-project"
+    fetched = test_db.query(Space).first()
+    assert fetched.name == "my-space"
+    assert fetched.path == "/tmp/my-space"
     assert len(fetched.id) == 6
     assert fetched.created_at is not None
 
 
-def test_project_to_dict(test_db):
-    project = Project(name="test", path="/tmp/test")
-    test_db.add(project)
+def test_space_to_dict(test_db):
+    space = Space(name="test", path="/tmp/test")
+    test_db.add(space)
     test_db.commit()
 
-    d = project.to_dict()
+    d = space.to_dict()
     assert d["name"] == "test"
     assert d["path"] == "/tmp/test"
     assert "id" in d
@@ -43,8 +43,8 @@ def test_project_to_dict(test_db):
 
 
 class TestFlowModel:
-    def test_create_flow(self, test_db, test_project):
-        flow = Flow(name="test-flow", description="A test flow", project_id=test_project.id)
+    def test_create_flow(self, test_db, test_space):
+        flow = Flow(name="test-flow", description="A test flow", space_id=test_space.id)
         test_db.add(flow)
         test_db.commit()
 
@@ -53,8 +53,8 @@ class TestFlowModel:
         assert fetched.description == "A test flow"
         assert len(fetched.id) == 6
 
-    def test_flow_to_dict(self, test_db, test_project):
-        flow = Flow(name="dict-flow", description="A test flow", project_id=test_project.id)
+    def test_flow_to_dict(self, test_db, test_space):
+        flow = Flow(name="dict-flow", description="A test flow", space_id=test_space.id)
         test_db.add(flow)
         test_db.commit()
 
@@ -64,8 +64,8 @@ class TestFlowModel:
         assert "steps" in d
         assert d["steps"] == []
 
-    def test_flow_step_relationship(self, test_db, test_project):
-        flow = Flow(name="with-steps", project_id=test_project.id)
+    def test_flow_step_relationship(self, test_db, test_space):
+        flow = Flow(name="with-steps", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -79,8 +79,8 @@ class TestFlowModel:
         assert fetched.steps[0].name == "research"
         assert fetched.steps[1].name == "execute"
 
-    def test_flow_cascade_deletes_steps(self, test_db, test_project):
-        flow = Flow(name="cascade-flow", project_id=test_project.id)
+    def test_flow_cascade_deletes_steps(self, test_db, test_space):
+        flow = Flow(name="cascade-flow", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -93,23 +93,23 @@ class TestFlowModel:
 
         assert test_db.query(FlowStep).count() == 0
 
-    def test_flow_name_unique(self, test_db, test_project):
+    def test_flow_name_unique(self, test_db, test_space):
         import pytest
         from sqlalchemy.exc import IntegrityError
 
-        f1 = Flow(name="unique-flow", project_id=test_project.id)
+        f1 = Flow(name="unique-flow", space_id=test_space.id)
         test_db.add(f1)
         test_db.commit()
 
-        f2 = Flow(name="unique-flow", project_id=test_project.id)
+        f2 = Flow(name="unique-flow", space_id=test_space.id)
         test_db.add(f2)
         with pytest.raises(IntegrityError):
             test_db.commit()
 
 
 class TestFlowStepModel:
-    def test_create_step(self, test_db, test_project):
-        flow = Flow(name="step-test", project_id=test_project.id)
+    def test_create_step(self, test_db, test_space):
+        flow = Flow(name="step-test", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -127,8 +127,8 @@ class TestFlowStepModel:
         assert fetched.position == 0
         assert "Research" in fetched.content
 
-    def test_step_to_dict(self, test_db, test_project):
-        flow = Flow(name="step-dict", project_id=test_project.id)
+    def test_step_to_dict(self, test_db, test_space):
+        flow = Flow(name="step-dict", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
@@ -143,13 +143,13 @@ class TestFlowStepModel:
 
 
 class TestFlowRunModel:
-    def test_create_flow_run(self, test_db, test_project):
-        flow = Flow(name="run-flow", project_id=test_project.id)
+    def test_create_flow_run(self, test_db, test_space):
+        flow = Flow(name="run-flow", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
         run = FlowRun(
-            project_id=test_project.id,
+            space_id=test_space.id,
             flow_id=flow.id,
         )
         test_db.add(run)
@@ -161,13 +161,13 @@ class TestFlowRunModel:
         assert fetched.started_at is None
         assert fetched.completed_at is None
 
-    def test_flow_run_to_dict(self, test_db, test_project):
-        flow = Flow(name="dict-run-flow", project_id=test_project.id)
+    def test_flow_run_to_dict(self, test_db, test_space):
+        flow = Flow(name="dict-run-flow", space_id=test_space.id)
         test_db.add(flow)
         test_db.flush()
 
         run = FlowRun(
-            project_id=test_project.id,
+            space_id=test_space.id,
             flow_id=flow.id,
             current_step="research",
             log_path="/tmp/wt/.llmflows/agent-abc123.log",
@@ -183,33 +183,33 @@ class TestFlowRunModel:
         assert d["log_path"] == "/tmp/wt/.llmflows/agent-abc123.log"
         assert d["prompt"] == "# Test prompt\nDo the thing."
 
-    def test_flow_run_cascade_on_project_delete(self, test_db, test_project):
-        run = FlowRun(project_id=test_project.id)
+    def test_flow_run_cascade_on_space_delete(self, test_db, test_space):
+        run = FlowRun(space_id=test_space.id)
         test_db.add(run)
         test_db.commit()
 
-        test_db.delete(test_project)
+        test_db.delete(test_space)
         test_db.commit()
 
         assert test_db.query(FlowRun).count() == 0
 
-    def test_flow_runs_relationship(self, test_db, test_project):
-        r1 = FlowRun(project_id=test_project.id)
-        r2 = FlowRun(project_id=test_project.id)
+    def test_flow_runs_relationship(self, test_db, test_space):
+        r1 = FlowRun(space_id=test_space.id)
+        r2 = FlowRun(space_id=test_space.id)
         test_db.add_all([r1, r2])
         test_db.commit()
 
-        assert len(test_project.flow_runs) == 2
+        assert len(test_space.flow_runs) == 2
 
-    def test_recovery_count_defaults_to_zero(self, test_db, test_project):
-        run = FlowRun(project_id=test_project.id)
+    def test_recovery_count_defaults_to_zero(self, test_db, test_space):
+        run = FlowRun(space_id=test_space.id)
         test_db.add(run)
         test_db.commit()
 
         assert run.recovery_count == 0
 
-    def test_recovery_count_in_to_dict(self, test_db, test_project):
-        run = FlowRun(project_id=test_project.id)
+    def test_recovery_count_in_to_dict(self, test_db, test_space):
+        run = FlowRun(space_id=test_space.id)
         test_db.add(run)
         test_db.commit()
 
@@ -217,10 +217,10 @@ class TestFlowRunModel:
         assert "recovery_count" in d
         assert d["recovery_count"] == 0
 
-    def test_status_returns_interrupted_when_outcome_is_interrupted(self, test_db, test_project):
+    def test_status_returns_interrupted_when_outcome_is_interrupted(self, test_db, test_space):
         from datetime import datetime, timezone
 
-        run = FlowRun(project_id=test_project.id)
+        run = FlowRun(space_id=test_space.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "interrupted"
@@ -229,10 +229,10 @@ class TestFlowRunModel:
 
         assert run.status == "interrupted"
 
-    def test_status_returns_timeout_when_outcome_is_timeout(self, test_db, test_project):
+    def test_status_returns_timeout_when_outcome_is_timeout(self, test_db, test_space):
         from datetime import datetime, timezone
 
-        run = FlowRun(project_id=test_project.id)
+        run = FlowRun(space_id=test_space.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "timeout"
@@ -241,10 +241,10 @@ class TestFlowRunModel:
 
         assert run.status == "timeout"
 
-    def test_status_returns_error_when_outcome_is_error(self, test_db, test_project):
+    def test_status_returns_error_when_outcome_is_error(self, test_db, test_space):
         from datetime import datetime, timezone
 
-        run = FlowRun(project_id=test_project.id)
+        run = FlowRun(space_id=test_space.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "error"
@@ -253,10 +253,10 @@ class TestFlowRunModel:
 
         assert run.status == "error"
 
-    def test_status_returns_completed_for_successful_outcome(self, test_db, test_project):
+    def test_status_returns_completed_for_successful_outcome(self, test_db, test_space):
         from datetime import datetime, timezone
 
-        run = FlowRun(project_id=test_project.id)
+        run = FlowRun(space_id=test_space.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = "completed"
@@ -265,10 +265,10 @@ class TestFlowRunModel:
 
         assert run.status == "completed"
 
-    def test_status_returns_completed_when_outcome_is_none(self, test_db, test_project):
+    def test_status_returns_completed_when_outcome_is_none(self, test_db, test_space):
         from datetime import datetime, timezone
 
-        run = FlowRun(project_id=test_project.id)
+        run = FlowRun(space_id=test_space.id)
         run.started_at = datetime.now(timezone.utc)
         run.completed_at = datetime.now(timezone.utc)
         run.outcome = None
@@ -276,4 +276,3 @@ class TestFlowRunModel:
         test_db.commit()
 
         assert run.status == "completed"
-

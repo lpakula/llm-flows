@@ -23,15 +23,15 @@ logger = logging.getLogger("llmflows.agent")
 
 
 class AgentService:
-    def __init__(self, project_dir: Path, worktree_path: Optional[Path] = None):
+    def __init__(self, space_dir: Path, worktree_path: Optional[Path] = None):
         """Initialize agent service.
 
         Args:
-            project_dir: .llmflows/ dir in the main project
+            space_dir: .llmflows/ dir in the main space
             worktree_path: Path to the worktree root (if launching in a worktree)
         """
-        self.project_dir = project_dir
-        self.worktree_path = worktree_path or project_dir.parent
+        self.space_dir = space_dir
+        self.worktree_path = worktree_path or space_dir.parent
 
     def prepare_and_launch_step(
         self,
@@ -48,7 +48,7 @@ class AgentService:
         attempt: int = 1,
         user_responses: Optional[list[dict]] = None,
         step_type: str = "agent",
-        project_variables: Optional[dict] = None,
+        space_variables: Optional[dict] = None,
         skills: Optional[list[dict]] = None,
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
@@ -57,7 +57,7 @@ class AgentService:
         """
         if artifacts_dir is None:
             artifacts_dir = ContextService.get_artifacts_dir(
-                self.project_dir.parent, run_id,
+                self.space_dir.parent, run_id,
             )
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +72,7 @@ class AgentService:
         is_summary = step_name == "__summary__"
         step_output_dir = artifacts_dir / f"{step_position:02d}-{step_name}" if not is_summary else None
 
-        proj_vars = project_variables or {}
+        spc_vars = space_variables or {}
         prompt_vars = {
             "run_id": run_id,
             "flow_name": flow_name,
@@ -84,7 +84,7 @@ class AgentService:
             "resume_prompt": resume_prompt,
             "user_responses": user_responses or [],
             "step_type": step_type,
-            "project_variables": proj_vars,
+            "space_variables": spc_vars,
             "skills": skills or [],
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
@@ -103,7 +103,7 @@ class AgentService:
         launched = self._launch_agent(
             self.worktree_path, prompt_md, log_file, pid_file,
             model=model, agent=agent,
-            project_variables=proj_vars,
+            space_variables=spc_vars,
         )
         return launched, prompt_content, str(log_file)
 
@@ -138,7 +138,7 @@ class AgentService:
     def _launch_agent(
         self, directory: Path, prompt_file: Path, log_file: Path, pid_file: Path,
         model: str = "", agent: str = "cursor",
-        project_variables: Optional[dict] = None,
+        space_variables: Optional[dict] = None,
     ) -> bool:
         """Launch the selected agent backend with output streamed to a log file."""
         reg = AGENT_REGISTRY.get(agent)
@@ -162,7 +162,7 @@ class AgentService:
             finally:
                 session.close()
 
-            for k, v in (project_variables or {}).items():
+            for k, v in (space_variables or {}).items():
                 env[k] = str(v)
 
             fh = open(log_file, "w")

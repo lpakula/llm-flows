@@ -1,6 +1,7 @@
-"""Flow service -- CRUD for flows and steps, seed defaults, export/import, snapshots."""
+"""Flow service -- CRUD for flows and steps, seed defaults, export/import, snapshots, validation."""
 
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep
+
+VALID_STEP_TYPES = ("code", "chat", "shell", "manual")
+
+
+def _normalize_step_type(value: str) -> str:
+    """Validate step type, default to 'code' if unknown."""
+    return value if value in VALID_STEP_TYPES else "code"
+
 
 def _serialize_json_list(value) -> str:
     """Normalize a list (gates/ifs/skills) to a JSON string for storage."""
@@ -29,15 +38,15 @@ class FlowService:
     def create(
         self,
         name: str,
-        project_id: str,
+        space_id: str,
         description: str = "",
         steps: Optional[list[dict]] = None,
     ) -> Flow:
-        existing = self.get_by_name(name, project_id)
+        existing = self.get_by_name(name, space_id)
         if existing:
-            raise ValueError(f"Flow '{name}' already exists in this project")
+            raise ValueError(f"Flow '{name}' already exists in this space")
 
-        flow = Flow(name=name, project_id=project_id, description=description)
+        flow = Flow(name=name, space_id=space_id, description=description)
         self.session.add(flow)
         self.session.flush()
 
@@ -50,11 +59,12 @@ class FlowService:
                     content=step_data.get("content", ""),
                     gates=_serialize_gates(step_data.get("gates")),
                     ifs=_serialize_json_list(step_data.get("ifs")),
-                    agent_alias=step_data.get("agent_alias", "standard"),
-                    step_type=step_data.get("step_type", "agent"),
+                    agent_alias=step_data.get("agent_alias", "normal"),
+                    step_type=_normalize_step_type(step_data.get("step_type", "code")),
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
+                    tools=_serialize_json_list(step_data.get("tools")),
                 )
                 self.session.add(step)
 
@@ -64,24 +74,24 @@ class FlowService:
     def get(self, flow_id: str) -> Optional[Flow]:
         return self.session.query(Flow).filter_by(id=flow_id).first()
 
-    def get_by_name(self, name: str, project_id: Optional[str] = None) -> Optional[Flow]:
+    def get_by_name(self, name: str, space_id: Optional[str] = None) -> Optional[Flow]:
         q = self.session.query(Flow).filter_by(name=name)
-        if project_id:
-            q = q.filter_by(project_id=project_id)
+        if space_id:
+            q = q.filter_by(space_id=space_id)
         return q.first()
 
-    def has_human_steps(self, flow_name: str, project_id: Optional[str] = None) -> bool:
+    def has_human_steps(self, flow_name: str, space_id: Optional[str] = None) -> bool:
         """Return True if any step in the flow is a manual (human) step."""
-        flow = self.get_by_name(flow_name, project_id)
+        flow = self.get_by_name(flow_name, space_id)
         if not flow:
             return False
         return any(
-            (s.step_type or "agent") == "manual"
+            _normalize_step_type(s.step_type or "code") == "manual"
             for s in flow.steps
         )
 
-    def list_by_project(self, project_id: str) -> list[Flow]:
-        return self.session.query(Flow).filter_by(project_id=project_id).order_by(Flow.name).all()
+    def list_by_space(self, space_id: str) -> list[Flow]:
+        return self.session.query(Flow).filter_by(space_id=space_id).order_by(Flow.name).all()
 
     def update(self, flow_id: str, **kwargs) -> Optional[Flow]:
         flow = self.get(flow_id)
@@ -106,9 +116,10 @@ class FlowService:
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
         ifs: Optional[list] = None,
-        agent_alias: str = "standard", step_type: str = "agent",
+        agent_alias: str = "normal", step_type: str = "code",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
+        tools: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -122,9 +133,11 @@ class FlowService:
             flow_id=flow_id, name=name, position=position,
             content=content, gates=_serialize_gates(gates),
             ifs=_serialize_json_list(ifs),
-            agent_alias=agent_alias, step_type=step_type,
+            agent_alias=agent_alias,
+            step_type=_normalize_step_type(step_type),
             allow_max=allow_max, max_gate_retries=max_gate_retries,
             skills=_serialize_json_list(skills),
+            tools=_serialize_json_list(tools),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -168,8 +181,8 @@ class FlowService:
         self.session.commit()
         return True
 
-    def get_step_obj(self, flow_name: str, step_name: str, project_id: Optional[str] = None) -> Optional[FlowStep]:
-        flow = self.get_by_name(flow_name, project_id)
+    def get_step_obj(self, flow_name: str, step_name: str, space_id: Optional[str] = None) -> Optional[FlowStep]:
+        flow = self.get_by_name(flow_name, space_id)
         if not flow:
             return None
         for step in flow.steps:
@@ -177,45 +190,46 @@ class FlowService:
                 return step
         return None
 
-    def get_flow_steps(self, flow_name: str, project_id: Optional[str] = None) -> list[str]:
-        flow = self.get_by_name(flow_name, project_id)
+    def get_flow_steps(self, flow_name: str, space_id: Optional[str] = None) -> list[str]:
+        flow = self.get_by_name(flow_name, space_id)
         if not flow:
             return []
         return [s.name for s in sorted(flow.steps, key=lambda s: s.position)]
 
-    def get_next_step(self, flow_name: str, current: str, project_id: Optional[str] = None) -> Optional[str]:
-        steps = self.get_flow_steps(flow_name, project_id)
+    def get_next_step(self, flow_name: str, current: str, space_id: Optional[str] = None) -> Optional[str]:
+        steps = self.get_flow_steps(flow_name, space_id)
         try:
             idx = steps.index(current)
             return steps[idx + 1] if idx + 1 < len(steps) else None
         except ValueError:
             return None
 
-    def duplicate(self, source_name: str, new_name: str, project_id: Optional[str] = None) -> Optional[Flow]:
-        source = self.get_by_name(source_name, project_id)
+    def duplicate(self, source_name: str, new_name: str, space_id: Optional[str] = None) -> Optional[Flow]:
+        source = self.get_by_name(source_name, space_id)
         if not source:
             return None
 
         steps_data = [
             {"name": s.name, "position": s.position, "content": s.content,
              "gates": s.get_gates(), "ifs": s.get_ifs(),
-             "agent_alias": s.agent_alias or "standard",
-             "step_type": s.step_type or "agent",
+             "agent_alias": s.agent_alias or "normal",
+             "step_type": _normalize_step_type(s.step_type or "code"),
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
-             "skills": s.get_skills()}
+             "skills": s.get_skills(),
+             "tools": s.get_tools()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
             name=new_name,
-            project_id=source.project_id,
+            space_id=source.space_id,
             description=source.description,
             steps=steps_data,
         )
 
-    def build_flow_snapshot(self, flow_name: str, project_id: Optional[str] = None) -> Optional[dict]:
+    def build_flow_snapshot(self, flow_name: str, space_id: Optional[str] = None) -> Optional[dict]:
         """Return a plain-dict snapshot of a flow (stored as JSON on FlowRun.flow_snapshot)."""
-        source = self.get_by_name(flow_name, project_id)
+        source = self.get_by_name(flow_name, space_id)
         if not source:
             return None
         return {
@@ -229,19 +243,20 @@ class FlowService:
                     "content": s.content or "",
                     "gates": s.get_gates(),
                     "ifs": s.get_ifs(),
-                    "agent_alias": s.agent_alias or "standard",
-                    "step_type": s.step_type or "agent",
+                    "agent_alias": s.agent_alias or "normal",
+                    "step_type": _normalize_step_type(s.step_type or "code"),
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
+                    "tools": s.get_tools(),
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
         }
 
-    def export_flows(self, project_id: str, path: Optional[Path] = None) -> dict:
-        """Export all flows for a project to a dict (optionally write to file)."""
-        flows = self.list_by_project(project_id)
+    def export_flows(self, space_id: str, path: Optional[Path] = None) -> dict:
+        """Export all flows for a space to a dict (optionally write to file)."""
+        flows = self.list_by_space(space_id)
         data = {
             "version": 1,
             "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -261,10 +276,11 @@ class FlowService:
                 ifs = s.get_ifs()
                 if ifs:
                     step_data["ifs"] = ifs
-                if s.agent_alias and s.agent_alias != "standard":
+                if s.agent_alias and s.agent_alias != "normal":
                     step_data["agent_alias"] = s.agent_alias
-                if s.step_type and s.step_type != "agent":
-                    step_data["step_type"] = s.step_type
+                st = _normalize_step_type(s.step_type or "code")
+                if st != "code":
+                    step_data["step_type"] = st
                 if s.allow_max:
                     step_data["allow_max"] = True
                 if s.max_gate_retries is not None and s.max_gate_retries != 5:
@@ -272,6 +288,9 @@ class FlowService:
                 skills = s.get_skills()
                 if skills:
                     step_data["skills"] = skills
+                tools = s.get_tools()
+                if tools:
+                    step_data["tools"] = tools
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -281,17 +300,17 @@ class FlowService:
 
         return data
 
-    def import_flows(self, path: Path, project_id: str) -> int:
+    def import_flows(self, path: Path, space_id: str) -> int:
         """Import flows from a JSON file. Upserts by name. Returns count imported."""
         data = json.loads(Path(path).read_text())
-        return self._import_flows_data(data, project_id=project_id, skip_existing=False)
+        return self._import_flows_data(data, space_id=space_id, skip_existing=False)
 
-    def _import_flows_data(self, data: dict, project_id: str, skip_existing: bool = False) -> int:
+    def _import_flows_data(self, data: dict, space_id: str, skip_existing: bool = False) -> int:
         """Import flows from parsed JSON data."""
         count = 0
         for flow_data in data.get("flows", []):
             name = flow_data["name"]
-            existing = self.get_by_name(name, project_id)
+            existing = self.get_by_name(name, space_id)
 
             if existing and skip_existing:
                 continue
@@ -311,17 +330,18 @@ class FlowService:
                         content=step_data.get("content", ""),
                         gates=_serialize_gates(step_data.get("gates")),
                         ifs=_serialize_json_list(step_data.get("ifs")),
-                        agent_alias=step_data.get("agent_alias", "standard"),
-                        step_type=step_data.get("step_type", "agent"),
+                        agent_alias=step_data.get("agent_alias", "normal"),
+                        step_type=_normalize_step_type(step_data.get("step_type", "code")),
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
+                        tools=_serialize_json_list(step_data.get("tools")),
                     )
                     self.session.add(step)
             else:
                 self.create(
                     name=name,
-                    project_id=project_id,
+                    space_id=space_id,
                     description=flow_data.get("description", ""),
                     steps=flow_data.get("steps", []),
                 )
@@ -329,3 +349,74 @@ class FlowService:
 
         self.session.commit()
         return count
+
+    def validate_flow(self, flow_id: str) -> list[dict]:
+        """Validate a flow's configuration. Returns a list of warning dicts."""
+        from ..config import AGENT_REGISTRY
+        from ..db.models import AgentAlias, AgentConfig
+
+        flow = self.get(flow_id)
+        if not flow:
+            return [{"step_name": "", "warning_type": "missing_flow", "message": "Flow not found"}]
+
+        warnings: list[dict] = []
+        for step in flow.steps:
+            st = _normalize_step_type(step.step_type or "code")
+            alias_name = step.agent_alias or "normal"
+
+            if st == "shell":
+                continue
+
+            alias_type = "chat" if st in ("chat", "manual") else st
+            alias = self.session.query(AgentAlias).filter_by(
+                type=alias_type, name=alias_name,
+            ).first()
+            if not alias:
+                warnings.append({
+                    "step_name": step.name,
+                    "warning_type": "missing_alias",
+                    "message": f"Alias '{alias_name}' not found for type '{alias_type}'. Configure it on the Agents page.",
+                })
+                continue
+
+            agent_key = alias.agent
+            reg = AGENT_REGISTRY.get(agent_key, {})
+
+            if reg.get("type") == "code":
+                binary = reg.get("binary", agent_key)
+                if not shutil.which(binary):
+                    warnings.append({
+                        "step_name": step.name,
+                        "warning_type": "missing_binary",
+                        "message": f"Binary '{binary}' for agent '{agent_key}' not found on PATH.",
+                    })
+            elif reg.get("type") == "chat":
+                api_key_env = reg.get("api_key_env", "")
+                if api_key_env:
+                    import os
+                    has_env = bool(os.environ.get(api_key_env))
+                    has_db = False
+                    if not has_env:
+                        cfg = self.session.query(AgentConfig).filter_by(
+                            agent=agent_key, key=api_key_env,
+                        ).first()
+                        has_db = bool(cfg and cfg.value)
+                    if not has_env and not has_db:
+                        warnings.append({
+                            "step_name": step.name,
+                            "warning_type": "missing_api_key",
+                            "message": f"API key '{api_key_env}' not configured for provider '{agent_key}'. "
+                                       f"Set it as an env variable or in agent config on the Agents page.",
+                        })
+
+            tools = step.get_tools()
+            supported = reg.get("supports_tools", [])
+            for tool in tools:
+                if tool not in supported:
+                    warnings.append({
+                        "step_name": step.name,
+                        "warning_type": "unsupported_tool",
+                        "message": f"Tool '{tool}' is not supported by provider '{agent_key}'.",
+                    })
+
+        return warnings

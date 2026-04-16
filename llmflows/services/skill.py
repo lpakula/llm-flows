@@ -28,7 +28,7 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
 
 
 class SkillService:
-    """Discover SKILL.md files from a project's .agents/skills/ directory."""
+    """Discover SKILL.md files from a space's .agents/skills/ directory."""
 
     SKILLS_DIR = ".agents/skills"
     SKILL_FILE = "SKILL.md"

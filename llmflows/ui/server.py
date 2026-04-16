@@ -17,7 +17,7 @@ from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_con
 from ..db.database import get_session, reset_engine
 from ..services.agent import AgentService
 from ..services.flow import FlowService
-from ..services.project import ProjectService
+from ..services.space import SpaceService
 from ..services.run import RunService
 from ..services.skill import SkillService
 
@@ -45,11 +45,12 @@ class StepCreate(BaseModel):
     position: Optional[int] = None
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
-    agent_alias: str = "standard"
-    step_type: str = "agent"
+    agent_alias: str = "normal"
+    step_type: str = "code"
     allow_max: bool = False
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
+    tools: Optional[list[str]] = None
 
 
 class StepUpdate(BaseModel):
@@ -63,6 +64,7 @@ class StepUpdate(BaseModel):
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
     skills: Optional[list[str]] = None
+    tools: Optional[list[str]] = None
 
 
 class StepRespondBody(BaseModel):
@@ -90,7 +92,7 @@ class GatewayConfigBody(BaseModel):
     telegram_allowed_chat_ids: Optional[list[int]] = None
 
 
-class ProjectSettingsUpdate(BaseModel):
+class SpaceSettingsUpdate(BaseModel):
     is_git_repo: Optional[bool] = None
     max_concurrent_tasks: Optional[int] = None
 
@@ -100,7 +102,7 @@ class ProjectSettingsUpdate(BaseModel):
 def _get_services():
     reset_engine()
     session = get_session()
-    return session, ProjectService(session)
+    return session, SpaceService(session)
 
 
 ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
@@ -252,84 +254,84 @@ async def start_daemon():
     return {"ok": False, "running": False, "pid": None, "error": "Daemon did not start in time"}
 
 
-# --- Project endpoints ---
+# --- Space endpoints ---
 
-@app.get("/api/projects")
-async def list_projects():
-    session, project_svc = _get_services()
+@app.get("/api/spaces")
+async def list_spaces():
+    session, space_svc = _get_services()
     try:
-        projects = project_svc.list_all()
-        return [p.to_dict() for p in projects]
+        spaces = space_svc.list_all()
+        return [s.to_dict() for s in spaces]
     finally:
         session.close()
 
 
-@app.get("/api/projects/{project_id}")
-async def get_project(project_id: str):
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}")
+async def get_space(space_id: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return project.to_dict()
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        return space.to_dict()
     finally:
         session.close()
 
 
-class ProjectUpdate(BaseModel):
+class SpaceUpdate(BaseModel):
     name: Optional[str] = None
 
 
-@app.patch("/api/projects/{project_id}")
-async def update_project(project_id: str, body: ProjectUpdate):
-    session, project_svc = _get_services()
+@app.patch("/api/spaces/{space_id}")
+async def update_space(space_id: str, body: SpaceUpdate):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         updates = {}
         if body.name is not None:
             updates["name"] = body.name
         if updates:
-            project = project_svc.update(project_id, **updates)
-        return project.to_dict()
+            space = space_svc.update(space_id, **updates)
+        return space.to_dict()
     finally:
         session.close()
 
 
-@app.delete("/api/projects/{project_id}")
-async def delete_project(project_id: str):
-    session, project_svc = _get_services()
+@app.delete("/api/spaces/{space_id}")
+async def delete_space(space_id: str):
+    session, space_svc = _get_services()
     try:
-        if not project_svc.unregister(project_id):
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not space_svc.unregister(space_id):
+            raise HTTPException(status_code=404, detail="Space not found")
         return {"ok": True}
     finally:
         session.close()
 
 
-@app.get("/api/projects/{project_id}/settings")
-async def get_project_settings(project_id: str):
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/settings")
+async def get_space_settings(space_id: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         return {
-            "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
-            "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+            "is_git_repo": space.is_git_repo if space.is_git_repo is not None else True,
+            "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
         }
     finally:
         session.close()
 
 
-@app.patch("/api/projects/{project_id}/settings")
-async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
-    session, project_svc = _get_services()
+@app.patch("/api/spaces/{space_id}/settings")
+async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
 
         updates = {}
         if body.is_git_repo is not None:
@@ -337,25 +339,25 @@ async def update_project_settings(project_id: str, body: ProjectSettingsUpdate):
         if body.max_concurrent_tasks is not None:
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
         if updates:
-            project_svc.update(project_id, **updates)
-            session.refresh(project)
+            space_svc.update(space_id, **updates)
+            session.refresh(space)
 
         return {
-            "is_git_repo": project.is_git_repo if project.is_git_repo is not None else True,
-            "max_concurrent_tasks": project.max_concurrent_tasks if project.max_concurrent_tasks is not None else 1,
+            "is_git_repo": space.is_git_repo if space.is_git_repo is not None else True,
+            "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
         }
     finally:
         session.close()
 
 
-@app.get("/api/projects/{project_id}/variables")
-async def get_project_variables(project_id: str):
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/variables")
+async def get_space_variables(space_id: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return project.get_variables()
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        return space.get_variables()
     finally:
         session.close()
 
@@ -364,33 +366,33 @@ class VariableUpdate(BaseModel):
     value: str
 
 
-@app.put("/api/projects/{project_id}/variables/{key}")
-async def set_project_variable(project_id: str, key: str, body: VariableUpdate):
-    session, project_svc = _get_services()
+@app.put("/api/spaces/{space_id}/variables/{key}")
+async def set_space_variable(space_id: str, key: str, body: VariableUpdate):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        variables = project.get_variables()
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        variables = space.get_variables()
         variables[key] = body.value
-        project_svc.update(project_id, variables=json.dumps(variables))
+        space_svc.update(space_id, variables=json.dumps(variables))
         return variables
     finally:
         session.close()
 
 
-@app.delete("/api/projects/{project_id}/variables/{key}")
-async def delete_project_variable(project_id: str, key: str):
-    session, project_svc = _get_services()
+@app.delete("/api/spaces/{space_id}/variables/{key}")
+async def delete_space_variable(space_id: str, key: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        variables = project.get_variables()
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        variables = space.get_variables()
         if key not in variables:
             raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
         del variables[key]
-        project_svc.update(project_id, variables=json.dumps(variables))
+        space_svc.update(space_id, variables=json.dumps(variables))
         return variables
     finally:
         session.close()
@@ -398,14 +400,14 @@ async def delete_project_variable(project_id: str, key: str):
 
 # --- Schedule flow run ---
 
-@app.post("/api/projects/{project_id}/schedule")
-async def schedule_flow_run(project_id: str, body: ScheduleBody):
+@app.post("/api/spaces/{space_id}/schedule")
+async def schedule_flow_run(space_id: str, body: ScheduleBody):
     """Schedule a new FlowRun for a flow."""
-    session, project_svc = _get_services()
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
 
         run_svc = RunService(session)
         flow_svc = FlowService(session)
@@ -415,10 +417,10 @@ async def schedule_flow_run(project_id: str, body: ScheduleBody):
             raise HTTPException(status_code=404, detail="Flow not found")
 
         one_shot = body.one_shot
-        if one_shot and flow_svc.has_human_steps(flow.name, project_id=project_id):
+        if one_shot and flow_svc.has_human_steps(flow.name, space_id=space_id):
             one_shot = False
 
-        run = run_svc.enqueue(project_id, body.flow_id, one_shot=one_shot)
+        run = run_svc.enqueue(space_id, body.flow_id, one_shot=one_shot)
         return run.to_dict()
     finally:
         session.close()
@@ -426,16 +428,16 @@ async def schedule_flow_run(project_id: str, body: ScheduleBody):
 
 # --- FlowRun endpoints ---
 
-@app.get("/api/projects/{project_id}/runs")
-async def list_project_runs(project_id: str):
-    """All flow runs for a project (for the Board page)."""
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/runs")
+async def list_space_runs(space_id: str):
+    """All flow runs for a space (for the Board page)."""
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         run_svc = RunService(session)
-        runs = run_svc.list_by_project(project_id)
+        runs = run_svc.list_by_space(space_id)
         result = []
         for r in runs:
             d = r.to_dict()
@@ -461,7 +463,7 @@ class ResumeBody(BaseModel):
 @app.post("/api/runs/{run_id}/pause")
 async def pause_run(run_id: str):
     """Pause an active run -- kills agent, marks as paused (not completed)."""
-    session, project_svc = _get_services()
+    session, space_svc = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -470,9 +472,9 @@ async def pause_run(run_id: str):
         if run.completed_at:
             raise HTTPException(status_code=400, detail="Run is already completed")
 
-        project = project_svc.get(run.project_id) if run.project_id else None
-        if project:
-            AgentService.kill_agent(project.path, run_id=run.id)
+        space = space_svc.get(run.space_id) if run.space_id else None
+        if space:
+            AgentService.kill_agent(space.path, run_id=run.id)
 
         run_svc.pause(run_id)
         return {"ok": True}
@@ -532,7 +534,7 @@ async def complete_step_manually(step_run_id: str):
 @app.post("/api/runs/{run_id}/stop")
 async def stop_run(run_id: str):
     """Stop or dequeue a run."""
-    session, project_svc = _get_services()
+    session, space_svc = _get_services()
     try:
         run_svc = RunService(session)
         run = run_svc.get(run_id)
@@ -548,10 +550,10 @@ async def stop_run(run_id: str):
 
         run_svc.mark_completed(run_id, outcome="cancelled")
 
-        project = project_svc.get(run.project_id) if run.project_id else None
+        space = space_svc.get(run.space_id) if run.space_id else None
         killed = False
-        if project:
-            killed = AgentService.kill_agent(project.path, run_id=run.id)
+        if space:
+            killed = AgentService.kill_agent(space.path, run_id=run.id)
 
         return {"ok": True, "killed": killed, "dequeued": False}
     finally:
@@ -631,18 +633,18 @@ async def get_run_steps(run_id: str):
 
         step_sources = snap_steps or []
         if not step_sources and run.flow_name:
-            for sname in flow_svc.get_flow_steps(run.flow_name, project_id=run.project_id):
-                obj = flow_svc.get_step_obj(run.flow_name, sname, project_id=run.project_id)
+            for sname in flow_svc.get_flow_steps(run.flow_name, space_id=run.space_id):
+                obj = flow_svc.get_step_obj(run.flow_name, sname, space_id=run.space_id)
                 step_sources.append({
                     "name": sname,
                     "ifs": obj.get_ifs() if obj else [],
-                    "agent_alias": obj.agent_alias if obj else "standard",
+                    "agent_alias": obj.agent_alias if obj else "normal",
                     "allow_max": bool(obj.allow_max) if obj else False,
                     "max_gate_retries": obj.max_gate_retries if obj else 5,
                 })
 
         from ..services.context import ContextService
-        project = run.project
+        space = run.space
 
         for position, step_src in enumerate(step_sources):
             step_name = step_src["name"]
@@ -652,10 +654,10 @@ async def get_run_steps(run_id: str):
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()
-                if sr.awaiting_user_at and not sr.completed_at and project:
+                if sr.awaiting_user_at and not sr.completed_at and space:
                     try:
                         artifacts_dir = ContextService.get_artifacts_dir(
-                            Path(project.path), run_id,
+                            Path(space.path), run_id,
                         )
                         result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                         if result_file.exists():
@@ -672,8 +674,8 @@ async def get_run_steps(run_id: str):
                 "has_ifs": has_ifs,
                 "step_run": step_data,
                 "attempts": attempts,
-                "agent_alias": step_src.get("agent_alias", "standard"),
-                "step_type": step_src.get("step_type", "agent"),
+                "agent_alias": step_src.get("agent_alias", "normal"),
+                "step_type": step_src.get("step_type", "code") if step_src.get("step_type") != "agent" else "code",
                 "allow_max": bool(step_src.get("allow_max", False)),
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
@@ -819,86 +821,40 @@ async def serve_attachment(run_id: str, filename: str):
 
 # --- Agent Alias endpoints ---
 
-class AgentAliasCreate(BaseModel):
-    name: str
-    agent: str = "cursor"
-    model: str
-
-
 class AgentAliasUpdate(BaseModel):
-    name: Optional[str] = None
     agent: Optional[str] = None
     model: Optional[str] = None
-    position: Optional[int] = None
 
 
 @app.get("/api/agent-aliases")
-async def list_agent_aliases():
+async def list_agent_aliases(type: Optional[str] = None):
     from ..db.models import AgentAlias
     session, _ = _get_services()
     try:
-        aliases = session.query(AgentAlias).order_by(AgentAlias.position, AgentAlias.name).all()
+        q = session.query(AgentAlias).order_by(AgentAlias.type, AgentAlias.position, AgentAlias.name)
+        if type:
+            q = q.filter_by(type=type)
+        aliases = q.all()
         return [a.to_dict() for a in aliases]
-    finally:
-        session.close()
-
-
-@app.post("/api/agent-aliases")
-async def create_agent_alias(body: AgentAliasCreate):
-    from ..db.models import AgentAlias
-    session, _ = _get_services()
-    try:
-        existing = session.query(AgentAlias).filter_by(name=body.name).first()
-        if existing:
-            raise HTTPException(status_code=400, detail=f"Alias '{body.name}' already exists")
-        max_pos = session.query(AgentAlias).count()
-        alias = AgentAlias(
-            name=body.name, agent=body.agent, model=body.model,
-            position=max_pos,
-        )
-        session.add(alias)
-        session.commit()
-        return alias.to_dict()
     finally:
         session.close()
 
 
 @app.patch("/api/agent-aliases/{alias_id}")
 async def update_agent_alias(alias_id: str, body: AgentAliasUpdate):
+    """Update agent/model on a pre-defined alias. Name and type are immutable."""
     from ..db.models import AgentAlias
     session, _ = _get_services()
     try:
         alias = session.query(AgentAlias).filter_by(id=alias_id).first()
         if not alias:
             raise HTTPException(status_code=404, detail="Alias not found")
-        if body.name is not None:
-            dup = session.query(AgentAlias).filter_by(name=body.name).first()
-            if dup and dup.id != alias_id:
-                raise HTTPException(status_code=400, detail=f"Alias '{body.name}' already exists")
-            alias.name = body.name
         if body.agent is not None:
             alias.agent = body.agent
         if body.model is not None:
             alias.model = body.model
-        if body.position is not None:
-            alias.position = body.position
         session.commit()
         return alias.to_dict()
-    finally:
-        session.close()
-
-
-@app.delete("/api/agent-aliases/{alias_id}")
-async def delete_agent_alias(alias_id: str):
-    from ..db.models import AgentAlias
-    session, _ = _get_services()
-    try:
-        alias = session.query(AgentAlias).filter_by(id=alias_id).first()
-        if not alias:
-            raise HTTPException(status_code=404, detail="Alias not found")
-        session.delete(alias)
-        session.commit()
-        return {"ok": True}
     finally:
         session.close()
 
@@ -908,31 +864,31 @@ async def delete_agent_alias(alias_id: str):
 @app.get("/api/queue")
 async def global_queue():
     """All active FlowRuns globally (executing first, then pending)."""
-    session, project_svc = _get_services()
+    session, space_svc = _get_services()
     try:
         run_svc = RunService(session)
         runs = run_svc.list_active()
         result = []
         for r in runs:
             d = r.to_dict()
-            project = project_svc.get(r.project_id) if r.project_id else None
-            d["project_name"] = project.name if project else None
+            space = space_svc.get(r.space_id) if r.space_id else None
+            d["space_name"] = space.name if space else None
             result.append(d)
         return result
     finally:
         session.close()
 
 
-@app.get("/api/projects/{project_id}/queue")
-async def project_queue(project_id: str):
-    """All FlowRuns for project (pending + executing), ordered."""
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/queue")
+async def space_queue(space_id: str):
+    """All FlowRuns for space (pending + executing), ordered."""
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         run_svc = RunService(session)
-        runs = run_svc.list_by_project(project_id)
+        runs = run_svc.list_by_space(space_id)
         active = [r.to_dict() for r in runs if r.completed_at is None]
         return active
     finally:
@@ -941,14 +897,14 @@ async def project_queue(project_id: str):
 
 @app.get("/api/dashboard")
 async def dashboard():
-    """System overview: all projects with active run counts, queue depths."""
-    session, project_svc = _get_services()
+    """System overview: all spaces with active run counts, queue depths."""
+    session, space_svc = _get_services()
     try:
         run_svc = RunService(session)
-        projects = project_svc.list_all()
+        spaces = space_svc.list_all()
         result = []
-        for p in projects:
-            all_runs = run_svc.list_by_project(p.id)
+        for p in spaces:
+            all_runs = run_svc.list_by_space(p.id)
             active_runs = [r for r in all_runs if r.completed_at is None]
             pending_runs = [r for r in active_runs if r.started_at is None]
             executing_runs = [r for r in active_runs if r.started_at is not None]
@@ -960,7 +916,7 @@ async def dashboard():
             }
 
             result.append({
-                "project": p.to_dict(),
+                "space": p.to_dict(),
                 "run_counts": run_counts,
                 "queue_depth": len(pending_runs),
                 "active_runs": len(executing_runs),
@@ -984,7 +940,7 @@ async def dashboard():
 async def get_inbox():
     """Return inbox items (awaiting_user + completed_run), enriched with context."""
     from ..services.context import ContextService
-    from ..db.models import Project as ProjectModel, StepRun, FlowRun
+    from ..db.models import Space as SpaceModel, StepRun, FlowRun
     session, _ = _get_services()
     try:
         run_svc = RunService(session)
@@ -1000,8 +956,8 @@ async def get_inbox():
                     run_svc.archive_inbox_item(item.id)
                     continue
                 run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
-                project = session.query(ProjectModel).filter_by(id=item.project_id).first()
-                if not run or not project:
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                if not run or not space:
                     continue
 
                 step_type = "agent"
@@ -1010,7 +966,9 @@ async def get_inbox():
                         snap = json.loads(run.flow_snapshot)
                         for s in snap.get("steps", []):
                             if s["name"] == sr.step_name:
-                                step_type = s.get("step_type", "agent")
+                                step_type = s.get("step_type", "code")
+                                if step_type == "agent":
+                                    step_type = "code"
                                 break
                     except (ValueError, KeyError, TypeError):
                         pass
@@ -1018,7 +976,7 @@ async def get_inbox():
                 user_message = ""
                 try:
                     artifacts_dir = ContextService.get_artifacts_dir(
-                        Path(project.path), run.id,
+                        Path(space.path), run.id,
                     )
                     result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
                     if result_file.exists():
@@ -1032,8 +990,8 @@ async def get_inbox():
                     "step_name": sr.step_name,
                     "step_type": step_type,
                     "step_position": sr.step_position,
-                    "project_id": project.id,
-                    "project_name": project.name,
+                    "space_id": space.id,
+                    "space_name": space.name,
                     "run_id": run.id,
                     "flow_name": run.flow_name or "",
                     "prompt": sr.prompt or "",
@@ -1044,8 +1002,8 @@ async def get_inbox():
 
             elif item.type == "completed_run":
                 run = session.query(FlowRun).filter_by(id=item.reference_id).first()
-                project = session.query(ProjectModel).filter_by(id=item.project_id).first()
-                if not run or not project:
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                if not run or not space:
                     continue
 
                 run_att_dir = ATTACHMENTS_DIR / run.id
@@ -1060,8 +1018,8 @@ async def get_inbox():
                 completed.append({
                     "inbox_id": item.id,
                     "run_id": run.id,
-                    "project_id": project.id,
-                    "project_name": project.name,
+                    "space_id": space.id,
+                    "space_name": space.name,
                     "flow_name": run.flow_name or "",
                     "outcome": run.outcome or "",
                     "summary": run.summary or "",
@@ -1103,26 +1061,26 @@ async def respond_to_step(step_run_id: str, body: StepRespondBody):
         session.close()
 
 
-# --- Flow endpoints (project-scoped) ---
+# --- Flow endpoints (space-scoped) ---
 
-@app.get("/api/projects/{project_id}/flows")
-async def list_project_flows(project_id: str):
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/flows")
+async def list_space_flows(space_id: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         flow_svc = FlowService(session)
-        flows = flow_svc.list_by_project(project_id)
+        flows = flow_svc.list_by_space(space_id)
         return [
             {
                 "id": f.id,
-                "project_id": f.project_id,
+                "space_id": f.space_id,
                 "name": f.name,
                 "description": f.description,
                 "step_count": len(f.steps),
                 "steps": [
-                    {"name": s.name, "position": s.position, "step_type": s.step_type or "agent"}
+                    {"name": s.name, "position": s.position, "step_type": (s.step_type or "code") if (s.step_type or "code") != "agent" else "code"}
                     for s in sorted(f.steps, key=lambda s: s.position)
                 ],
                 "created_at": f.created_at.isoformat() if f.created_at else None,
@@ -1134,31 +1092,31 @@ async def list_project_flows(project_id: str):
         session.close()
 
 
-@app.post("/api/projects/{project_id}/flows/export")
-async def export_project_flows(project_id: str):
-    session, project_svc = _get_services()
+@app.post("/api/spaces/{space_id}/flows/export")
+async def export_space_flows(space_id: str):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         flow_svc = FlowService(session)
-        data = flow_svc.export_flows(project_id)
+        data = flow_svc.export_flows(space_id)
         return JSONResponse(content=data)
     finally:
         session.close()
 
 
-@app.post("/api/projects/{project_id}/flows/import")
-async def import_project_flows(project_id: str, file: UploadFile = File(...)):
-    session, project_svc = _get_services()
+@app.post("/api/spaces/{space_id}/flows/import")
+async def import_space_flows(space_id: str, file: UploadFile = File(...)):
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         content = await file.read()
         data = json.loads(content)
         flow_svc = FlowService(session)
-        count = flow_svc._import_flows_data(data, project_id=project_id, skip_existing=False)
+        count = flow_svc._import_flows_data(data, space_id=space_id, skip_existing=False)
         return {"imported": count}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
@@ -1174,21 +1132,33 @@ async def get_flow(flow_id: str):
         flow = flow_svc.get(flow_id)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
-        return flow.to_dict()
+        result = flow.to_dict()
+        result["warnings"] = flow_svc.validate_flow(flow_id)
+        return result
     finally:
         session.close()
 
 
-@app.post("/api/projects/{project_id}/flows")
-async def create_project_flow(project_id: str, body: FlowCreate):
-    session, project_svc = _get_services()
+@app.get("/api/flows/{flow_id}/validate")
+async def validate_flow(flow_id: str):
+    session, _ = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        flow_svc = FlowService(session)
+        return {"warnings": flow_svc.validate_flow(flow_id)}
+    finally:
+        session.close()
+
+
+@app.post("/api/spaces/{space_id}/flows")
+async def create_space_flow(space_id: str, body: FlowCreate):
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
         flow_svc = FlowService(session)
         if body.copy_from:
-            flow = flow_svc.duplicate(body.copy_from, body.name, project_id=project_id)
+            flow = flow_svc.duplicate(body.copy_from, body.name, space_id=space_id)
             if not flow:
                 raise HTTPException(status_code=404, detail=f"Source flow '{body.copy_from}' not found")
             if body.description:
@@ -1196,7 +1166,7 @@ async def create_project_flow(project_id: str, body: FlowCreate):
         else:
             flow = flow_svc.create(
                 name=body.name,
-                project_id=project_id,
+                space_id=space_id,
                 description=body.description,
             )
         return flow.to_dict()
@@ -1249,6 +1219,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
             skills=body.skills,
+            tools=body.tools,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1283,6 +1254,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["max_gate_retries"] = body.max_gate_retries
         if body.skills is not None:
             updates["skills"] = json.dumps(body.skills)
+        if body.tools is not None:
+            updates["tools"] = json.dumps(body.tools)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
@@ -1318,29 +1291,29 @@ async def reorder_flow_steps(flow_id: str, body: ReorderSteps):
 
 # --- Skills endpoints ---
 
-@app.get("/api/projects/{project_id}/skills")
-async def list_project_skills(project_id: str):
-    """Return discovered skills for a project."""
-    session, project_svc = _get_services()
+@app.get("/api/spaces/{space_id}/skills")
+async def list_space_skills(space_id: str):
+    """Return discovered skills for a space."""
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        skills = SkillService.discover(project.path)
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        skills = SkillService.discover(space.path)
         return [{"name": s.name, "path": s.path, "description": s.description, "compatibility": s.compatibility} for s in skills]
     finally:
         session.close()
 
 
-@app.get("/api/projects/{project_id}/skills/{skill_name}/content")
-async def get_skill_content(project_id: str, skill_name: str):
+@app.get("/api/spaces/{space_id}/skills/{skill_name}/content")
+async def get_skill_content(space_id: str, skill_name: str):
     """Return the full SKILL.md content for a skill."""
-    session, project_svc = _get_services()
+    session, space_svc = _get_services()
     try:
-        project = project_svc.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        content = SkillService.get_content(project.path, skill_name)
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        content = SkillService.get_content(space.path, skill_name)
         if content is None:
             raise HTTPException(status_code=404, detail="Skill not found")
         return {"content": content}
@@ -1357,20 +1330,66 @@ async def list_agents():
 
 @app.get("/api/agents/status")
 async def agents_status():
-    """Return availability status for all known agents."""
+    """Return availability status for all known agents (CLI agents only)."""
     import shutil
-    result = {}
-    for name, reg in AGENT_REGISTRY.items():
-        binary_path = shutil.which(reg["binary"])
-        result[name] = {
-            "label": reg["label"],
-            "available": binary_path is not None,
-            "binary": reg["binary"],
-            "binary_path": binary_path,
-            "command": reg["command"],
-        }
-    return result
+    import os
+    from ..db.models import AgentConfig
+    session, _ = _get_services()
+    try:
+        result = {}
+        for name, reg in AGENT_REGISTRY.items():
+            if reg.get("type") != "code":
+                continue
+            binary_path = shutil.which(reg["binary"])
+            api_key_env = reg.get("api_key_env", "")
+            has_key = False
+            if api_key_env:
+                has_key = bool(os.environ.get(api_key_env))
+                if not has_key:
+                    cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
+                    has_key = bool(cfg and cfg.value)
+            result[name] = {
+                "label": reg["label"],
+                "available": binary_path is not None,
+                "binary": reg["binary"],
+                "binary_path": binary_path,
+                "command": reg["command"],
+                "api_key_env": api_key_env,
+                "configured": has_key,
+            }
+        return result
+    finally:
+        session.close()
 
+
+
+@app.get("/api/providers/status")
+async def providers_status():
+    """Return chat/LLM providers with their config status."""
+    from ..db.models import AgentConfig
+    import os
+    session, _ = _get_services()
+    try:
+        result = {}
+        for name, reg in AGENT_REGISTRY.items():
+            if reg.get("type") != "chat":
+                continue
+            api_key_env = reg.get("api_key_env", "")
+            has_key = False
+            if api_key_env:
+                has_key = bool(os.environ.get(api_key_env))
+                if not has_key:
+                    cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
+                    has_key = bool(cfg and cfg.value)
+            result[name] = {
+                "label": reg["label"],
+                "api_key_env": api_key_env,
+                "configured": has_key,
+                "supports_tools": reg.get("supports_tools", []),
+            }
+        return result
+    finally:
+        session.close()
 
 
 @app.get("/api/agents/{agent_name}/config")
@@ -1425,7 +1444,7 @@ async def delete_agent_config(agent_name: str, config_id: str):
 async def list_models(agent: Optional[str] = None):
     """Return models for a specific agent, or all models if no agent specified."""
     if agent and agent in AGENT_REGISTRY:
-        return AGENT_REGISTRY[agent]["models"]
+        return AGENT_REGISTRY[agent].get("models", [])
     return KNOWN_MODELS
 
 

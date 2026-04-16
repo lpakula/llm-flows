@@ -7,7 +7,7 @@ from pathlib import Path
 import click
 
 from ..db.database import get_session, init_db
-from ..services.project import ProjectService
+from ..services.space import SpaceService
 from ..services.run import RunService
 from ..services.agent import AgentService
 
@@ -25,34 +25,34 @@ def agent():
 
 @agent.command("list")
 @click.option("--all", "-a", "show_all", is_flag=True,
-              help="Show agents across all projects")
+              help="Show agents across all spaces")
 def agent_list(show_all):
-    """List active agents for the current project.
+    """List active agents for the current space.
 
-    Use --all to show agents across all projects.
+    Use --all to show agents across all spaces.
     """
     session = _get_session()
     try:
-        project_svc = ProjectService(session)
+        space_svc = SpaceService(session)
         run_svc = RunService(session)
 
         if show_all:
-            projects = project_svc.list_all()
+            spaces = space_svc.list_all()
         else:
-            current = project_svc.resolve_current()
+            current = space_svc.resolve_current()
             if not current:
-                click.echo("Not inside a registered project. Use --all to list all agents.")
+                click.echo("Not inside a registered space. Use --all to list all agents.")
                 raise SystemExit(1)
-            projects = [current]
+            spaces = [current]
 
         found = False
-        for proj in projects:
-            active_runs = run_svc.get_active_by_project(proj.id)
+        for spc in spaces:
+            active_runs = run_svc.get_active_by_space(spc.id)
             for r in active_runs:
-                if AgentService.is_agent_running(proj.path, run_id=r.id):
+                if AgentService.is_agent_running(spc.path, run_id=r.id):
                     found = True
                     click.echo(f"  {r.id}  {'running':10s}  {r.flow_name or 'run'}")
-                    click.echo(f"         project: {proj.name}")
+                    click.echo(f"         space: {spc.name}")
 
         if not found:
             click.echo("No active agents.")
@@ -133,8 +133,99 @@ def agent_logs(run_id, follow, raw):
     stream_run_logs(run_id, follow=follow, raw=raw)
 
 
+# ── Alias management ──────────────────────────────────────────────────────
+
+@agent.group("alias")
+def alias_group():
+    """Manage agent aliases (per type: code/chat)."""
+    pass
+
+
+@alias_group.command("list")
+@click.option("--type", "-t", "type_filter", default=None,
+              type=click.Choice(["code", "chat"]),
+              help="Filter by type")
+def alias_list(type_filter):
+    """List all configured aliases.
+
+    Examples:
+      llmflows agent alias list
+      llmflows agent alias list --type chat
+    """
+    from ..db.models import AgentAlias
+    session = _get_session()
+    try:
+        q = session.query(AgentAlias).order_by(AgentAlias.type, AgentAlias.position)
+        if type_filter:
+            q = q.filter_by(type=type_filter)
+        aliases = q.all()
+        if not aliases:
+            click.echo("No aliases configured.")
+            return
+
+        type_w = 6
+        name_w = max((len(a.name) for a in aliases), default=8)
+        name_w = max(name_w, 4)
+        agent_w = max((len(a.agent) for a in aliases), default=5)
+        agent_w = max(agent_w, 5)
+
+        header = "  ".join([
+            click.style("TYPE".ljust(type_w), bold=True),
+            click.style("TIER".ljust(name_w), bold=True),
+            click.style("AGENT".ljust(agent_w), bold=True),
+            click.style("MODEL", bold=True),
+        ])
+        click.echo(header)
+        click.echo(click.style("  ".join(["─" * type_w, "─" * name_w, "─" * agent_w, "─" * 30]), fg="bright_black"))
+
+        current_type = None
+        for a in aliases:
+            if current_type is not None and a.type != current_type:
+                click.echo()
+            current_type = a.type
+            click.echo("  ".join([
+                click.style(a.type.ljust(type_w), fg="yellow"),
+                click.style(a.name.ljust(name_w), fg="cyan"),
+                click.style(a.agent.ljust(agent_w), fg="white"),
+                click.style(a.model, fg="bright_black"),
+            ]))
+    finally:
+        session.close()
+
+
+@alias_group.command("update")
+@click.argument("tier")
+@click.option("--type", "-t", "alias_type", required=True,
+              type=click.Choice(["code", "chat"]),
+              help="Alias type (code or chat)")
+@click.option("--agent", "-a", "agent_name", default=None, help="New agent/provider")
+@click.option("--model", "-m", default=None, help="New model")
+def alias_update(tier, alias_type, agent_name, model):
+    """Update agent/model on a pre-defined alias tier.
+
+    Examples:
+      llmflows agent alias update normal --type chat --agent anthropic --model claude-sonnet-4
+      llmflows agent alias update max --type code --agent claude-code --model opus
+    """
+    from ..db.models import AgentAlias
+    session = _get_session()
+    try:
+        alias = session.query(AgentAlias).filter_by(type=alias_type, name=tier).first()
+        if not alias:
+            click.echo(f"Alias tier '{tier}' not found for type '{alias_type}'.")
+            raise SystemExit(1)
+        if agent_name is not None:
+            alias.agent = agent_name
+        if model is not None:
+            alias.model = model
+        session.commit()
+        click.secho(f"  Updated {alias_type}/{tier} → {alias.agent}/{alias.model}", fg="green")
+    finally:
+        session.close()
+
+
 def _shorten(path: str, strip_prefix: str | None) -> str:
-    """Strip worktree prefix from a path to show project-relative paths."""
+    """Strip worktree prefix from a path to show space-relative paths."""
     if strip_prefix and path.startswith(strip_prefix):
         return path[len(strip_prefix):]
     return path

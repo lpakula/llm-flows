@@ -2,7 +2,16 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Flow, FlowStep, Gate, AgentAlias, SkillInfo } from "@/api/types";
+import type { Flow, FlowStep, FlowWarning, Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
+
+const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
+  { value: "code", label: "Code", desc: "Coding agent (Cursor, Claude Code, etc.)" },
+  { value: "chat", label: "Chat", desc: "Direct LLM API call" },
+  { value: "shell", label: "Shell", desc: "Run a shell command" },
+  { value: "manual", label: "Manual", desc: "LLM + human approval" },
+];
+
+const AVAILABLE_TOOLS = ["web_search"];
 
 const VARIABLES = ["{{run.id}}", "{{flow.name}}", "{{artifacts_dir}}", "{{steps.<name>.user_response}}"];
 
@@ -104,6 +113,41 @@ function StepSkillPicker({
   );
 }
 
+function ToolsPicker({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const toggle = (name: string) => {
+    if (selected.includes(name)) onChange(selected.filter((s) => s !== name));
+    else onChange([...selected, name]);
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-400 font-medium">Tools</span>
+        <span className="text-xs text-gray-600">Provider-native tools for this step</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {AVAILABLE_TOOLS.map((t) => {
+          const active = selected.includes(t);
+          const base = "px-3 py-1.5 rounded-lg text-xs font-mono border transition cursor-pointer";
+          const style = active
+            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+            : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300";
+          return (
+            <button key={t} onClick={() => toggle(t)} className={`${base} ${style}`}>
+              {t}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StepEditForm({
   form,
   aliases,
@@ -123,6 +167,7 @@ function StepEditForm({
     allow_max: boolean;
     max_gate_retries: number;
     skills: string[];
+    tools: string[];
   };
   aliases: AgentAlias[];
   skills: SkillInfo[];
@@ -131,6 +176,14 @@ function StepEditForm({
   onCancel: () => void;
   extraBefore?: ReactNode;
 }) {
+  const st = form.step_type as StepType;
+  const aliasType = (st === "manual" || st === "chat") ? "chat" : st;
+  const filteredAliases = aliases.filter((a) => a.type === aliasType);
+  const showAlias = st !== "shell";
+  const showSkills = st === "code";
+  const showAllowMax = st === "code";
+  const showTools = st === "chat" || st === "manual";
+
   return (
     <div className="p-5 space-y-4">
       <div>
@@ -145,20 +198,28 @@ function StepEditForm({
       {extraBefore}
 
       <div>
-        <label className="text-xs text-gray-400 font-medium block mb-1">Content (Markdown)</label>
+        <label className="text-xs text-gray-400 font-medium block mb-1">
+          {st === "shell" ? "Command" : "Content (Markdown)"}
+        </label>
         <textarea
           value={form.content}
           onChange={(e) => onChange({ content: e.target.value })}
-          rows={12}
+          rows={st === "shell" ? 4 : 12}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
         />
       </div>
 
-      <StepSkillPicker
-        skills={skills}
-        selected={form.skills}
-        onChange={(s) => onChange({ skills: s })}
-      />
+      {showSkills && (
+        <StepSkillPicker
+          skills={skills}
+          selected={form.skills}
+          onChange={(s) => onChange({ skills: s })}
+        />
+      )}
+
+      {showTools && (
+        <ToolsPicker selected={form.tools} onChange={(t) => onChange({ tools: t })} />
+      )}
 
       <GateEditor
         label="IF Conditions"
@@ -186,21 +247,25 @@ function StepEditForm({
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-20"
             />
             <p className="text-xs text-gray-600 mt-1">
-              If a gate fails, the step is re-run by the agent. This sets how many times that cycle repeats before the run is marked as failed.
+              If a gate fails, the step is re-run. This sets how many times that cycle repeats before the run is marked as failed.
             </p>
           </div>
-          <label className="flex items-center gap-2 text-sm text-gray-400">
-            <input
-              type="checkbox"
-              checked={form.allow_max}
-              onChange={(e) => onChange({ allow_max: e.target.checked })}
-              className="rounded"
-            />
-            Allow max
-          </label>
-          <p className="text-xs text-gray-600">
-            On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
-          </p>
+          {showAllowMax && (
+            <>
+              <label className="flex items-center gap-2 text-sm text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={form.allow_max}
+                  onChange={(e) => onChange({ allow_max: e.target.checked })}
+                  className="rounded"
+                />
+                Allow max
+              </label>
+              <p className="text-xs text-gray-600">
+                On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
+              </p>
+            </>
+          )}
         </div>
 
       <div className="flex items-center gap-4">
@@ -208,37 +273,49 @@ function StepEditForm({
           <label className="text-xs text-gray-400 font-medium block mb-1">Step Type</label>
           <select
             value={form.step_type}
-            onChange={(e) => onChange({ step_type: e.target.value })}
+            onChange={(e) => onChange({ step_type: e.target.value, tools: [] })}
             className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
           >
-            <option value="agent">Agent</option>
-            <option value="manual">Manual</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 font-medium block mb-1">Agent Alias</label>
-          <select
-            value={form.agent_alias}
-            onChange={(e) => onChange({ agent_alias: e.target.value })}
-            className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
-          >
-            {aliases.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name} ({a.agent}/{a.model})
-              </option>
+            {STEP_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
+          <p className="text-xs text-gray-600 mt-1">
+            {STEP_TYPES.find((t) => t.value === st)?.desc}
+          </p>
         </div>
+        {showAlias && (
+          <div>
+            <label className="text-xs text-gray-400 font-medium block mb-1">Alias</label>
+            <select
+              value={form.agent_alias}
+              onChange={(e) => onChange({ agent_alias: e.target.value })}
+              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
+            >
+              {filteredAliases.length > 0 ? (
+                filteredAliases.map((a) => (
+                  <option key={a.id} value={a.name}>
+                    {a.name} ({a.agent}/{a.model})
+                  </option>
+                ))
+              ) : (
+                <option value="normal">normal (not configured)</option>
+              )}
+            </select>
+          </div>
+        )}
       </div>
-      {form.step_type === "manual" && (
+      {st === "manual" && (
         <p className="text-xs text-amber-500/80">
-          Agent will prepare output for the user, then the step pauses and waits for the user to respond.
+          LLM generates content for the user, then the step pauses and waits for a response.
         </p>
       )}
 
-      <div className="text-xs text-amber-500 font-mono">
-        Variables: {VARIABLES.join(" ")}
-      </div>
+      {st !== "shell" && (
+        <div className="text-xs text-amber-500 font-mono">
+          Variables: {VARIABLES.join(" ")}
+        </div>
+      )}
 
       <div className="flex gap-3">
         <button onClick={onSave} className="text-xs text-blue-400 hover:text-blue-300">
@@ -255,7 +332,7 @@ function StepEditForm({
 export function FlowEditorView() {
   const { flowId } = useParams<{ flowId: string }>();
   const navigate = useNavigate();
-  const { reload, setSelectedProjectId } = useApp();
+  const { reload, setSelectedSpaceId } = useApp();
 
   const [flow, setFlow] = useState<Flow | null>(null);
   const [editingMeta, setEditingMeta] = useState(false);
@@ -263,17 +340,17 @@ export function FlowEditorView() {
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [stepForm, setStepForm] = useState({
     name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3,
-    skills: [] as string[],
+    agent_alias: "normal", step_type: "code" as string, allow_max: false, max_gate_retries: 3,
+    skills: [] as string[], tools: [] as string[],
   });
   const [showAddStep, setShowAddStep] = useState(false);
   const [newStep, setNewStep] = useState({
     name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3,
-    skills: [] as string[],
+    agent_alias: "normal", step_type: "code" as string, allow_max: false, max_gate_retries: 3,
+    skills: [] as string[], tools: [] as string[],
   });
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
-  const [projectSkills, setProjectSkills] = useState<SkillInfo[]>([]);
+  const [spaceSkills, setSpaceSkills] = useState<SkillInfo[]>([]);
   const [localOrder, setLocalOrder] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
   const dragOverId = useRef<string | null>(null);
@@ -282,13 +359,13 @@ export function FlowEditorView() {
     if (!flowId) return;
     const [f, al] = await Promise.all([api.getFlow(flowId), api.listAgentAliases()]);
     setFlow(f);
-    setSelectedProjectId(f.project_id);
+    setSelectedSpaceId(f.space_id);
     setMetaForm({ name: f.name, description: f.description || "" });
     setAliases(al);
     setLocalOrder([...f.steps].sort((a, b) => a.position - b.position).map((s) => s.id));
     try {
-      const sk = await api.listSkills(f.project_id);
-      setProjectSkills(sk);
+      const sk = await api.listSkills(f.space_id);
+      setSpaceSkills(sk);
     } catch { /* skills discovery may fail if no .agents/skills dir */ }
   }, [flowId]);
 
@@ -311,11 +388,12 @@ export function FlowEditorView() {
       content: step.content || "",
       gates: (step.gates || []).map((g) => ({ ...g })),
       ifs: (step.ifs || []).map((g) => ({ ...g })),
-      agent_alias: step.agent_alias || "standard",
-      step_type: step.step_type || "agent",
+      agent_alias: step.agent_alias || "normal",
+      step_type: (step.step_type as string) === "agent" ? "code" : (step.step_type || "code"),
       allow_max: step.allow_max || false,
       max_gate_retries: step.max_gate_retries ?? 3,
       skills: step.skills || [],
+      tools: step.tools || [],
     });
   };
 
@@ -331,6 +409,7 @@ export function FlowEditorView() {
       allow_max: stepForm.allow_max,
       max_gate_retries: stepForm.max_gate_retries,
       skills: stepForm.skills,
+      tools: stepForm.tools,
     });
     setEditingStep(null);
     load();
@@ -346,6 +425,7 @@ export function FlowEditorView() {
       allow_max: newStep.allow_max,
       max_gate_retries: newStep.max_gate_retries,
       skills: newStep.skills,
+      tools: newStep.tools,
     };
     const gates = newStep.gates.filter((g) => g.command.trim());
     const ifs = newStep.ifs.filter((g) => g.command.trim());
@@ -353,7 +433,7 @@ export function FlowEditorView() {
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
     await api.addStep(flow.id, body);
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "standard", step_type: "agent", allow_max: false, max_gate_retries: 3, skills: [] });
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "code", allow_max: false, max_gate_retries: 3, skills: [], tools: [] });
     setShowAddStep(false);
     load();
   };
@@ -375,7 +455,7 @@ export function FlowEditorView() {
     const newName = prompt("Name for the copy:", flow.name + "-copy");
     if (!newName) return;
     try {
-      const created = await api.createFlow(flow.project_id, { name: newName, copy_from: flow.name });
+      const created = await api.createFlow(flow.space_id, { name: newName, copy_from: flow.name });
       reload();
       navigate(`/flow-editor/${created.id}`);
     } catch (e: unknown) {
@@ -390,7 +470,7 @@ export function FlowEditorView() {
     <div className="flex-1 overflow-y-auto p-6">
       {/* Back */}
       <button
-        onClick={() => flow ? navigate(`/project/${flow.project_id}/flows`) : navigate("/")}
+        onClick={() => flow ? navigate(`/space/${flow.space_id}/flows`) : navigate("/")}
         className="text-xs text-gray-500 hover:text-gray-300 mb-4 block"
       >
         &larr; Flows
@@ -444,6 +524,21 @@ export function FlowEditorView() {
         </div>
       </div>
 
+      {/* Flow validation warnings */}
+      {flow?.warnings && flow.warnings.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-5 py-3 mb-4">
+          <h4 className="text-sm font-semibold text-amber-400 mb-2">Configuration Warnings</h4>
+          <ul className="space-y-1">
+            {flow.warnings.map((w: FlowWarning, i: number) => (
+              <li key={i} className="text-xs text-amber-300/80">
+                {w.step_name && <span className="text-amber-400 font-mono mr-1">{w.step_name}:</span>}
+                {w.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Steps section */}
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
@@ -463,7 +558,7 @@ export function FlowEditorView() {
           <StepEditForm
             form={newStep}
             aliases={aliases}
-            skills={projectSkills}
+            skills={spaceSkills}
             onChange={(updates) => setNewStep((s) => ({ ...s, ...updates }))}
             onSave={addStep}
             onCancel={() => setShowAddStep(false)}
@@ -508,7 +603,7 @@ export function FlowEditorView() {
               <StepEditForm
                 form={stepForm}
                 aliases={aliases}
-                skills={projectSkills}
+                skills={spaceSkills}
                 onChange={(updates) => setStepForm((s) => ({ ...s, ...updates }))}
                 onSave={() => saveStep(step.id)}
                 onCancel={() => setEditingStep(null)}
@@ -538,11 +633,19 @@ export function FlowEditorView() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-medium text-white">{step.name}</h4>
-                      {step.step_type === "manual" && (
-                        <span className="text-[10px] text-amber-400">manual</span>
-                      )}
-                      {step.agent_alias && (
+                      <span className={`text-[10px] ${
+                        step.step_type === "code" || (step.step_type as string) === "agent" ? "text-blue-400" :
+                        step.step_type === "chat" ? "text-emerald-400" :
+                        step.step_type === "shell" ? "text-orange-400" :
+                        step.step_type === "manual" ? "text-amber-400" : "text-gray-400"
+                      }`}>
+                        {(step.step_type as string) === "agent" ? "code" : step.step_type}
+                      </span>
+                      {step.agent_alias && step.step_type !== "shell" && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>
+                      )}
+                      {step.tools?.length > 0 && (
+                        <span className="text-[10px] text-emerald-400">{step.tools.join(", ")}</span>
                       )}
                       {step.allow_max && <span className="text-[10px] text-yellow-400">max</span>}
                       {step.max_gate_retries !== 3 && (
@@ -553,6 +656,11 @@ export function FlowEditorView() {
                       {step.skills?.length > 0 && (
                         <span className="text-[10px] text-blue-400">
                           {step.skills.length} skill{step.skills.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {flow?.warnings?.some((w: FlowWarning) => w.step_name === step.name) && (
+                        <span className="text-[10px] text-amber-400" title="Has configuration warnings">
+                          ⚠
                         </span>
                       )}
                     </div>

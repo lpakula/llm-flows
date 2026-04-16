@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from llmflows.db.models import Base, Project
+from llmflows.db.models import Base, Space
 from llmflows.db.database import reset_engine
 
 
@@ -39,12 +39,12 @@ def test_db():
 
 
 @pytest.fixture
-def test_project(test_db, temp_dir):
-    """Create a test project in the database."""
-    project = Project(name="test-project", path=str(temp_dir / "test-repo"))
-    test_db.add(project)
+def test_space(test_db, temp_dir):
+    """Create a test space in the database."""
+    space = Space(name="test-space", path=str(temp_dir / "test-repo"))
+    test_db.add(space)
     test_db.commit()
-    return project
+    return space
 
 
 @pytest.fixture

@@ -37,7 +37,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('agent', 'key', name='uq_agent_config_key')
     )
-    op.create_table('projects',
+    op.create_table('spaces',
     sa.Column('id', sa.String(length=6), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('path', sa.Text(), nullable=False),
@@ -48,18 +48,18 @@ def upgrade() -> None:
     )
     op.create_table('flows',
     sa.Column('id', sa.String(length=6), nullable=False),
-    sa.Column('project_id', sa.String(length=6), nullable=False),
+    sa.Column('space_id', sa.String(length=6), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
+    sa.ForeignKeyConstraint(['space_id'], ['spaces.id'], ),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('project_id', 'name', name='uq_flow_project_name')
+    sa.UniqueConstraint('space_id', 'name', name='uq_flow_space_name')
     )
     op.create_table('tasks',
     sa.Column('id', sa.String(length=6), nullable=False),
-    sa.Column('project_id', sa.String(length=6), nullable=False),
+    sa.Column('space_id', sa.String(length=6), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=True),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('type', sa.Enum('FEATURE', 'FIX', 'REFACTOR', 'CHORE', name='tasktype'), nullable=True),
@@ -67,7 +67,7 @@ def upgrade() -> None:
     sa.Column('task_status', sa.String(length=50), nullable=True),
     sa.Column('worktree_branch', sa.String(length=255), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
+    sa.ForeignKeyConstraint(['space_id'], ['spaces.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('flow_steps',
@@ -88,7 +88,7 @@ def upgrade() -> None:
     )
     op.create_table('task_runs',
     sa.Column('id', sa.String(length=6), nullable=False),
-    sa.Column('project_id', sa.String(length=6), nullable=False),
+    sa.Column('space_id', sa.String(length=6), nullable=False),
     sa.Column('task_id', sa.String(length=6), nullable=False),
     sa.Column('flow_name', sa.String(length=255), nullable=True),
     sa.Column('flow_snapshot', sa.Text(), nullable=True),
@@ -106,7 +106,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('started_at', sa.DateTime(), nullable=True),
     sa.Column('completed_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
+    sa.ForeignKeyConstraint(['space_id'], ['spaces.id'], ),
     sa.ForeignKeyConstraint(['task_id'], ['tasks.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -138,7 +138,7 @@ def downgrade() -> None:
     op.drop_table('flow_steps')
     op.drop_table('tasks')
     op.drop_table('flows')
-    op.drop_table('projects')
+    op.drop_table('spaces')
     op.drop_table('agent_configs')
     op.drop_table('agent_aliases')
     # ### end Alembic commands ###
