@@ -17,14 +17,11 @@ SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 SPACE_DIR = ".llmflows"
 
 
-VALID_STEP_TYPES = ("code", "chat", "shell", "manual")
+VALID_STEP_TYPES = ("default", "code", "shell", "hitl")
 
 KNOWN_AGENTS = [
     "cursor",
     "claude-code",
-    "codex",
-    "qwen",
-    "pi",
 ]
 
 KNOWN_LLM_PROVIDERS = [
@@ -76,37 +73,12 @@ AGENT_REGISTRY = {
             "claude-sonnet-4.5", "claude-opus-4.5",
         ],
     },
-    "codex": {
-        "type": "code",
-        "label": "Codex",
-        "binary": "codex",
-        "api_key_env": "OPENAI_API_KEY",
-        "command": "codex exec --json \"<prompt>\"",
-        "prompt_mode": "arg",
-        "output_format": "json",
-        "tiers": {"max": "gpt-5.4", "normal": "gpt-5.4", "mini": "gpt-5.3-codex-spark"},
-        "models": [
-            "gpt-5.4", "gpt-5.3-codex-spark",
-        ],
-    },
-    "qwen": {
-        "type": "code",
-        "label": "Qwen Code",
-        "binary": "qwen",
-        "api_key_env": "DASHSCOPE_API_KEY",
-        "command": "qwen -p \"<prompt>\" -y --output-format stream-json",
-        "prompt_mode": "arg",
-        "output_format": "stream-json",
-        "tiers": {"max": "default", "normal": "default", "mini": "default"},
-        "models": [
-            "default",
-        ],
-    },
+    # -- Pi (default executor for default + hitl steps) --
     "pi": {
-        "type": "code",
+        "type": "pi",
         "label": "Pi",
         "binary": "pi",
-        "api_key_env": "PI_API_KEY",
+        "api_key_env": "",
         "command": "pi -p \"<prompt>\" --mode json",
         "prompt_mode": "arg",
         "output_format": "stream-json",
@@ -126,34 +98,26 @@ AGENT_REGISTRY = {
             "groq/llama-3.3-70b",
         ],
     },
-    # -- Chat/LLM providers (step_type=chat, manual) --
+    # -- LLM providers (API key configuration, used by Pi behind the scenes) --
     "openai": {
-        "type": "chat",
+        "type": "provider",
         "label": "OpenAI",
         "api_key_env": "OPENAI_API_KEY",
-        "supports_tools": ["web_search"],
-        "tiers": {"max": "gpt-4o", "normal": "gpt-4o-mini", "mini": "gpt-4o-mini"},
     },
     "anthropic": {
-        "type": "chat",
+        "type": "provider",
         "label": "Anthropic",
         "api_key_env": "ANTHROPIC_API_KEY",
-        "supports_tools": ["web_search"],
-        "tiers": {"max": "claude-sonnet-4-20250514", "normal": "claude-sonnet-4-20250514", "mini": "claude-haiku-3-5-20241022"},
     },
     "google": {
-        "type": "chat",
+        "type": "provider",
         "label": "Google",
         "api_key_env": "GOOGLE_API_KEY",
-        "supports_tools": ["web_search"],
-        "tiers": {"max": "gemini-2.5-pro", "normal": "gemini-2.5-flash", "mini": "gemini-2.5-flash"},
     },
     "ollama": {
-        "type": "chat",
+        "type": "provider",
         "label": "Ollama",
         "api_key_env": "OLLAMA_HOST",
-        "supports_tools": [],
-        "tiers": {"max": "llama3.1:70b", "normal": "llama3.1:8b", "mini": "llama3.1:8b"},
     },
 }
 
@@ -244,9 +208,12 @@ def resolve_alias(session, alias_type: str, alias_name: str = "normal") -> tuple
 
 
 def infer_step_type(agent: str) -> str:
-    """Derive step_type from agent's registry type. Returns 'code' or 'chat'."""
+    """Derive step_type from agent's registry type. Returns 'code' or 'default'."""
     reg = AGENT_REGISTRY.get(agent, {})
-    return reg.get("type", "code")
+    agent_type = reg.get("type", "default")
+    if agent_type in ("pi", "provider"):
+        return "default"
+    return agent_type
 
 
 def find_space_dir(start_path: Optional[Path] = None) -> Optional[Path]:

@@ -106,7 +106,7 @@ export function ScheduleModal({
 
   const selectedFlow = flows.find((f) => f.id === selectedFlowId);
   const hasHumanSteps = selectedFlow?.steps.some(
-    (s) => s.step_type === "manual",
+    (s) => s.step_type === "hitl",
   ) ?? false;
 
   const submit = async () => {
@@ -154,7 +154,7 @@ export function ScheduleModal({
             </label>
             <p className="text-xs text-gray-600 mt-1 ml-5">
               {hasHumanSteps
-                ? "Not available — this flow contains manual steps that require user interaction."
+                ? "Not available — this flow contains human-in-the-loop steps that require user interaction."
                 : <>All flow steps and their gates are combined into a single prompt and handed to the agent at once. Gates are included as guidance but not enforced — no retries, no step-by-step validation. Uses the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model).</>
               }
             </p>

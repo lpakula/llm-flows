@@ -377,7 +377,7 @@ export function AgentsView() {
 
   const tierOrder = ["mini", "normal", "max"];
   const codeAliases = aliases.filter((a) => a.type === "code").sort((a, b) => tierOrder.indexOf(a.name) - tierOrder.indexOf(b.name));
-  const chatAliases = aliases.filter((a) => a.type === "chat").sort((a, b) => tierOrder.indexOf(a.name) - tierOrder.indexOf(b.name));
+  const piAliases = aliases.filter((a) => a.type === "pi").sort((a, b) => tierOrder.indexOf(a.name) - tierOrder.indexOf(b.name));
   const agentList = Object.entries(agents).map(([key, info]) => ({ key, ...info }));
   const providerList = Object.entries(providers).map(([key, info]) => ({ key, ...info }));
   const availableAgents = agentList.filter((a) => a.available && a.configured).map((a) => a.key);
@@ -393,7 +393,7 @@ export function AgentsView() {
         Configure API keys for LLM providers and coding agents. Set alias tiers to control which model each step resolves to.
       </p>
 
-      {/* ── Chat / Providers ── */}
+      {/* ── LLM Providers ── */}
       {!loading && (
         <section>
           <div className="border border-gray-800 rounded-xl">
@@ -427,14 +427,14 @@ export function AgentsView() {
                   </tr>
                 ))}
               </tbody>
-              {chatAliases.length > 0 && (
+              {piAliases.length > 0 && (
                 <tfoot>
                   <tr className="border-t border-gray-700 bg-gray-900/80 [&>td:first-child]:rounded-bl-xl [&>td:last-child]:rounded-br-xl">
                     <td colSpan={3} className="px-4 py-3">
                       <div className="flex items-center gap-6">
                         <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide shrink-0">Tiers</span>
                         <div className="flex gap-6 flex-1 min-w-0">
-                          {chatAliases.map((a) => (
+                          {piAliases.map((a) => (
                             <InlineAliasTier
                               key={a.id}
                               alias={a}

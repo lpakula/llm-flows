@@ -84,20 +84,16 @@ Read each skill file and follow its instructions before starting the step.
 
 ---
 {%- if artifacts_dir %}
-{%- if step_type == "manual" %}
+{%- if step_type == "hitl" %}
 
 ## Output for User
 
 You **must** write your output to: `{{ artifacts_dir }}/_result.md`
 
-This file will be shown directly to the user in a UI card. The user has a **text input field** to type a response and a **Submit** button.
-- Present your analysis, options, or question clearly — format for a human reader
-- Use headers, numbered lists, pros/cons tables where appropriate
-- End with a clear, specific question the user should answer (e.g. "Which approach do you prefer? (1, 2, or 3)")
-- The user will reply with a short text answer — frame your question so a brief response is sufficient
-- Do NOT include internal implementation notes — this is a user-facing document
-- Do NOT ask the user to reply in a thread, tracker, or any other channel — they answer directly in the UI
-{%- else %}
+This file will be shown to the user in a UI card. The user can type a response and submit it.
+- End with a clear question the user should answer
+- Frame your question so a brief response is sufficient
+{%- elif step_type == "code" %}
 
 ## Output Artifacts
 
@@ -108,6 +104,17 @@ This file is the primary way context is passed to subsequent steps. Include:
 - **Key decisions** — any choices made, trade-offs, or alternatives considered
 - **Files changed** — list of files created or modified with brief descriptions
 - **State / context for next steps** — anything the next step needs to know
+{%- else %}
+
+## Output
+
+You **must** write your output to: `{{ artifacts_dir }}/_result.md`
+
+This file is the primary deliverable of this step and will be passed as context to subsequent steps.
+- Focus on the **actual result** — the content, answer, analysis, or output the step instructions asked for
+- Format clearly for a human reader using markdown (headers, lists, tables as appropriate)
+- Do NOT include meta-commentary about what you did or how you did it — just provide the result
+- If context is needed for subsequent steps, include it naturally within the result
 {%- endif %}
 
 You may also save additional files (data, configs, test output) to `{{ artifacts_dir }}/`.
@@ -129,7 +136,7 @@ To publish files (screenshots, images, etc.) so they appear in the run summary, 
 
 ## User Responses
 
-These are responses from the user to previous manual steps. The most recent response is the most relevant.
+These are responses from the user to previous human-in-the-loop steps. The most recent response is the most relevant.
 {%- for ur in user_responses %}
 
 ### {{ ur.step_name }}

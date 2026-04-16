@@ -211,7 +211,7 @@ class Daemon:
         """Handle a running step: check liveness, evaluate gates on completion, advance."""
         snap_step_def = self._get_snapshot_step(run, step_run.step_name)
         step_type = _normalize_step_type(
-            (snap_step_def or {}).get("step_type", "code")
+            (snap_step_def or {}).get("step_type")
         )
         executor = get_executor(step_type)
 
@@ -281,12 +281,12 @@ class Daemon:
         if step_artifacts.is_dir():
             self._publish_attachments(step_artifacts, run.id)
 
-        if step_type == "manual":
+        if step_type == "hitl":
             run_svc.mark_awaiting_user(step_run.id)
             inbox_item = run_svc.create_inbox_item(
                 type="awaiting_user", reference_id=step_run.id,
                 space_id=run.space_id,
-                title=f"{run.flow_name or run.id} — {step_run.step_name} (manual)",
+                title=f"{run.flow_name or run.id} — {step_run.step_name} (hitl)",
             )
             logger.info(
                 "Run %s step '%s' awaiting user (%s)",
@@ -528,7 +528,7 @@ class Daemon:
         if run.one_shot:
             if flow_name and flow_svc.has_human_steps(flow_name, space_id=run.space_id):
                 logger.warning(
-                    "Run %s: one-shot disabled — flow '%s' contains manual/prompt steps",
+                    "Run %s: one-shot disabled — flow '%s' contains hitl steps",
                     run.id, flow_name,
                 )
             else:
@@ -718,7 +718,6 @@ class Daemon:
         step_type = _normalize_step_type(
             (snap_step or {}).get("step_type")
             or getattr(step_obj, 'step_type', None)
-            or "code"
         )
 
         tools = (snap_step or {}).get("tools") or (
@@ -726,11 +725,11 @@ class Daemon:
         ) or []
 
         alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "normal"
-        alias_type = "chat" if step_type in ("chat", "manual") else step_type
+        alias_type = "code" if step_type == "code" else "pi"
         try:
             resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_type, alias_name)
         except ValueError:
-            resolved_agent = "cursor" if alias_type == "code" else "openai"
+            resolved_agent = "cursor" if alias_type == "code" else "pi"
             resolved_model = ""
 
         attempt = len([
@@ -759,7 +758,7 @@ class Daemon:
             if sr.completed_at and sr.user_response:
                 snap_def = self._get_snapshot_step(run, sr.step_name)
                 sr_step_type = _normalize_step_type(
-                    (snap_def or {}).get("step_type", "code")
+                    (snap_def or {}).get("step_type")
                 )
                 user_responses.append({
                     "step_name": sr.step_name,
@@ -819,12 +818,12 @@ class Daemon:
                 run_svc.mark_step_completed(step_run.id, outcome="completed")
                 logger.info("Run %s step '%s' completed (sync)", run.id, step_name)
 
-                if step_type == "manual":
+                if step_type == "hitl":
                     run_svc.mark_awaiting_user(step_run.id)
                     inbox_item = run_svc.create_inbox_item(
                         type="awaiting_user", reference_id=step_run.id,
                         space_id=run.space_id,
-                        title=f"{run.flow_name or run.id} — {step_name} (manual)",
+                        title=f"{run.flow_name or run.id} — {step_name} (hitl)",
                     )
                     user_message = result.output or ""
                     self.notifications.notify("step.awaiting_user", {
@@ -863,9 +862,9 @@ class Daemon:
         })
 
         try:
-            summary_agent, resolved_model = resolve_alias(run_svc.session, "code", "mini")
+            summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
         except ValueError:
-            summary_agent, resolved_model = "cursor", ""
+            summary_agent, resolved_model = "pi", ""
 
         flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(

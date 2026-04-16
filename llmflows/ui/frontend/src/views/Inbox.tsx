@@ -51,7 +51,7 @@ function InboxCard({
               {item.flow_name || "Run"}
             </span>
             <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 bg-amber-500/15 text-amber-400">
-              manual
+              HITL
             </span>
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mt-1">

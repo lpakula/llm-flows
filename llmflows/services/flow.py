@@ -10,12 +10,15 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep
 
-VALID_STEP_TYPES = ("code", "chat", "shell", "manual")
+VALID_STEP_TYPES = ("default", "code", "shell", "hitl")
 
 
-def _normalize_step_type(value: str) -> str:
-    """Validate step type, default to 'code' if unknown."""
-    return value if value in VALID_STEP_TYPES else "code"
+def _normalize_step_type(value: str | None) -> str:
+    """Normalize step type. Known explicit types pass through; anything else
+    (including None, empty string, or unknown values) becomes 'default'."""
+    if not value:
+        return "default"
+    return value if value in VALID_STEP_TYPES else "default"
 
 
 def _serialize_json_list(value) -> str:
@@ -60,7 +63,7 @@ class FlowService:
                     gates=_serialize_gates(step_data.get("gates")),
                     ifs=_serialize_json_list(step_data.get("ifs")),
                     agent_alias=step_data.get("agent_alias", "normal"),
-                    step_type=_normalize_step_type(step_data.get("step_type", "code")),
+                    step_type=_normalize_step_type(step_data.get("step_type")),
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
@@ -81,12 +84,12 @@ class FlowService:
         return q.first()
 
     def has_human_steps(self, flow_name: str, space_id: Optional[str] = None) -> bool:
-        """Return True if any step in the flow is a manual (human) step."""
+        """Return True if any step in the flow is a hitl (human-in-the-loop) step."""
         flow = self.get_by_name(flow_name, space_id)
         if not flow:
             return False
         return any(
-            _normalize_step_type(s.step_type or "code") == "manual"
+            _normalize_step_type(s.step_type) == "hitl"
             for s in flow.steps
         )
 
@@ -116,7 +119,7 @@ class FlowService:
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
         ifs: Optional[list] = None,
-        agent_alias: str = "normal", step_type: str = "code",
+        agent_alias: str = "normal", step_type: str = "default",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
         tools: Optional[list] = None,
@@ -213,7 +216,7 @@ class FlowService:
             {"name": s.name, "position": s.position, "content": s.content,
              "gates": s.get_gates(), "ifs": s.get_ifs(),
              "agent_alias": s.agent_alias or "normal",
-             "step_type": _normalize_step_type(s.step_type or "code"),
+             "step_type": _normalize_step_type(s.step_type),
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
              "skills": s.get_skills(),
@@ -244,7 +247,7 @@ class FlowService:
                     "gates": s.get_gates(),
                     "ifs": s.get_ifs(),
                     "agent_alias": s.agent_alias or "normal",
-                    "step_type": _normalize_step_type(s.step_type or "code"),
+                    "step_type": _normalize_step_type(s.step_type),
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
@@ -278,8 +281,8 @@ class FlowService:
                     step_data["ifs"] = ifs
                 if s.agent_alias and s.agent_alias != "normal":
                     step_data["agent_alias"] = s.agent_alias
-                st = _normalize_step_type(s.step_type or "code")
-                if st != "code":
+                st = _normalize_step_type(s.step_type)
+                if st != "default":
                     step_data["step_type"] = st
                 if s.allow_max:
                     step_data["allow_max"] = True
@@ -331,7 +334,7 @@ class FlowService:
                         gates=_serialize_gates(step_data.get("gates")),
                         ifs=_serialize_json_list(step_data.get("ifs")),
                         agent_alias=step_data.get("agent_alias", "normal"),
-                        step_type=_normalize_step_type(step_data.get("step_type", "code")),
+                        step_type=_normalize_step_type(step_data.get("step_type")),
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
@@ -361,13 +364,13 @@ class FlowService:
 
         warnings: list[dict] = []
         for step in flow.steps:
-            st = _normalize_step_type(step.step_type or "code")
+            st = _normalize_step_type(step.step_type)
             alias_name = step.agent_alias or "normal"
 
             if st == "shell":
                 continue
 
-            alias_type = "chat" if st in ("chat", "manual") else st
+            alias_type = "code" if st == "code" else "pi"
             alias = self.session.query(AgentAlias).filter_by(
                 type=alias_type, name=alias_name,
             ).first()

@@ -218,25 +218,25 @@ Each step has a `step_type` that controls how the daemon handles it after the ag
 
 A normal agent step. The agent runs the prompt, and when it finishes the daemon evaluates gates. If gates pass, the flow advances to the next step automatically.
 
-### `"manual"`
+### `"hitl"` (human-in-the-loop)
 
 A step where the agent prepares output and then **pauses for user input**. The agent runs the prompt content as usual (e.g. proposing multiple implementation approaches, preparing a review checklist), but when the agent finishes, the daemon marks the step as "awaiting user" instead of evaluating gates. The step appears in the **Inbox** with a text input field where the user can respond before the flow continues. The user's response is passed to the **next** step as context.
 
-Use `"manual"` when the flow needs a human decision or action before proceeding -- e.g. choosing between approaches, approving a plan, visual review, manual QA, or providing additional input.
+Use `"hitl"` when the flow needs a human decision or action before proceeding -- e.g. choosing between approaches, approving a plan, visual review, manual QA, or providing additional input.
 
 ```json
 {
   "name": "propose-solutions",
   "position": 0,
-  "step_type": "manual",
+  "step_type": "hitl",
   "agent_alias": "high",
   "content": "# PROPOSE SOLUTIONS\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Explore the codebase\n2. Think of 2-3 distinct approaches\n3. Present them numbered and ask which one to implement"
 }
 ```
 
-### How manual steps flow
+### How hitl steps flow
 
-1. The daemon launches the agent with the step's content (same as `"agent"`)
+1. The daemon launches the agent with the step's content (same as a default step)
 2. The agent runs and produces output (e.g. a proposal or checklist)
 3. When the agent finishes, instead of evaluating gates, the daemon marks the step as **awaiting user**
 4. The step appears in the **Inbox** with the agent's output and a text input field
@@ -244,7 +244,7 @@ Use `"manual"` when the flow needs a human decision or action before proceeding 
 6. The daemon marks the step as completed and advances to the next step
 7. The next step receives the user's response as part of its context
 
-**One-shot mode is automatically disabled** when a flow contains any `"manual"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
+**One-shot mode is automatically disabled** when a flow contains any `"hitl"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
 
 ## Step Fields
 
@@ -255,7 +255,7 @@ Each step supports these fields in the JSON format:
 | `name` | required | Step identifier |
 | `position` | required | Sequential index starting at 0 |
 | `content` | required | Markdown prompt |
-| `step_type` | `"agent"` | Step type: `"agent"` or `"manual"` |
+| `step_type` | (default) | Step type: `"code"`, `"shell"`, or `"hitl"`. Omit for default Pi-powered steps. |
 | `agent_alias` | `"standard"` | Which agent config to use (e.g. `"fast"`, `"standard"`, `"high"`) |
 | `allow_max` | `false` | On the last gate retry, escalate to max-capability model |
 | `max_gate_retries` | `3` | How many times to retry a failed gate before failing the step |
@@ -371,7 +371,7 @@ Built-in flows (seeded on first run):
 
 Example flows in `flows/` directory:
 - **`ripper-5`** — 7-step research-driven flow with artifact passing and multiple gates
-- **`react-js`** — 6-step flow demonstrating prompt/manual steps: propose solutions (prompt) → execute → validate (gated) → take screenshots (gated) → manual review (manual) → commit (gated)
+- **`react-js`** — 6-step flow demonstrating prompt/hitl steps: propose solutions (prompt) → execute → validate (gated) → take screenshots (gated) → hitl review → commit (gated)
 
 Study these for patterns. Export them to see the full JSON:
 

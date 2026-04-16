@@ -10,12 +10,12 @@ export interface SpaceSettings {
   max_concurrent_tasks: number;
 }
 
-export type StepType = "code" | "chat" | "shell" | "manual";
+export type StepType = "default" | "code" | "shell" | "hitl";
 
 export interface AgentAlias {
   id: string;
   name: string;
-  type: "code" | "chat";
+  type: "code" | "pi";
   agent: string;
   model: string;
   position: number;
@@ -148,7 +148,7 @@ export interface InboxItem {
   inbox_id: string;
   step_run_id: string;
   step_name: string;
-  step_type: "manual";
+  step_type: "hitl";
   step_position: number;
   space_id: string;
   space_name: string;

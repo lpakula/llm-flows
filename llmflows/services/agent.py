@@ -145,6 +145,9 @@ class AgentService:
         if not reg:
             logger.error("Unknown agent backend: %s", agent)
             return False
+        if "binary" not in reg:
+            logger.error("Agent '%s' (type=%s) has no binary — cannot launch as subprocess", agent, reg.get("type"))
+            return False
 
         prompt_content = prompt_file.read_text()
 
@@ -153,12 +156,18 @@ class AgentService:
             env = os.environ.copy()
             env["IS_SANDBOX"] = "1"
 
+            from ..config import KNOWN_LLM_PROVIDERS
             from ..db.database import get_session
             from ..db.models import AgentConfig
             session = get_session()
             try:
                 for cfg in session.query(AgentConfig).filter_by(agent=agent).all():
                     env[cfg.key] = cfg.value
+                if agent == "pi":
+                    for provider in KNOWN_LLM_PROVIDERS:
+                        for cfg in session.query(AgentConfig).filter_by(agent=provider).all():
+                            if cfg.key not in env or not env[cfg.key]:
+                                env[cfg.key] = cfg.value
             finally:
                 session.close()
 
@@ -198,17 +207,6 @@ class AgentService:
                    "--output-format", "stream-json", "--verbose",
                    "--dangerously-skip-permissions"]
             if model:
-                cmd.extend(["--model", model])
-            return cmd
-
-        if binary == "codex":
-            cmd = ["codex", "exec", "--json", prompt_content]
-            return cmd
-
-        if binary == "qwen":
-            cmd = ["qwen", "-p", prompt_content, "-y",
-                   "--output-format", "stream-json"]
-            if model and model != "default":
                 cmd.extend(["--model", model])
             return cmd
 

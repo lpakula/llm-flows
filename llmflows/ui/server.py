@@ -696,6 +696,44 @@ async def get_run_steps(run_id: str):
         session.close()
 
 
+def _filter_pi_event(event: dict) -> dict | None:
+    """Filter Pi NDJSON events. Returns cleaned event or None to skip.
+
+    Pi wraps role-based events inside ``{"type": "message_*", "message": {...}}``.
+    We unwrap and filter at the message level.
+    """
+    etype = event.get("type")
+    if etype in ("agent_start", "turn_start", "turn_end", "message_start", "message_update"):
+        return None
+    if etype == "agent_end":
+        return {"type": "agent_end"}
+    if etype in ("session", "tool_execution_start", "tool_execution_end"):
+        return event
+    if etype == "message_end":
+        msg = event.get("message", {})
+        role = msg.get("role")
+        if role == "user":
+            return None
+        if role == "assistant":
+            return msg
+        if role == "toolResult":
+            return msg
+        return None
+
+    role = event.get("role")
+    if role == "user":
+        return None
+    if role == "assistant":
+        if event.get("stopReason") or event.get("textSignature"):
+            return event
+        return None
+    if role == "toolResult":
+        return event if "timestamp" in event else None
+    if role:
+        return None
+    return event
+
+
 @app.get("/api/step-runs/{step_run_id}/logs")
 async def stream_step_run_logs(step_run_id: str):
     """SSE endpoint that tails a StepRun's log file."""
@@ -735,7 +773,10 @@ async def stream_step_run_logs(step_run_id: str):
                             continue
                         try:
                             event = json.loads(line)
-                            yield f"data: {json.dumps(event)}\n\n"
+                            filtered = _filter_pi_event(event)
+                            if filtered is None:
+                                continue
+                            yield f"data: {json.dumps(filtered)}\n\n"
                         except json.JSONDecodeError:
                             yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
                     pos = f.tell()
@@ -791,7 +832,10 @@ async def stream_run_logs(run_id: str):
                             continue
                         try:
                             event = json.loads(line)
-                            yield f"data: {json.dumps(event)}\n\n"
+                            filtered = _filter_pi_event(event)
+                            if filtered is None:
+                                continue
+                            yield f"data: {json.dumps(filtered)}\n\n"
                         except json.JSONDecodeError:
                             yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
                     pos = f.tell()
@@ -960,15 +1004,14 @@ async def get_inbox():
                 if not run or not space:
                     continue
 
-                step_type = "agent"
+                step_type = "default"
                 if run.flow_snapshot:
                     try:
                         snap = json.loads(run.flow_snapshot)
                         for s in snap.get("steps", []):
                             if s["name"] == sr.step_name:
-                                step_type = s.get("step_type", "code")
-                                if step_type == "agent":
-                                    step_type = "code"
+                                raw = s.get("step_type", "")
+                                step_type = raw if raw in ("code", "shell", "hitl") else "default"
                                 break
                     except (ValueError, KeyError, TypeError):
                         pass
@@ -1372,7 +1415,7 @@ async def providers_status():
     try:
         result = {}
         for name, reg in AGENT_REGISTRY.items():
-            if reg.get("type") != "chat":
+            if reg.get("type") != "provider":
                 continue
             api_key_env = reg.get("api_key_env", "")
             has_key = False
@@ -1385,7 +1428,6 @@ async def providers_status():
                 "label": reg["label"],
                 "api_key_env": api_key_env,
                 "configured": has_key,
-                "supports_tools": reg.get("supports_tools", []),
             }
         return result
     finally:

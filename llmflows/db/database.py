@@ -38,7 +38,7 @@ def _seed_agent_aliases(session):
     if session.query(AgentAlias).count() > 0:
         return
     pos = 0
-    for alias_type in ("code", "chat"):
+    for alias_type in ("code", "pi"):
         default_agent = None
         default_tiers = None
         for agent_key, reg in AGENT_REGISTRY.items():

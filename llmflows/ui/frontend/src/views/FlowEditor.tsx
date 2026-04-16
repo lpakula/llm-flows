@@ -5,10 +5,10 @@ import { useApp } from "@/App";
 import type { Flow, FlowStep, FlowWarning, Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
 
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
+  { value: "default", label: "Default", desc: "Pi-powered LLM with read/write/shell tools" },
   { value: "code", label: "Code", desc: "Coding agent (Cursor, Claude Code, etc.)" },
-  { value: "chat", label: "Chat", desc: "Direct LLM API call" },
   { value: "shell", label: "Shell", desc: "Run a shell command" },
-  { value: "manual", label: "Manual", desc: "LLM + human approval" },
+  { value: "hitl", label: "HITL (human in the loop)", desc: "LLM + human approval" },
 ];
 
 const AVAILABLE_TOOLS = ["web_search"];
@@ -177,12 +177,12 @@ function StepEditForm({
   extraBefore?: ReactNode;
 }) {
   const st = form.step_type as StepType;
-  const aliasType = (st === "manual" || st === "chat") ? "chat" : st;
+  const aliasType = st === "code" ? "code" : "pi";
   const filteredAliases = aliases.filter((a) => a.type === aliasType);
   const showAlias = st !== "shell";
   const showSkills = st === "code";
-  const showAllowMax = st === "code";
-  const showTools = st === "chat" || st === "manual";
+  const hasGates = form.gates.length > 0;
+  const showTools = false;
 
   return (
     <div className="p-5 space-y-4">
@@ -237,7 +237,8 @@ function StepEditForm({
         onChange={(gates) => onChange({ gates })}
       />
 
-      <div className="pl-3 border-l border-gray-700 space-y-3">
+      {hasGates && (
+        <div className="pl-3 border-l border-gray-700 space-y-3">
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">Max Retries</label>
             <input
@@ -250,23 +251,20 @@ function StepEditForm({
               If a gate fails, the step is re-run. This sets how many times that cycle repeats before the run is marked as failed.
             </p>
           </div>
-          {showAllowMax && (
-            <>
-              <label className="flex items-center gap-2 text-sm text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={form.allow_max}
-                  onChange={(e) => onChange({ allow_max: e.target.checked })}
-                  className="rounded"
-                />
-                Allow max
-              </label>
-              <p className="text-xs text-gray-600">
-                On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
-              </p>
-            </>
-          )}
+          <label className="flex items-center gap-2 text-sm text-gray-400">
+            <input
+              type="checkbox"
+              checked={form.allow_max}
+              onChange={(e) => onChange({ allow_max: e.target.checked })}
+              className="rounded"
+            />
+            Allow max
+          </label>
+          <p className="text-xs text-gray-600">
+            On the final retry, escalate to the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model) instead of the step's default alias.
+          </p>
         </div>
+      )}
 
       <div className="flex items-center gap-4">
         <div>
@@ -302,12 +300,15 @@ function StepEditForm({
                 <option value="normal">normal (not configured)</option>
               )}
             </select>
+            <p className="text-xs text-gray-600 mt-1">
+              Agent/model tier for this step
+            </p>
           </div>
         )}
       </div>
-      {st === "manual" && (
+      {st === "hitl" && (
         <p className="text-xs text-amber-500/80">
-          LLM generates content for the user, then the step pauses and waits for a response.
+          LLM generates content, then the step pauses and waits for human input before continuing.
         </p>
       )}
 
@@ -340,13 +341,13 @@ export function FlowEditorView() {
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [stepForm, setStepForm] = useState({
     name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "normal", step_type: "code" as string, allow_max: false, max_gate_retries: 3,
+    agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
     skills: [] as string[], tools: [] as string[],
   });
   const [showAddStep, setShowAddStep] = useState(false);
   const [newStep, setNewStep] = useState({
     name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "normal", step_type: "code" as string, allow_max: false, max_gate_retries: 3,
+    agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
     skills: [] as string[], tools: [] as string[],
   });
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
@@ -389,7 +390,7 @@ export function FlowEditorView() {
       gates: (step.gates || []).map((g) => ({ ...g })),
       ifs: (step.ifs || []).map((g) => ({ ...g })),
       agent_alias: step.agent_alias || "normal",
-      step_type: (step.step_type as string) === "agent" ? "code" : (step.step_type || "code"),
+      step_type: step.step_type || "default",
       allow_max: step.allow_max || false,
       max_gate_retries: step.max_gate_retries ?? 3,
       skills: step.skills || [],
@@ -433,7 +434,7 @@ export function FlowEditorView() {
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
     await api.addStep(flow.id, body);
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "code", allow_max: false, max_gate_retries: 3, skills: [], tools: [] });
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "default", allow_max: false, max_gate_retries: 3, skills: [], tools: [] });
     setShowAddStep(false);
     load();
   };
@@ -634,12 +635,11 @@ export function FlowEditorView() {
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-medium text-white">{step.name}</h4>
                       <span className={`text-[10px] ${
-                        step.step_type === "code" || (step.step_type as string) === "agent" ? "text-blue-400" :
-                        step.step_type === "chat" ? "text-emerald-400" :
+                        step.step_type === "code" ? "text-blue-400" :
                         step.step_type === "shell" ? "text-orange-400" :
-                        step.step_type === "manual" ? "text-amber-400" : "text-gray-400"
+                        step.step_type === "hitl" ? "text-amber-400" : "text-gray-400"
                       }`}>
-                        {(step.step_type as string) === "agent" ? "code" : step.step_type}
+                        {step.step_type === "default" || !step.step_type ? "" : step.step_type}
                       </span>
                       {step.agent_alias && step.step_type !== "shell" && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>

@@ -92,7 +92,7 @@ function RunRow({
               Stop
             </button>
           )}
-          {status === "completed" && (
+          {(status === "completed" || status === "errored") && (
             <button
               onClick={() => onDelete(run)}
               className="text-xs text-gray-600 hover:text-red-400 transition opacity-0 group-hover:opacity-100"
@@ -153,7 +153,7 @@ function RunCard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {status === "completed" && (
+          {(status === "completed" || status === "errored") && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(run); }}
               className="text-xs text-gray-600 hover:text-red-400 transition opacity-0 group-hover:opacity-100"

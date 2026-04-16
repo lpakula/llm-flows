@@ -143,7 +143,7 @@ def alias_group():
 
 @alias_group.command("list")
 @click.option("--type", "-t", "type_filter", default=None,
-              type=click.Choice(["code", "chat"]),
+              type=click.Choice(["code", "pi"]),
               help="Filter by type")
 def alias_list(type_filter):
     """List all configured aliases.
@@ -196,15 +196,15 @@ def alias_list(type_filter):
 @alias_group.command("update")
 @click.argument("tier")
 @click.option("--type", "-t", "alias_type", required=True,
-              type=click.Choice(["code", "chat"]),
-              help="Alias type (code or chat)")
+              type=click.Choice(["code", "pi"]),
+              help="Alias type (code or pi)")
 @click.option("--agent", "-a", "agent_name", default=None, help="New agent/provider")
 @click.option("--model", "-m", default=None, help="New model")
 def alias_update(tier, alias_type, agent_name, model):
     """Update agent/model on a pre-defined alias tier.
 
     Examples:
-      llmflows agent alias update normal --type chat --agent anthropic --model claude-sonnet-4
+      llmflows agent alias update normal --type pi --agent pi --model anthropic/claude-sonnet-4-5
       llmflows agent alias update max --type code --agent claude-code --model opus
     """
     from ..db.models import AgentAlias

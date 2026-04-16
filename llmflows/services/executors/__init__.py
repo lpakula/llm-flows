@@ -13,18 +13,12 @@ def get_executor(step_type: str) -> StepExecutor:
     if step_type == "code":
         from .code import CodeExecutor
         executor = CodeExecutor()
-    elif step_type == "chat":
-        from .llm import LLMExecutor
-        executor = LLMExecutor()
     elif step_type == "shell":
         from .shell import ShellExecutor
         executor = ShellExecutor()
-    elif step_type == "manual":
-        from .manual import ManualExecutor
-        executor = ManualExecutor()
     else:
-        from .code import CodeExecutor
-        executor = CodeExecutor()
+        from .pi import PiExecutor
+        executor = PiExecutor()
 
     _executor_cache[step_type] = executor
     return executor

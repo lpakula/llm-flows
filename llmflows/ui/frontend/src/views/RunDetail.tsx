@@ -267,12 +267,12 @@ export function RunDetailView() {
                             : "border"
                         } ${attempts[0] ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                       >
-                        {step.step_type === "manual" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
+                        {step.step_type === "hitl" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
                         {stepLabel}
-                        {step.step_type && step.step_type !== "code" && step.step_type !== "agent" && step.step_type !== "manual" && (
+                        {step.step_type && step.step_type !== "default" && step.step_type !== "code" && (
                           <span className={`ml-1 text-[9px] ${
-                            step.step_type === "chat" ? "text-emerald-400" :
-                            step.step_type === "shell" ? "text-orange-400" : "text-gray-400"
+                            step.step_type === "shell" ? "text-orange-400" :
+                            step.step_type === "hitl" ? "text-amber-400" : "text-gray-400"
                           }`}>{step.step_type}</span>
                         )}
                         {step.has_ifs && <span className="ml-1 text-purple-400 font-medium">if</span>}
@@ -345,7 +345,7 @@ export function RunDetailView() {
                 <textarea
                   value={respondingStep?.stepRunId === awaitingStep.step_run!.id ? respondText : ""}
                   onChange={(e) => {
-                    setRespondingStep({ stepRunId: awaitingStep.step_run!.id, stepType: "manual" });
+                    setRespondingStep({ stepRunId: awaitingStep.step_run!.id, stepType: "hitl" });
                     setRespondText(e.target.value);
                   }}
                   onKeyDown={(e) => {

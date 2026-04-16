@@ -1,20 +1,11 @@
 # SUMMARIZE
 
-## PURPOSE
-
-Review all work done across previous steps and produce a final summary.
-
-## WORKFLOW
-
-1. Review the `_result.md` files and other artifacts from previous steps provided above
-2. Write a summary to `{{ artifacts_dir }}/summary.md` containing:
-   - **What was done** — brief description of the overall goal accomplished
-   - **Changes** — list of files changed with `path/to/file` and what changed
-   - **Notes** — any decisions, trade-offs, issues encountered, or remaining work
-3. Use markdown formatting with bullet points and backtick file paths
+Read all previous step results above as a whole. Write a single, concise markdown summary to `{{ artifacts_dir }}/summary.md`. Do not summarize each step separately. Then stop.
 
 ## RULES
 
-- Be specific about file names and changes
+- Write in markdown format with headers, lists, and emphasis as appropriate
+- Treat all steps as one coherent story, not a list of individual steps
+- Focus on the substance and outcome, not the process
 - Keep it concise but complete
 - After writing the summary file, stop
