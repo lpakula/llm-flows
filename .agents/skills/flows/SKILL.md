@@ -330,8 +330,8 @@ Flows can declare requirements — tools and variables they need to function. Re
 
 ```json
 {
-  "name": "crypto-news",
-  "description": "Fetch the latest crypto news.",
+  "name": "ai-news",
+  "description": "Fetch the latest AI news.",
   "requirements": {
     "tools": ["web_search"],
     "variables": ["API_KEY"]
@@ -499,8 +499,8 @@ When a step consumes output from a previous step, describe the format explicitly
   "version": 1,
   "flows": [
     {
-      "name": "crypto-news",
-      "description": "Fetch the latest crypto news from CoinDesk, store each article, then summarize.",
+      "name": "ai-news",
+      "description": "Fetch the latest AI news from TechCrunch, store each article, then summarize.",
       "requirements": {
         "tools": ["web_search"]
       },

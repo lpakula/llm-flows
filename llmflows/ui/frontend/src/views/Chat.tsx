@@ -12,8 +12,8 @@ interface Message {
 
 const SAMPLE_QUESTIONS = [
   "How does llm-flows work?",
-  "I want to build a flow",
-  "What are gates and IFs?",
+  "What is a flow?",
+  "Help me build a flow",
   "Show me a flow example",
 ];
 
@@ -54,17 +54,23 @@ function WelcomeScreen({ onSend }: { onSend: (q: string) => void }) {
         <p className="text-sm text-gray-500 mb-8">
           I can explain how llm-flows works and build automations for you.
         </p>
-        <div className="grid grid-cols-2 gap-2.5">
-          {SAMPLE_QUESTIONS.map((q) => (
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          {SAMPLE_QUESTIONS.filter((q) => q !== "Help me build a flow").map((q) => (
             <button
               key={q}
               onClick={() => onSend(q)}
-              className="text-left text-sm text-gray-300 bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 hover:border-gray-600 rounded-lg px-4 py-3 transition"
+              className="text-left text-xs text-gray-400 bg-gray-800/40 hover:bg-gray-800 border border-gray-700/40 hover:border-gray-600 rounded-lg px-3 py-2.5 transition"
             >
               {q}
             </button>
           ))}
         </div>
+        <button
+          onClick={() => onSend("Help me build a flow")}
+          className="w-full text-left text-sm text-white bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 hover:border-blue-500/60 rounded-lg px-4 py-3.5 transition font-medium"
+        >
+          Help me build a flow
+        </button>
       </div>
     </div>
   );

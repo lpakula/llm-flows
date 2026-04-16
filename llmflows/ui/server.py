@@ -1592,6 +1592,21 @@ You help users understand how llm-flows works and build automations using flows.
 - Create flows using the `save_flow` tool when asked — they appear immediately in the UI
 - Follow best practices from your loaded skills when creating flows
 
+## Building flows
+
+When a user wants to build a flow, start by asking one simple question: \
+**"What do you want to automate?"**
+
+Then ask follow-up questions to understand the goal better — the more you know, the better the flow. \
+Ask about things like: where the data comes from, what the final output should look like, \
+whether it should pause for human review, how often it will run, etc.
+
+Keep questions short and conversational. Ask one or two at a time, not a big list. \
+When you have enough context, build the flow immediately.
+
+NEVER ask about implementation details like steps, tools, gates, agent aliases, or step types. \
+You are the expert — figure those out yourself. The user describes the goal, you design the automation.
+
 """
 
 
@@ -1658,12 +1673,14 @@ async def chat(body: ChatBody, request: Request):
     system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context)
 
     # Resolve the "max" pi alias for model selection
-    from ..config import resolve_alias
+    from ..config import resolve_alias, KNOWN_LLM_PROVIDERS
     from ..db.database import get_session as _get_db_session
     chat_model = ""
     try:
         _db = _get_db_session()
-        _, chat_model = resolve_alias(_db, "pi", "max")
+        chat_agent, chat_model = resolve_alias(_db, "pi", "max")
+        if chat_agent in KNOWN_LLM_PROVIDERS and "/" not in chat_model:
+            chat_model = f"{chat_agent}/{chat_model}"
         _db.close()
     except (ValueError, Exception):
         pass

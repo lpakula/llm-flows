@@ -16,11 +16,49 @@ import { Type } from "@sinclair/typebox";
 const PROVIDER = (process.env.LLMFLOWS_WEB_SEARCH_PROVIDER || "duckduckgo").toLowerCase();
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY || "";
 
+// ── Concurrency limiter to avoid rate-limit bans ──────────────────────
+
+const MAX_CONCURRENT = 2;
+let running = 0;
+const queue: (() => void)[] = [];
+
+function acquireSlot(): Promise<void> {
+  if (running < MAX_CONCURRENT) {
+    running++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => queue.push(() => { running++; resolve(); }));
+}
+
+function releaseSlot() {
+  running--;
+  const next = queue.shift();
+  if (next) next();
+}
+
+async function withThrottle<T>(fn: () => Promise<T>): Promise<T> {
+  await acquireSlot();
+  try { return await fn(); } finally { releaseSlot(); }
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+      if (res.ok || res.status < 500) return res;
+    } catch (e) {
+      if (i === retries) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+  }
+  throw new Error("fetch failed after retries");
+}
+
 // ── DuckDuckGo (HTML lite) ────────────────────────────────────────────
 
 async function searchDuckDuckGo(query: string, count: number): Promise<string> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -68,7 +106,7 @@ async function searchBrave(query: string, count: number): Promise<string> {
   if (!BRAVE_API_KEY) return "Error: BRAVE_API_KEY is not configured.";
 
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     headers: {
       Accept: "application/json",
       "Accept-Encoding": "gzip",
@@ -173,12 +211,12 @@ export default function activate(api: any) {
       params: { query: string; count?: number },
     ) {
       const count = Math.min(Math.max(params.count ?? 5, 1), 10);
-      let text: string;
-      if (PROVIDER === "brave") {
-        text = await searchBrave(params.query, count);
-      } else {
-        text = await searchDuckDuckGo(params.query, count);
-      }
+      const text = await withThrottle(async () => {
+        if (PROVIDER === "brave") {
+          return searchBrave(params.query, count);
+        }
+        return searchDuckDuckGo(params.query, count);
+      });
       return { content: [{ type: "text", text }] };
     },
   });
@@ -204,7 +242,7 @@ export default function activate(api: any) {
       params: { url: string; max_chars?: number },
     ) {
       const maxChars = params.max_chars ?? 20000;
-      const text = await fetchUrl(params.url, maxChars);
+      const text = await withThrottle(() => fetchUrl(params.url, maxChars));
       return { content: [{ type: "text", text }] };
     },
   });

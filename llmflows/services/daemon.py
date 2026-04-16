@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..config import load_system_config, resolve_alias
+from ..config import load_system_config, resolve_alias, KNOWN_LLM_PROVIDERS
 from ..db.database import get_session, reset_engine
 from ..db.models import Space
 from .agent import AgentService
@@ -649,6 +649,9 @@ class Daemon:
         alias_type = "code" if step_type == "code" else "pi"
         try:
             resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_type, alias_name)
+            if alias_type == "pi" and resolved_agent in KNOWN_LLM_PROVIDERS and "/" not in resolved_model:
+                resolved_model = f"{resolved_agent}/{resolved_model}"
+                resolved_agent = "pi"
         except ValueError:
             resolved_agent = "cursor" if alias_type == "code" else "pi"
             resolved_model = ""

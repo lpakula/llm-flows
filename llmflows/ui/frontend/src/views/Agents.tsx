@@ -78,15 +78,28 @@ function InlineAliasTier({
   isChatType: boolean;
   onSave: (id: string, agent: string, model: string) => void;
 }) {
-  const [agent, setAgent] = useState(alias.agent);
-  const [model, setModel] = useState(alias.model);
+  const isPi = alias.type === "pi";
+
+  const splitProviderModel = (a: string, m: string): [string, string] => {
+    if (isPi) {
+      const slash = m.indexOf("/");
+      if (slash > 0) return [m.slice(0, slash), m.slice(slash + 1)];
+      return [agentOptions[0] ?? "", m];
+    }
+    return [a, m];
+  };
+
+  const [resolved] = useState(() => splitProviderModel(alias.agent, alias.model));
+  const [agent, setAgent] = useState(resolved[0]);
+  const [model, setModel] = useState(resolved[1]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const hasOptions = agentOptions.length > 0;
 
   useEffect(() => {
-    setAgent(alias.agent);
-    setModel(alias.model);
+    const [a, m] = splitProviderModel(alias.agent, alias.model);
+    setAgent(a);
+    setModel(m);
     setDirty(false);
   }, [alias.agent, alias.model]);
 
@@ -102,7 +115,11 @@ function InlineAliasTier({
   const save = async () => {
     if (!agent.trim() || !model.trim()) return;
     setSaving(true);
-    await onSave(alias.id, agent, model);
+    if (isPi) {
+      await onSave(alias.id, "pi", `${agent}/${model}`);
+    } else {
+      await onSave(alias.id, agent, model);
+    }
     setDirty(false);
     setSaving(false);
   };
@@ -328,6 +345,12 @@ export function AgentsView() {
       for (const a of ag) {
         modelMap[a] = await api.listModels(a);
       }
+      const allKeys = [...ag, ...Object.keys(await api.getProvidersStatus())];
+      for (const k of allKeys) {
+        if (!modelMap[k]) {
+          try { modelMap[k] = await api.listModels(k); } catch { modelMap[k] = []; }
+        }
+      }
       setModels(modelMap);
     } catch (e) {
       console.error("Failed to load aliases:", e);
@@ -439,8 +462,8 @@ export function AgentsView() {
                               key={a.id}
                               alias={a}
                               agentOptions={configuredProviders}
-                              modelOptions={{}}
-                              isChatType={true}
+                              modelOptions={models}
+                              isChatType={false}
                               onSave={saveAlias}
                             />
                           ))}
