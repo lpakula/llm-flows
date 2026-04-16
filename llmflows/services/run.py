@@ -185,6 +185,7 @@ class RunService:
 
     def mark_step_completed(
         self, step_run_id: str, outcome: str = "completed",
+        cost_usd: float | None = None, token_count: int | None = None,
     ) -> Optional[StepRun]:
         """Mark a StepRun as completed."""
         sr = self.session.query(StepRun).filter_by(id=step_run_id).first()
@@ -192,6 +193,10 @@ class RunService:
             return None
         sr.completed_at = datetime.now(timezone.utc)
         sr.outcome = outcome
+        if cost_usd is not None:
+            sr.cost_usd = cost_usd
+        if token_count is not None:
+            sr.token_count = token_count
         self.session.commit()
         return sr
 

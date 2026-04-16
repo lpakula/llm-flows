@@ -696,7 +696,24 @@ async def get_run_steps(run_id: str):
         session.close()
 
 
-def _filter_pi_event(event: dict) -> dict | None:
+class _PiLogState:
+    """Tracks accumulated cost/tokens across Pi events in a single log stream."""
+    __slots__ = ("total_cost", "total_tokens")
+
+    def __init__(self):
+        self.total_cost = 0.0
+        self.total_tokens = 0
+
+    def accumulate(self, event: dict) -> None:
+        if event.get("type") == "message_end":
+            msg = event.get("message", {})
+            usage = msg.get("usage", {})
+            cost = usage.get("cost", {})
+            self.total_cost += cost.get("total", 0) or 0
+            self.total_tokens += usage.get("totalTokens", 0) or 0
+
+
+def _filter_pi_event(event: dict, state: _PiLogState) -> dict | None:
     """Filter Pi NDJSON events. Returns cleaned event or None to skip.
 
     Pi wraps role-based events inside ``{"type": "message_*", "message": {...}}``.
@@ -705,8 +722,14 @@ def _filter_pi_event(event: dict) -> dict | None:
     etype = event.get("type")
     if etype in ("agent_start", "turn_start", "turn_end", "message_start", "message_update"):
         return None
+    if etype == "message_end":
+        state.accumulate(event)
     if etype == "agent_end":
-        return {"type": "agent_end"}
+        result: dict = {"type": "agent_end"}
+        if state.total_cost > 0 or state.total_tokens > 0:
+            result["cost"] = round(state.total_cost, 6)
+            result["tokens"] = state.total_tokens
+        return result
     if etype in ("session", "tool_execution_start", "tool_execution_end"):
         return event
     if etype == "message_end":
@@ -756,6 +779,7 @@ async def stream_step_run_logs(step_run_id: str):
     async def tail_log():
         pos = 0
         idle_count = 0
+        pi_state = _PiLogState()
         max_idle = 5 if is_completed else 120
         while idle_count < max_idle:
             try:
@@ -773,7 +797,7 @@ async def stream_step_run_logs(step_run_id: str):
                             continue
                         try:
                             event = json.loads(line)
-                            filtered = _filter_pi_event(event)
+                            filtered = _filter_pi_event(event, pi_state)
                             if filtered is None:
                                 continue
                             yield f"data: {json.dumps(filtered)}\n\n"
@@ -815,6 +839,7 @@ async def stream_run_logs(run_id: str):
     async def tail_log():
         pos = 0
         idle_count = 0
+        pi_state = _PiLogState()
         max_idle = 120
         while idle_count < max_idle:
             try:
@@ -832,7 +857,7 @@ async def stream_run_logs(run_id: str):
                             continue
                         try:
                             event = json.loads(line)
-                            filtered = _filter_pi_event(event)
+                            filtered = _filter_pi_event(event, pi_state)
                             if filtered is None:
                                 continue
                             yield f"data: {json.dumps(filtered)}\n\n"

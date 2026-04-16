@@ -22,6 +22,32 @@ from .run import RunService
 logger = logging.getLogger("llmflows.daemon")
 
 
+def _extract_pi_cost(log_path: Path) -> tuple[float, int]:
+    """Parse a Pi NDJSON log file and return (total_cost_usd, total_tokens)."""
+    total_cost = 0.0
+    total_tokens = 0
+    try:
+        with open(log_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if ev.get("type") != "message_end":
+                    continue
+                msg = ev.get("message", {})
+                usage = msg.get("usage", {})
+                cost = usage.get("cost", {})
+                total_cost += cost.get("total", 0) or 0
+                total_tokens += usage.get("totalTokens", 0) or 0
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return round(total_cost, 6), total_tokens
+
+
 class Daemon:
     def __init__(self):
         self.running = False
@@ -281,6 +307,13 @@ class Daemon:
         if step_artifacts.is_dir():
             self._publish_attachments(step_artifacts, run.id)
 
+        if step_run.agent == "pi" and step_run.log_path:
+            c, t = _extract_pi_cost(Path(step_run.log_path))
+            if c or t:
+                step_run.cost_usd = c or None
+                step_run.token_count = t or None
+                run_svc.session.commit()
+
         if step_type == "hitl":
             run_svc.mark_awaiting_user(step_run.id)
             inbox_item = run_svc.create_inbox_item(
@@ -312,10 +345,19 @@ class Daemon:
             })
             return
 
-        run_svc.mark_step_completed(step_run.id, outcome="completed")
+        cost_usd, token_count = None, None
+        if step_run.agent == "pi" and step_run.log_path:
+            cost_usd, token_count = _extract_pi_cost(Path(step_run.log_path))
+            cost_usd = cost_usd or None
+            token_count = token_count or None
+        run_svc.mark_step_completed(
+            step_run.id, outcome="completed",
+            cost_usd=cost_usd, token_count=token_count,
+        )
         logger.info(
-            "Run %s step '%s' completed",
+            "Run %s step '%s' completed%s",
             run.id, step_run.step_name,
+            f" (${cost_usd:.4f}, {token_count} tokens)" if cost_usd else "",
         )
 
         if step_run.step_name == "__one_shot__":

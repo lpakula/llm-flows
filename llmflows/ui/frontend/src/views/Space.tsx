@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import type { FlowRun, Flow, SpaceSettings } from "@/api/types";
-import { statusBadge, statusDot, displayStatus, duration, formatSeconds } from "@/lib/format";
+import { statusBadge, statusDot, displayStatus, duration, formatSeconds, formatCost } from "@/lib/format";
 import { ScheduleModal } from "@/components/RunModal";
 import { Play } from "lucide-react";
 
@@ -82,6 +82,9 @@ function RunRow({
       <td className="px-3 py-2.5 whitespace-nowrap text-gray-500 text-xs tabular-nums">
         {dur !== "-" && dur !== "—" ? dur : <span className="text-gray-700">—</span>}
       </td>
+      <td className="px-3 py-2.5 whitespace-nowrap text-gray-500 text-xs tabular-nums">
+        {run.cost_usd ? formatCost(run.cost_usd) : <span className="text-gray-700">—</span>}
+      </td>
       <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-2">
           {(status === "in_progress" || status === "queue") && (
@@ -150,6 +153,9 @@ function RunCard({
           </span>
           {dur !== "-" && dur !== "—" && (
             <span className="text-[10px] text-gray-700 tabular-nums">{dur}</span>
+          )}
+          {run.cost_usd != null && run.cost_usd > 0 && (
+            <span className="text-[10px] text-gray-700 tabular-nums">{formatCost(run.cost_usd)}</span>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -295,6 +301,7 @@ export function SpaceView() {
                 <th className="px-3 py-2 font-medium">Step</th>
                 <th className="px-3 py-2 font-medium">Started</th>
                 <th className="px-3 py-2 font-medium">Duration</th>
+                <th className="px-3 py-2 font-medium">Cost</th>
                 <th className="px-3 py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>
@@ -319,12 +326,12 @@ export function SpaceView() {
                           </span>
                         </div>
                       </td>
-                      <td colSpan={6} />
+                      <td colSpan={7} />
                     </tr>
                     {!isCollapsed && (
                       group.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-4 py-4 text-center text-gray-700">
+                          <td colSpan={8} className="px-4 py-4 text-center text-gray-700">
                             No runs
                           </td>
                         </tr>

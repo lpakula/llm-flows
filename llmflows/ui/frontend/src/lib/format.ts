@@ -22,6 +22,12 @@ export function formatSeconds(totalSeconds: number | null | undefined): string {
   return h + "h " + (m % 60) + "m";
 }
 
+export function formatCost(usd: number | null | undefined): string {
+  if (usd == null || usd === 0) return "";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 export function statusBadge(status: string): string {
   return (
     ({

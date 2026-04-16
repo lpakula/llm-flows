@@ -7,7 +7,7 @@ import { useLogStream } from "@/hooks/useEventSource";
 import { LogViewer } from "@/components/LogViewer";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import type { FlowRun, StepRunInfo, GateFailure } from "@/api/types";
-import { statusBadge, displayStatus, duration, formatSeconds, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
+import { statusBadge, displayStatus, duration, formatSeconds, formatCost, stepBoxClass, stepConnectorClass, statusDot } from "@/lib/format";
 import { UserCheck, Check } from "lucide-react";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { AttachmentsGrid } from "@/components/AttachmentsGrid";
@@ -40,6 +40,7 @@ export function RunDetailView() {
   const [viewingStepPrompt, setViewingStepPrompt] = useState<string | null>(null);
   const [viewingStepAgentModel, setViewingStepAgentModel] = useState<{ agent: string; model: string } | null>(null);
   const [viewingStepDuration, setViewingStepDuration] = useState<number | null>(null);
+  const [viewingStepCost, setViewingStepCost] = useState<number | null>(null);
   const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
   const [agentLogExpanded, setAgentLogExpanded] = useState(true);
 
@@ -91,6 +92,7 @@ export function RunDetailView() {
           model: activeStep.step_run.model || "",
         });
         setViewingStepDuration(activeStep.step_run.duration_seconds ?? null);
+        setViewingStepCost(activeStep.step_run.cost_usd ?? null);
       }
     };
     init();
@@ -109,6 +111,7 @@ export function RunDetailView() {
       model: step.step_run.model || "",
     });
     setViewingStepDuration(step.step_run.duration_seconds ?? null);
+    setViewingStepCost(step.step_run.cost_usd ?? null);
     setViewingGateFailures(step.step_run.gate_failures || []);
   };
 
@@ -134,6 +137,7 @@ export function RunDetailView() {
     setViewingStepPrompt(null);
     setViewingStepAgentModel(null);
     setViewingStepDuration(null);
+    setViewingStepCost(null);
     setSelectedAttempt(null);
     setViewingGateFailures([]);
     setAgentLogExpanded(true);
@@ -191,6 +195,11 @@ export function RunDetailView() {
               {run.duration_seconds != null && (
                 <PropField label="Duration">
                   <span className="text-sm text-gray-400 tabular-nums">{formatSeconds(run.duration_seconds)}</span>
+                </PropField>
+              )}
+              {run.cost_usd != null && run.cost_usd > 0 && (
+                <PropField label="Cost">
+                  <span className="text-sm text-gray-400 tabular-nums">{formatCost(run.cost_usd)}</span>
                 </PropField>
               )}
             </div>
@@ -259,6 +268,7 @@ export function RunDetailView() {
                           setViewingStepPrompt(first.prompt || null);
                           setViewingStepAgentModel({ agent: first.agent || "", model: first.model || "" });
                           setViewingStepDuration(first.duration_seconds ?? null);
+                          setViewingStepCost(first.cost_usd ?? null);
                           setViewingGateFailures(attempts[1]?.gate_failures || []);
                         }}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : step.status)} ${
@@ -290,6 +300,7 @@ export function RunDetailView() {
                               setViewingStepPrompt(att.prompt || null);
                               setViewingStepAgentModel({ agent: att.agent || "", model: att.model || "" });
                               setViewingStepDuration(att.duration_seconds ?? null);
+                              setViewingStepCost(att.cost_usd ?? null);
                               const nextAtt = attempts[j + 2];
                               setViewingGateFailures(nextAtt?.gate_failures || []);
                             }}
@@ -396,6 +407,7 @@ export function RunDetailView() {
                   setViewingStepPrompt(null);
                   setViewingStepAgentModel(null);
                   setViewingStepDuration(null);
+                  setViewingStepCost(null);
                   setSelectedAttempt(null);
                   setViewingGateFailures([]);
                   setAgentLogExpanded(true);
@@ -416,14 +428,23 @@ export function RunDetailView() {
                 </span>
               </div>
             )}
-            {viewingStepDuration != null && (
+            {(viewingStepDuration != null || viewingStepCost != null) && (
               <div className="px-5 py-2 flex items-center gap-2 border-b border-gray-800/80">
                 <span className="w-4 flex justify-center shrink-0" aria-hidden />
                 <span className="text-[10px] uppercase tracking-wide text-gray-500 truncate">
-                  DURATION:{" "}
-                  <span className="text-gray-200 font-mono normal-case">
-                    {formatSeconds(viewingStepDuration)}
-                  </span>
+                  {viewingStepDuration != null && (<>
+                    DURATION:{" "}
+                    <span className="text-gray-200 font-mono normal-case">
+                      {formatSeconds(viewingStepDuration)}
+                    </span>
+                  </>)}
+                  {viewingStepCost != null && (<>
+                    {viewingStepDuration != null && <span className="mx-2 text-gray-700">·</span>}
+                    COST:{" "}
+                    <span className="text-gray-200 font-mono normal-case">
+                      {formatCost(viewingStepCost)}
+                    </span>
+                  </>)}
                 </span>
               </div>
             )}

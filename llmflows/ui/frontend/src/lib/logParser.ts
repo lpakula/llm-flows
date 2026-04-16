@@ -153,7 +153,14 @@ function parsePiEvent(event: Record<string, unknown>, prefix: string | null): Lo
   if (t === "session") return [{ text: `--- Pi session started ---`, cls: "text-gray-500" }];
   if (t === "agent_start" || t === "turn_start" || t === "turn_end") return null;
   if (t === "message_start" || t === "message_update") return null;
-  if (t === "agent_end") return [{ text: `--- Pi agent finished ---`, cls: "text-gray-500" }];
+  if (t === "agent_end") {
+    const parts = ["--- Pi agent finished"];
+    const tokens = event.tokens as number | undefined;
+    const cost = event.cost as number | undefined;
+    if (tokens) parts.push(`${tokens.toLocaleString()} tokens`);
+    if (cost) parts.push(`$${cost.toFixed(4)}`);
+    return [{ text: parts.join(" · ") + " ---", cls: "text-gray-500" }];
+  }
 
   if (t === "tool_execution_start") {
     const name = (event.toolName as string) || "tool";

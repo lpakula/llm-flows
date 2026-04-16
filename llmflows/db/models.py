@@ -4,7 +4,7 @@ import secrets
 import string
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -273,6 +273,20 @@ class FlowRun(Base):
         total = sum(sr.duration_seconds for sr in self.step_runs if sr.duration_seconds is not None)
         return total or None
 
+    @property
+    def cost_usd(self) -> float | None:
+        if not self.step_runs:
+            return None
+        total = sum(sr.cost_usd for sr in self.step_runs if sr.cost_usd is not None)
+        return round(total, 6) if total else None
+
+    @property
+    def token_count(self) -> int | None:
+        if not self.step_runs:
+            return None
+        total = sum(sr.token_count for sr in self.step_runs if sr.token_count is not None)
+        return total or None
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -294,6 +308,8 @@ class FlowRun(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration_seconds": self.duration_seconds,
+            "cost_usd": self.cost_usd,
+            "token_count": self.token_count,
         }
 
 
@@ -336,6 +352,8 @@ class StepRun(Base):
     attempt: int = Column(Integer, nullable=False, default=1)
     gate_failures: str = Column(Text, default="")
     user_response: str = Column(Text, default="")
+    cost_usd: float = Column(Float, nullable=True)
+    token_count: int = Column(Integer, nullable=True)
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
     awaiting_user_at: datetime = Column(DateTime, nullable=True)
@@ -388,4 +406,6 @@ class StepRun(Base):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "awaiting_user_at": self.awaiting_user_at.isoformat() if self.awaiting_user_at else None,
             "duration_seconds": self.duration_seconds,
+            "cost_usd": self.cost_usd,
+            "token_count": self.token_count,
         }

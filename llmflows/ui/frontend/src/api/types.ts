@@ -41,6 +41,8 @@ export interface FlowRun {
   paused_at: string | null;
   resume_prompt: string;
   duration_seconds: number | null;
+  cost_usd: number | null;
+  token_count: number | null;
   space_name?: string;
   attachments?: { name: string; url: string }[];
 }
@@ -123,6 +125,8 @@ export interface StepRunDetail {
   completed_at: string | null;
   awaiting_user_at: string | null;
   duration_seconds: number | null;
+  cost_usd: number | null;
+  token_count: number | null;
   attempt: number;
   agent: string;
   model: string;
