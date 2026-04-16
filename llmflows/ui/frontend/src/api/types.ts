@@ -10,7 +10,7 @@ export interface SpaceSettings {
   max_concurrent_tasks: number;
 }
 
-export type StepType = "default" | "code" | "shell" | "hitl";
+export type StepType = "agent" | "code" | "shell" | "hitl";
 
 export interface AgentAlias {
   id: string;
@@ -243,3 +243,9 @@ export interface LogEntry {
   lines?: string[];
   expanded?: boolean;
 }
+
+// --- Chat types ---
+
+export type ChatEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "done"; session_id: string };

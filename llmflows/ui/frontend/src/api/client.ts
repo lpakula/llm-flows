@@ -161,4 +161,17 @@ export const api = {
   updateToolConfig: (toolId: string, body: { enabled?: boolean; config?: Record<string, string> }) =>
     patch<ToolConfig>(`/api/config/tools/${toolId}`, body),
 
+  // Chat
+  sendChat: (message: string, spaceId?: string | null, sessionId?: string | null) =>
+    fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        space_id: spaceId || undefined,
+        session_id: sessionId || undefined,
+      }),
+    }),
+  deleteChatSession: (sessionId: string) => del<{ ok: boolean }>(`/api/chat/sessions/${sessionId}`),
+
 };

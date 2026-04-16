@@ -3,11 +3,12 @@
 import asyncio
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -48,7 +49,7 @@ class StepCreate(BaseModel):
     gates: Optional[list[dict]] = None
     ifs: Optional[list[dict]] = None
     agent_alias: str = "normal"
-    step_type: str = "code"
+    step_type: str = "agent"
     allow_max: bool = False
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
@@ -724,7 +725,7 @@ async def get_run_steps(run_id: str):
                 "step_run": step_data,
                 "attempts": attempts,
                 "agent_alias": step_src.get("agent_alias", "normal"),
-                "step_type": step_src.get("step_type", "code") if step_src.get("step_type") != "agent" else "code",
+                "step_type": step_src.get("step_type", "agent"),
                 "allow_max": bool(step_src.get("allow_max", False)),
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
@@ -1078,14 +1079,14 @@ async def get_inbox():
                 if not run or not space:
                     continue
 
-                step_type = "default"
+                step_type = "agent"
                 if run.flow_snapshot:
                     try:
                         snap = json.loads(run.flow_snapshot)
                         for s in snap.get("steps", []):
                             if s["name"] == sr.step_name:
                                 raw = s.get("step_type", "")
-                                step_type = raw if raw in ("code", "shell", "hitl") else "default"
+                                step_type = raw if raw in ("agent", "code", "shell", "hitl") else "agent"
                                 break
                     except (ValueError, KeyError, TypeError):
                         pass
@@ -1197,7 +1198,7 @@ async def list_space_flows(space_id: str):
                 "description": f.description,
                 "step_count": len(f.steps),
                 "steps": [
-                    {"name": s.name, "position": s.position, "step_type": (s.step_type or "code") if (s.step_type or "code") != "agent" else "code"}
+                    {"name": s.name, "position": s.position, "step_type": s.step_type or "agent"}
                     for s in sorted(f.steps, key=lambda s: s.position)
                 ],
                 "created_at": f.created_at.isoformat() if f.created_at else None,
@@ -1562,6 +1563,182 @@ async def list_models(agent: Optional[str] = None):
     if agent and agent in AGENT_REGISTRY:
         return AGENT_REGISTRY[agent].get("models", [])
     return KNOWN_MODELS
+
+
+# --- Chat endpoints ---
+
+CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
+SAVE_FLOW_TOOL = Path(__file__).resolve().parents[2] / "tools" / "save-flow.ts"
+_SKILLS_FALLBACK_DIR = Path(__file__).resolve().parents[2] / ".agents" / "skills"
+CHAT_SKILLS = ["flows", "overview"]
+
+
+class ChatBody(BaseModel):
+    message: str
+    space_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+_CHAT_SYSTEM_PROMPT = """\
+# llm-flows Assistant
+
+You are the llm-flows assistant — a friendly, knowledgeable guide for the llm-flows platform. \
+You help users understand how llm-flows works and build automations using flows.
+
+## Your role
+
+- Explain llm-flows concepts clearly and concisely
+- Help users design and plan automation workflows
+- Create flows using the `save_flow` tool when asked — they appear immediately in the UI
+- Follow best practices from your loaded skills when creating flows
+
+"""
+
+
+def _resolve_chat_env() -> dict[str, str]:
+    """Build environment with LLM provider API keys for Pi."""
+    env = os.environ.copy()
+    from ..db.database import get_session
+    from ..db.models import AgentConfig
+    from ..config import KNOWN_LLM_PROVIDERS
+    session = get_session()
+    try:
+        for cfg in session.query(AgentConfig).filter_by(agent="pi").all():
+            env[cfg.key] = cfg.value
+        for provider in KNOWN_LLM_PROVIDERS:
+            for cfg in session.query(AgentConfig).filter_by(agent=provider).all():
+                if cfg.key not in env or not env[cfg.key]:
+                    env[cfg.key] = cfg.value
+    finally:
+        session.close()
+    return env
+
+
+@app.post("/api/chat")
+async def chat(body: ChatBody, request: Request):
+    """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
+    import shutil as _shutil
+
+    if not _shutil.which("pi"):
+        raise HTTPException(status_code=503, detail="Pi binary not found in PATH")
+
+    session_id = body.session_id or uuid.uuid4().hex[:10]
+    session_dir = CHAT_SESSIONS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    session_file = session_dir / "session"
+    system_file = session_dir / "system.md"
+
+    # Resolve space context
+    space = None
+    space_context = "\nNo space is currently selected. You can answer questions but cannot create flows — ask the user to select a space first.\n"
+
+    if body.space_id:
+        db_session, space_svc = _get_services()
+        try:
+            space = space_svc.get(body.space_id)
+        finally:
+            db_session.close()
+
+    if space:
+        space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n\nThe save_flow tool will create flows in this space.\n"
+
+    # Resolve skill paths — prefer space-local, fall back to package-level
+    skill_paths: list[Path] = []
+    for skill_name in CHAT_SKILLS:
+        if space:
+            candidate = Path(space.path) / ".agents" / "skills" / skill_name
+            if candidate.is_dir():
+                skill_paths.append(candidate)
+                continue
+        fallback = _SKILLS_FALLBACK_DIR / skill_name
+        if fallback.is_dir():
+            skill_paths.append(fallback)
+
+    system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context)
+
+    # Resolve the "max" pi alias for model selection
+    from ..config import resolve_alias
+    from ..db.database import get_session as _get_db_session
+    chat_model = ""
+    try:
+        _db = _get_db_session()
+        _, chat_model = resolve_alias(_db, "pi", "max")
+        _db.close()
+    except (ValueError, Exception):
+        pass
+
+    # Build Pi command — text mode for real-time streaming
+    cmd = [
+        "pi", "-p", body.message,
+        "--print",
+        "--session", str(session_file),
+        "--append-system-prompt", str(system_file),
+    ]
+
+    if chat_model:
+        cmd.extend(["--model", chat_model])
+
+    for skill_path in skill_paths:
+        cmd.extend(["--skill", str(skill_path)])
+
+    if SAVE_FLOW_TOOL.is_file() and space:
+        cmd.extend(["--extension", str(SAVE_FLOW_TOOL)])
+
+    # Web search extension (if enabled)
+    from ..services.executors.pi import WEB_SEARCH_TOOL, _is_web_search_enabled, _resolve_web_search_env
+
+    env = _resolve_chat_env()
+    api_base = str(request.base_url).rstrip("/")
+    env["LLMFLOWS_API_BASE"] = api_base
+    if space:
+        env["LLMFLOWS_CHAT_SPACE_ID"] = space.id
+
+    if _is_web_search_enabled() and WEB_SEARCH_TOOL.is_file():
+        cmd.extend(["--extension", str(WEB_SEARCH_TOOL)])
+        for k, v in _resolve_web_search_env().items():
+            env[k] = v
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+        cwd=space.path if space else str(Path.home()),
+    )
+
+    async def stream():
+        try:
+            assert proc.stdout is not None
+            while True:
+                chunk = await proc.stdout.read(4096)
+                if not chunk:
+                    break
+                text = chunk.decode(errors="replace")
+                yield f"data: {json.dumps({'type': 'text_delta', 'text': text})}\n\n"
+            await proc.wait()
+        except asyncio.CancelledError:
+            if proc.returncode is None:
+                proc.terminate()
+                await proc.wait()
+            raise
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str):
+    """Delete a chat session and its files."""
+    session_dir = CHAT_SESSIONS_DIR / session_id
+    if not session_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Session not found")
+    shutil.rmtree(session_dir, ignore_errors=True)
+    return {"ok": True}
 
 
 if STATIC_DIR.is_dir():

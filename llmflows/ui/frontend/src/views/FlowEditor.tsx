@@ -5,7 +5,7 @@ import { useApp } from "@/App";
 import type { Flow, FlowStep, FlowRequirements, FlowWarning, Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
 
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
-  { value: "default", label: "Default", desc: "Pi-powered LLM with read/write/shell tools" },
+  { value: "agent", label: "Agent", desc: "Pi-powered LLM with read/write/shell tools" },
   { value: "code", label: "Code", desc: "Coding agent (Cursor, Claude Code, etc.)" },
   { value: "shell", label: "Shell", desc: "Run a shell command" },
   { value: "hitl", label: "HITL (human in the loop)", desc: "LLM + human approval" },
@@ -361,13 +361,13 @@ export function FlowEditorView() {
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [stepForm, setStepForm] = useState({
     name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
+    agent_alias: "normal", step_type: "agent" as string, allow_max: false, max_gate_retries: 3,
     skills: [] as string[],
   });
   const [showAddStep, setShowAddStep] = useState(false);
   const [newStep, setNewStep] = useState({
     name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
-    agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
+    agent_alias: "normal", step_type: "agent" as string, allow_max: false, max_gate_retries: 3,
     skills: [] as string[],
   });
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
@@ -410,7 +410,7 @@ export function FlowEditorView() {
       gates: (step.gates || []).map((g) => ({ ...g })),
       ifs: (step.ifs || []).map((g) => ({ ...g })),
       agent_alias: step.agent_alias || "normal",
-      step_type: step.step_type || "default",
+      step_type: step.step_type || "agent",
       allow_max: step.allow_max || false,
       max_gate_retries: step.max_gate_retries ?? 3,
       skills: step.skills || [],
@@ -451,7 +451,7 @@ export function FlowEditorView() {
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
     await api.addStep(flow.id, body);
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "default", allow_max: false, max_gate_retries: 3, skills: [] });
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "agent", allow_max: false, max_gate_retries: 3, skills: [] });
     setShowAddStep(false);
     load();
   };
@@ -689,7 +689,7 @@ export function FlowEditorView() {
                         step.step_type === "shell" ? "text-orange-400" :
                         step.step_type === "hitl" ? "text-amber-400" : "text-gray-400"
                       }`}>
-                        {step.step_type === "default" || !step.step_type ? "" : step.step_type}
+                        {step.step_type === "agent" || !step.step_type ? "" : step.step_type}
                       </span>
                       {step.agent_alias && step.step_type !== "shell" && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench } from "lucide-react";
+import { LayoutDashboard, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -60,8 +60,8 @@ export function Sidebar() {
         </NavLink>
       </div>
 
-      {/* Inbox — space-agnostic, always visible */}
-      <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2">
+      {/* Inbox + Chat — space-agnostic, always visible */}
+      <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2 space-y-0.5">
         <NavLink to="/inbox" className={navClass}>
           <Inbox size={14} className="flex-shrink-0" />
           <span className="flex-1">Inbox</span>
@@ -70,6 +70,10 @@ export function Sidebar() {
               {inboxCount}
             </span>
           )}
+        </NavLink>
+        <NavLink to="/chat" className={navClass}>
+          <MessageCircle size={14} className="flex-shrink-0" />
+          Chat
         </NavLink>
       </nav>
 

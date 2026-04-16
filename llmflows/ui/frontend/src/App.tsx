@@ -15,6 +15,7 @@ import { ToolsView } from "@/views/Tools";
 import { SettingsView } from "@/views/Settings";
 import { SpaceSettingsView } from "@/views/SpaceSettings";
 import { SkillsView } from "@/views/Skills";
+import { ChatView } from "@/views/Chat";
 
 interface AppContextType {
   spaces: Space[];
@@ -65,6 +66,7 @@ function AppInner() {
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/inbox" element={<InboxView />} />
+          <Route path="/chat" element={<ChatView />} />
           <Route path="/space/:spaceId" element={<SpaceView />} />
           <Route path="/space/:spaceId/flows" element={<SpaceFlowsView />} />
           <Route path="/space/:spaceId/run/:runId" element={<RunDetailView />} />

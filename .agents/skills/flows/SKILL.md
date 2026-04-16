@@ -5,264 +5,402 @@ description: Create and edit llmflows flow definitions. Use when the user wants 
 
 # llmflows Flows
 
-A flow is an ordered list of steps (markdown prompts) that `llm-flows` executes sequentially. Each step runs as a separate agent run orchestrated by the daemon. Each step can have gates (must-pass checks) and IFs (conditional inclusion).
+A flow is an ordered list of steps that `llm-flows` executes sequentially. Each step runs as a separate agent run orchestrated by the daemon. Steps produce artifacts that are automatically passed as context to subsequent steps. Each step can have gates (must-pass checks) and IFs (conditional inclusion).
 
-## Creating Flows via CLI
+---
 
-### Create an empty flow
+## Core Concepts
 
-```bash
-llmflows flow create my-flow --description "What this flow does"
+### How a flow runs
+
+1. The daemon picks the first step and evaluates its **IF conditions**
+2. If IFs pass (or there are none), the step is launched
+3. The agent/executor runs the step content and produces artifacts
+4. The daemon evaluates **gates** — shell commands that must exit 0
+5. If all gates pass, the daemon advances to the next step
+6. If a gate fails, the agent is relaunched with failure context to fix the problem
+7. After the last step, an automatic `__summary__` step runs to produce a run summary
+8. The run completes
+
+### Artifacts are the backbone
+
+Every step writes its output to an **artifacts directory**. The path is available as `{{artifacts_dir}}` in step content and gate commands. The daemon automatically collects artifacts from completed steps and injects them into the prompt for subsequent steps.
+
+This means:
+- Step 1 writes files to its `{{artifacts_dir}}/`
+- Step 2 receives the contents of Step 1's files as context in its prompt
+- Step 3 receives Step 1 + Step 2 artifacts, and so on
+
+The agent does not need to read files from previous steps — the daemon reads them and includes them in the prompt. However, `_result.md` and other artifact files are real files on disk, so gates and IF commands can reference them by path if needed.
+
+### The `_result.md` convention
+
+Every step **must** produce a `_result.md` file in its `{{artifacts_dir}}/`. This is the primary artifact:
+
+- It gets a higher character budget (50,000 chars) when passed to subsequent steps
+- It is displayed in the inbox for `hitl` steps
+- It is the content shown in the run UI
+- The daemon prepends an **automatic gate** to every step that checks the artifacts directory is non-empty — if the step produces no files at all, this gate fails
+
+Other files saved to `{{artifacts_dir}}/` are also collected, but with a lower per-file limit (20,000 chars) and a total budget across all artifacts (120,000 chars). Binary files (images, archives, etc.) are listed but their content is not included in the prompt.
+
+### Artifact directory layout
+
+```
+.llmflows/runs/<run_id>/artifacts/
+├── 00-fetch-articles/         # Step 0 artifacts
+│   ├── _result.md             # Primary output (required)
+│   ├── article-1.md           # Additional files
+│   ├── article-2.md
+│   └── attachments/           # Published to run summary
+│       └── screenshot.png
+├── 01-summarize/              # Step 1 artifacts
+│   └── _result.md
+└── summary.md                 # Auto-generated run summary
 ```
 
-### Duplicate an existing flow
+Step directories are named `NN-step-name` — zero-padded position + step name lowercased with spaces replaced by hyphens (e.g. step `"Fetch articles"` at position 0 → `00-fetch-articles`).
 
-```bash
-llmflows flow create my-variant --copy-from default --description "Default with extra validation"
+To publish files (screenshots, images, reports) in the run summary UI, save them to `{{artifacts_dir}}/attachments/`. Images are rendered inline; other files appear as download links.
+
+---
+
+## Step Types
+
+Each step has a `step_type` that controls how the daemon handles execution.
+
+Valid step types: `"agent"`, `"code"`, `"shell"`, `"hitl"`
+
+Any unrecognized value (including `null`, empty string, or `"default"`) is normalized to `"agent"`.
+
+### `"agent"` (omit `step_type` or set to `"agent"`)
+
+Runs via the **Pi** agent — llmflows' built-in tool-using agent backed by an LLM. Pi has tools for reading/writing/editing files, running shell commands, and (when enabled) web search/fetch. This is the most common step type for research, analysis, content generation, and automation tasks.
+
+- Async: the daemon polls until the agent finishes
+- After completion, gates are evaluated
+- Agent alias maps to a `"pi"` alias type (configured in Settings > Agents)
+
+**When to use:** Most steps. Any task that requires reasoning, reading files, writing output, running commands, or using tools.
+
+### `"code"`
+
+Runs via an **external code agent** (Cursor, Claude Code, etc.) — a CLI-based coding agent launched as a subprocess. The agent receives the rendered prompt and works in the project directory.
+
+- Async: the daemon polls until the agent process exits
+- After completion, gates are evaluated
+- Agent alias maps to a `"code"` alias type (configured in Settings > Agents)
+
+**When to use:** Steps that require deep code editing in a project — implementing features, refactoring, fixing bugs. The external agent has full access to the project workspace.
+
+### `"shell"`
+
+Runs the step's `content` field directly as a **shell command** (not as an agent prompt). No LLM is involved. The command runs in the space's working directory with a 600-second timeout. stdout/stderr and exit code are captured and written to `_result.md` automatically.
+
+- **Synchronous**: the daemon blocks until the command finishes
+- Space variables are injected as **environment variables** in the shell
+- Template variables (`{{run.id}}`, `{{artifacts_dir}}`, etc.) are interpolated in the content before execution
+- Gates are evaluated after the command completes
+
+**When to use:** Deterministic automation steps — running builds, deployments, API calls, data processing scripts. Any step where an LLM would add no value.
+
+**Example:**
+
+```json
+{
+  "name": "build",
+  "position": 2,
+  "step_type": "shell",
+  "content": "cd {{space.PROJECT_PATH}} && npm run build 2>&1",
+  "gates": [
+    {"command": "test -f {{space.PROJECT_PATH}}/dist/index.js", "message": "Build output not found."}
+  ]
+}
 ```
 
-### Add steps from files
+### `"hitl"` (human-in-the-loop)
 
-Write each step as a `.md` file, then add them in order:
+Uses the same executor as `"agent"` (Pi agent), but after the agent finishes, instead of evaluating gates, the daemon **pauses the flow and creates an inbox item**. The user sees the agent's output (from `_result.md`) in the UI with a text input field to respond.
 
-```bash
-llmflows flow step add --flow my-flow --name understand --content steps/understand.md --position 0
-llmflows flow step add --flow my-flow --name implement --content steps/implement.md --position 1
-llmflows flow step add --flow my-flow --name validate  --content steps/validate.md  --position 2
+**The lifecycle:**
+
+1. Agent runs the step's prompt and writes output to `_result.md`
+2. Daemon marks the step as "awaiting user" (gates are **not** evaluated)
+3. Step appears in the **Inbox** with the agent's output and a text input
+4. User reads the output and submits a response
+5. Daemon marks the step complete and advances to the next step
+6. The user's response is available to all subsequent steps as context
+
+**When to use:** When the flow needs human judgment before proceeding — choosing between approaches, approving a plan, providing input, confirming before a destructive action, visual review.
+
+**Example:**
+
+```json
+{
+  "name": "propose-approach",
+  "position": 0,
+  "step_type": "hitl",
+  "content": "# PROPOSE APPROACHES\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 implementation approaches.\n\n## WORKFLOW\n\n1. Study the codebase\n2. Identify 2-3 distinct approaches\n3. Present them clearly with pros/cons\n4. End with a question asking the user which approach to take"
+}
 ```
 
-### Add steps from stdin
+**Edge cases:**
+- `hitl` steps have **no gates** — the daemon skips gate evaluation entirely
+- The user's response is passed as context to all subsequent steps (via the `User Responses` section in the prompt)
+- The user's response is also available as a template variable: `{{steps.propose-approach.user_response}}`
 
-```bash
-cat <<'EOF' | llmflows flow step add --flow my-flow --name understand
-# UNDERSTAND
+---
 
-## PURPOSE
+## Gates
 
-Inspect the task and understand the relevant code before making any changes.
+Gates are shell commands attached to a step that **must exit 0** before the flow can advance past that step. If any gate fails, the agent is relaunched with the failure details and must fix the problem.
 
-## WORKFLOW
+### How gates work
 
-1. Read the task description carefully
-2. Identify relevant files and modules
-3. Read through the relevant code
+1. After a step's agent finishes, the daemon evaluates all gates in order
+2. Each gate runs as a shell command (`shell=True`) in the space's working directory
+3. If **any** gate exits non-zero (or times out), the step is considered failed
+4. The agent is relaunched with:
+   - All the original step context
+   - The gate failure details (command, message, stderr output)
+   - The agent's task: fix the issues and try again
+5. After the relaunched agent finishes, gates are re-evaluated
+6. This loop repeats up to `max_gate_retries` times (default: 5)
 
-## RULES
+### Gate structure
 
-- Do not make any code changes in this step
-EOF
+```json
+{
+  "command": "npm test -- --watchAll=false",
+  "message": "All tests must pass before advancing."
+}
 ```
 
-### Edit a step
+- `command` — shell command that must exit 0. Supports `{{variable}}` interpolation.
+- `message` — human-readable description shown to the agent on failure. Supports `{{variable}}` interpolation.
+
+### The automatic artifact gate
+
+The daemon **automatically prepends** a gate to every step (except `__summary__`) that checks the step's artifacts directory exists and is non-empty:
 
 ```bash
-llmflows flow step edit --flow my-flow --name understand --content updated-step.md
+test -d "<artifacts_dir>" && test "$(ls -A "<artifacts_dir>")"
 ```
 
-### Remove a step
+This means every step must produce at least one file in `{{artifacts_dir}}/`. If the agent finishes without writing any artifacts, this auto-gate fails and the agent is relaunched.
 
-```bash
-llmflows flow step remove --flow my-flow --name old-step
+### Gate retry behavior
+
+| `max_gate_retries` | Behavior |
+|--------------------|----------|
+| `5` (default) | Up to 5 retries, then run is marked `interrupted` |
+| `0` or `null` | **Unlimited** retries — the agent retries forever until gates pass |
+| Any positive number | That many retries |
+
+### `allow_max` — last-resort escalation
+
+When `allow_max` is `true` and this is the **last retry attempt**, the daemon escalates to the `"max"` agent alias tier — typically a more capable (and expensive) model. This gives the agent one final strong attempt to fix the problem.
+
+Only useful when `max_gate_retries > 1`. Typically set on execute and test steps.
+
+### Gate timeout
+
+Gates have a configurable timeout (default: 60 seconds, set in system config under `daemon.gate_timeout_seconds`). If a gate command exceeds this timeout, it counts as a failure.
+
+### Good gates vs bad gates
+
+**Good gates** — deterministic, fast, objective:
+- `npm test -- --watchAll=false` — tests pass
+- `npm run build` — build succeeds
+- `test -f {{artifacts_dir}}/report.md` — specific file was created
+- `python -m py_compile main.py` — syntax is valid
+- `ls {{artifacts_dir}}/*.png 2>/dev/null | grep -q .` — screenshots exist
+- `git diff --cached --quiet || echo ok` — changes are staged
+
+**Bad gates** — subjective, slow, unreliable:
+- `curl https://api.example.com/health` — external dependency, flaky
+- Complex scripts that might hang
+- Anything that takes more than a few seconds
+
+---
+
+## IF Conditions
+
+IFs are shell commands that control whether a step is **entered at all**. They are evaluated before the step launches. If **any** IF command exits non-zero, the step is **skipped** and the daemon advances to the next step.
+
+### How IFs work
+
+1. Before launching a step, the daemon evaluates all `ifs` entries
+2. **ALL** commands must exit 0 for the step to run
+3. If any IF exits non-zero (or times out/errors), the step is **skipped entirely**
+4. The daemon moves to the next step and evaluates its IFs
+5. If all remaining steps are skipped, the `__summary__` step runs
+
+### IF structure
+
+```json
+{
+  "command": "test -f package.json",
+  "message": "Node.js project exists"
+}
 ```
 
-### Inspect flows and steps
+- `command` — shell command. Exit 0 = condition met. Non-zero = skip step. Supports `{{variable}}` interpolation.
+- `message` — human-readable description (for logging/debugging).
 
-```bash
-llmflows flow list
-llmflows flow show my-flow
-llmflows flow step list --flow my-flow
+### IF vs Gates comparison
+
+| Aspect | IF | Gate |
+|--------|-----|------|
+| **When** | Before step enters | After step completes |
+| **Purpose** | Should this step run? | Did this step succeed? |
+| **On failure** | Step is skipped silently | Agent is relaunched to fix |
+| **Retries** | No | Yes (`max_gate_retries`) |
+| **Agent sees it** | No | Yes (failure details in prompt) |
+
+### IF edge cases
+
+- Empty `command` entries are skipped (treated as pass)
+- Timeout or exceptions count as failure (step is skipped)
+- IFs have a **narrower set of template variables** than step content — see the Template Variables section for details
+- IFs use the same timeout as gates (`daemon.gate_timeout_seconds`)
+
+### Example: conditional language-specific steps
+
+```json
+[
+  {
+    "name": "lint-python",
+    "position": 2,
+    "step_type": "agent",
+    "content": "...",
+    "ifs": [
+      {"command": "test -f requirements.txt || test -f pyproject.toml", "message": "Python project"}
+    ]
+  },
+  {
+    "name": "lint-js",
+    "position": 3,
+    "step_type": "agent",
+    "content": "...",
+    "ifs": [
+      {"command": "test -f package.json", "message": "Node project"},
+      {"command": "grep -q eslint package.json", "message": "ESLint configured"}
+    ]
+  }
+]
 ```
+
+---
+
+## Template Variables
+
+Step content, gate commands, gate messages, and IF commands support `{{variable}}` interpolation. The pattern matches `{{key}}` where key can contain letters, digits, `_`, `.`, and `-`.
+
+| Variable | Step content | Gates | IFs |
+|----------|:---:|:---:|:---:|
+| `{{run.id}}` — current run ID | Yes | Yes | Yes |
+| `{{flow.name}}` — current flow name | Yes | Yes | Yes |
+| `{{artifacts_dir}}` — absolute path to this step's artifact output directory | Yes | Yes | **No** |
+| `{{space.KEY}}` — space variable (set via Settings or CLI) | Yes | Yes | Yes |
+| `{{steps.STEP_NAME.user_response}}` — user's response from a completed `hitl` step | Yes | Yes | **No** |
+
+IFs are evaluated **before** the step launches, so `{{artifacts_dir}}` and `{{steps.*.user_response}}` are not yet available.
+
+### Space variables
+
+Space variables are key-value pairs configured by the user (in Settings or via CLI) and available to all flows in the space. Reference them as `{{space.KEY_NAME}}` in step content, gate commands, and gate messages.
+
+For `shell` steps, space variables are also injected as **environment variables**, so `$PROJECT_PATH` works directly in shell commands.
+
+### What the agent automatically receives
+
+The agent's prompt is built by the system and automatically includes (flow authors do not need to set these up):
+- **Previous step artifacts** — `_result.md` and other files from all completed steps
+- **Gate failure details** — on retry, the agent sees which gates failed, with stderr output
+- **User responses** — all responses from completed `hitl` steps
+- **Space variables** — listed as available environment variables
+- **Skills** — any skills attached to the step
+
+---
+
+## Flow Requirements
+
+Flows can declare requirements — tools and variables they need to function. Requirements are **validated before running** (warnings are shown in the UI) but are **not enforced** at runtime.
+
+```json
+{
+  "name": "crypto-news",
+  "description": "Fetch the latest crypto news.",
+  "requirements": {
+    "tools": ["web_search"],
+    "variables": ["API_KEY"]
+  },
+  "steps": [...]
+}
+```
+
+### `requirements.tools`
+
+A list of tool names that must be enabled in system config (Settings > Tools). If a required tool is not enabled, a `missing_tool` warning is shown in the UI. The run modal treats this as a **blocking warning** — the user must enable the tool before starting.
+
+Currently supported tools: `"web_search"` (gives Pi steps access to `web_search` and `web_fetch` tools).
+
+### `requirements.variables`
+
+A list of space variable names that must be set (via `llmflows space var set KEY VALUE`). If a variable is missing or empty, a `missing_variable` warning is shown. Also treated as blocking in the run modal.
+
+Use this to declare dependencies on configuration that the user must provide.
+
+---
+
+## Step Fields Reference
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `name` | string | **required** | Step identifier. Used in artifact directory names and template variables. |
+| `position` | integer | **required** | Sequential index starting at 0. Must be sequential. |
+| `content` | string | `""` | Markdown prompt (for agent steps) or shell command (for `shell` steps). |
+| `step_type` | string | `"agent"` | One of: `"agent"`, `"code"`, `"shell"`, `"hitl"`. Omit for agent. |
+| `agent_alias` | string | `"normal"` | Which agent tier to use. Common values: `"mini"`, `"normal"`, `"max"`. |
+| `allow_max` | boolean | `false` | On the last gate retry, escalate to the `"max"` agent alias. |
+| `max_gate_retries` | integer | `5` | Max retry attempts on gate failure. `0` = unlimited. |
+| `gates` | array | `[]` | Shell commands that must pass to advance. See Gates section. |
+| `ifs` | array | `[]` | Shell commands that must pass to enter the step. See IF section. |
+| `skills` | array | `[]` | Skill identifiers to load for this step. |
+
+### Agent aliases
+
+Agent aliases map to agent configurations (model + provider) in Settings > Agents. Each alias has a **type** (`"pi"` or `"code"`) and a **name** (tier).
+
+| Alias name | Intended use |
+|------------|-------------|
+| `"mini"` | Trivial steps: commits, file moves, simple formatting |
+| `"normal"` | Standard steps: most research, analysis, implementation |
+| `"max"` | Complex reasoning: architecture, multi-file refactors, difficult debugging |
+
+The alias type is determined by step_type:
+- `"agent"` and `"hitl"` → `"pi"` alias type
+- `"code"` → `"code"` alias type
+- `"shell"` → no alias (no LLM involved)
+
+---
 
 ## Step Content Format
 
-Each step's `content` is a markdown prompt. Use these sections:
+Each step's `content` is a markdown prompt given to the agent. Use clear sections:
 
 | Section | Required | Purpose |
 |---------|----------|---------|
 | `# TITLE` | Yes | Step name in uppercase |
-| `## PURPOSE` | Yes | One-sentence goal |
-| `## WORKFLOW` | Yes | Numbered action list |
-| `## PERMITTED` | No | Explicitly allowed actions |
-| `## FORBIDDEN` | No | Hard constraints |
-| `## RULES` | No | Output format or quality rules |
+| `## PURPOSE` | Yes | One-sentence goal — what this step must accomplish |
+| `## WORKFLOW` | Yes | Numbered action list — concrete steps to follow |
+| `## RULES` | No | Output format, quality constraints |
+| `## PERMITTED` | No | Explicitly allowed actions (useful to override restrictions) |
+| `## FORBIDDEN` | No | Hard constraints — things the agent must never do |
 
-### Example step content
 
-```markdown
-# IMPLEMENT
-
-## PURPOSE
-
-Make the changes described in the task.
-
-## WORKFLOW
-
-1. Implement the changes based on your understanding from the previous step
-2. Follow the conventions and patterns found in the codebase
-3. Keep changes minimal and focused on the task
-
-## RULES
-
-- No scope expansion beyond what was asked
-
-## FORBIDDEN
-
-- No git operations
-```
-
-## Gates
-
-Gates are shell commands that must exit 0 before the agent can advance past a step. If a gate fails, the agent sees the error and must fix the problem. There is no way to skip a gate.
-
-Gates are defined in the flow JSON structure, not in the step markdown content.
-
-### Adding gates via export/import
-
-```bash
-# Export flows to JSON
-llmflows flow export --output flows.json
-```
-
-Edit the JSON to add gates to a step:
-
-```json
-{
-  "name": "test",
-  "position": 1,
-  "content": "# TEST\n\n## PURPOSE\n\nRun the test suite.\n\n## WORKFLOW\n\n1. Run tests\n2. Fix failures\n3. Re-run until all pass",
-  "gates": [
-    {"command": "npm test -- --watchAll=false", "message": "Tests must pass before advancing."},
-    {"command": "npm run build", "message": "Build must succeed."}
-  ]
-}
-```
-
-```bash
-# Import back (upserts by name)
-llmflows flow import flows.json
-```
-
-Each gate has:
-- `command` — shell command that must exit 0
-- `message` — human-readable failure feedback shown to the agent
-
-## IF Conditions
-
-IFs are optional shell commands that control whether a step is included. Before entering a step, `llm-flows` evaluates all `ifs`. If **any** command exits non-zero, the step is **skipped**.
-
-```json
-{
-  "name": "lint-js",
-  "position": 2,
-  "content": "# LINT\n\n...",
-  "ifs": [
-    {"command": "test -f package.json", "message": "Node project exists"},
-    {"command": "grep -q eslint package.json", "message": "ESLint is configured"}
-  ]
-}
-```
-
-**IF vs Gates**: IFs decide whether to *enter* a step. Gates block you from *leaving* a step.
-
-## Template Variables
-
-Step content, gate commands, gate messages, and IF commands support template variables:
-
-- `{{run.id}}` — current run ID
-- `{{task.id}}` — current task ID
-- `{{flow.name}}` — current flow name
-- `{{artifacts_dir}}` — absolute path where this step should write output files (screenshots, reports, etc.)
-- `{{space.<KEY>}}` — space-level variable (set via `llmflows space var set KEY VALUE`)
-
-### Space variables
-
-Space variables are key-value pairs stored in the database and available to all flows. They are interpolated before shell execution, so they work in gate commands, IF commands, and step content.
-
-```bash
-# Set a variable
-llmflows space var set REPOS_PATH /Users/me/repos
-llmflows space var set DEFAULT_ORG mycompany
-
-# List all variables
-llmflows space var list
-
-# Remove a variable
-llmflows space var remove REPOS_PATH
-```
-
-Use in gates and step content as `{{space.REPOS_PATH}}`:
-
-```json
-{
-  "command": "test -d {{space.REPOS_PATH}}/my-service/.worktrees/task-{{task.id}}",
-  "message": "Worktree not found."
-}
-```
-
-Artifacts from completed steps are automatically collected and passed as context to subsequent steps.
-
-Example usage in a gate:
-
-```json
-{
-  "command": "ls {{artifacts_dir}}/*.png 2>/dev/null | grep -q .",
-  "message": "No screenshots found. Save at least one .png to {{artifacts_dir}}/ before advancing."
-}
-```
-
-## Step Types
-
-Each step has a `step_type` that controls how the daemon handles it after the agent finishes.
-
-### `"agent"` (default)
-
-A normal agent step. The agent runs the prompt, and when it finishes the daemon evaluates gates. If gates pass, the flow advances to the next step automatically.
-
-### `"hitl"` (human-in-the-loop)
-
-A step where the agent prepares output and then **pauses for user input**. The agent runs the prompt content as usual (e.g. proposing multiple implementation approaches, preparing a review checklist), but when the agent finishes, the daemon marks the step as "awaiting user" instead of evaluating gates. The step appears in the **Inbox** with a text input field where the user can respond before the flow continues. The user's response is passed to the **next** step as context.
-
-Use `"hitl"` when the flow needs a human decision or action before proceeding -- e.g. choosing between approaches, approving a plan, visual review, manual QA, or providing additional input.
-
-```json
-{
-  "name": "propose-solutions",
-  "position": 0,
-  "step_type": "hitl",
-  "agent_alias": "high",
-  "content": "# PROPOSE SOLUTIONS\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Explore the codebase\n2. Think of 2-3 distinct approaches\n3. Present them numbered and ask which one to implement"
-}
-```
-
-### How hitl steps flow
-
-1. The daemon launches the agent with the step's content (same as a default step)
-2. The agent runs and produces output (e.g. a proposal or checklist)
-3. When the agent finishes, instead of evaluating gates, the daemon marks the step as **awaiting user**
-4. The step appears in the **Inbox** with the agent's output and a text input field
-5. The user reads the output and submits a response
-6. The daemon marks the step as completed and advances to the next step
-7. The next step receives the user's response as part of its context
-
-**One-shot mode is automatically disabled** when a flow contains any `"hitl"` steps, since one-shot combines all steps into a single agent run and cannot pause for user input.
-
-## Step Fields
-
-Each step supports these fields in the JSON format:
-
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `name` | required | Step identifier |
-| `position` | required | Sequential index starting at 0 |
-| `content` | required | Markdown prompt |
-| `step_type` | (default) | Step type: `"code"`, `"shell"`, or `"hitl"`. Omit for default Pi-powered steps. |
-| `agent_alias` | `"standard"` | Which agent config to use (e.g. `"fast"`, `"standard"`, `"high"`) |
-| `allow_max` | `false` | On the last gate retry, escalate to max-capability model |
-| `max_gate_retries` | `3` | How many times to retry a failed gate before failing the step |
-| `gates` | `[]` | Shell commands that must pass to advance |
-| `ifs` | `[]` | Shell commands that must pass to enter the step |
-
-**Agent aliases** map to agent configurations defined in Settings. Use `"fast"` for simple steps (init, commit), `"standard"` for most steps, `"high"` for complex reasoning steps (brainstorm, plan, execute). Enable `allow_max` on execute/test steps where a final escalation attempt is worth it.
+---
 
 ## Flow JSON Format
 
@@ -274,18 +412,25 @@ The export/import format. One file can contain multiple flows.
   "flows": [
     {
       "name": "my-flow",
-      "description": "Short description of what this flow does.",
+      "description": "What this flow does.",
+      "requirements": {
+        "tools": ["web_search"],
+        "variables": ["API_KEY"]
+      },
       "steps": [
         {
           "name": "step-name",
           "position": 0,
           "step_type": "agent",
-          "agent_alias": "standard",
-          "allow_max": false,
-          "max_gate_retries": 3,
           "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
-          "gates": [],
-          "ifs": []
+          "gates": [
+            {"command": "test -f {{artifacts_dir}}/output.md", "message": "Output file must exist."}
+          ],
+          "ifs": [],
+          "agent_alias": "normal",
+          "allow_max": false,
+          "max_gate_retries": 5,
+          "skills": []
         }
       ]
     }
@@ -293,98 +438,152 @@ The export/import format. One file can contain multiple flows.
 }
 ```
 
-Positions must be sequential starting at 0. Fields at their default values can be omitted.
+Fields at their default values can be omitted — see the Step Fields Reference for defaults.
+
+---
 
 ## Best Practices
 
-**Constraint progression** — tighten permissions as the flow advances:
-- Early steps (research/plan): "No code changes to project files", "No git operations"
-- Execute steps: "No git operations", "No scope expansion"
-- Commit/final steps: "Do not push"
+### Design smaller steps with artifact validation
 
-**Step granularity** — each step should have a single clear purpose. If a step has two unrelated goals, split it.
+Break work into small steps where each produces a concrete, verifiable artifact. Then use gates to validate that artifact before proceeding.
 
-**Artifacts** — if steps need to share state, use a file (e.g. `.llmflows/task.md`). Early steps write findings; later steps read them.
-
-**Attachments** — to publish files (screenshots, images, reports) so they appear in the task UI and run summary, save them to `{{artifacts_dir}}/attachments/`. When a step completes, the daemon automatically copies files from this subdirectory to the task's shared attachments. Image attachments (`.png`, `.jpg`, `.gif`, `.webp`) are rendered inline in the run summary with click-to-zoom; other file types appear as download links.
-
-**Keep steps self-contained** — the agent only sees one step at a time. Each step must include all context needed to execute it.
-
-**Use gates for deterministic checks** — builds, test suites, file existence, commit status. Don't use gates for subjective checks.
-
-**Use IFs for conditional steps** — skip language-specific steps when that language isn't present, skip screenshot steps when there's no UI.
-
-**Match agent alias to step complexity** — `"fast"` for trivial steps (init, commit), `"standard"` for most steps, `"high"` for steps requiring deep reasoning (brainstorm, plan, complex execute).
-
-**Enable `allow_max` on steps that retry gates** — only useful when `max_gate_retries > 1`. On the last retry the daemon escalates to max capability, giving the agent one final strong attempt to fix the problem. Typically set on execute and test steps.
-
-## Creating a New Flow (step by step)
-
-1. **Clarify the workflow** — what stages should the agent go through?
-2. **Create the flow**:
-   ```bash
-   llmflows flow create my-flow --description "Description"
-   ```
-3. **Write each step** as a markdown file following the content format above
-4. **Add steps**:
-   ```bash
-   llmflows flow step add --flow my-flow --name step-name --content step.md --position 0
-   ```
-5. **Add gates/IFs** (if needed) via export/import:
-   ```bash
-   llmflows flow export --output flows.json
-   # Edit flows.json to add gates/ifs
-   llmflows flow import flows.json
-   ```
-6. **Verify**:
-   ```bash
-   llmflows flow show my-flow
-   ```
-
-## Modifying an Existing Flow
-
-```bash
-# View current state
-llmflows flow show my-flow
-llmflows flow step list --flow my-flow
-
-# Edit a step's content
-llmflows flow step edit --flow my-flow --name step-name --content updated.md
-
-# Add a new step
-llmflows flow step add --flow my-flow --name new-step --content new.md --position 3
-
-# Remove a step
-llmflows flow step remove --flow my-flow --name old-step
-
-# For gates/IFs changes, use export/import
-llmflows flow export --output flows.json
-# Edit flows.json
-llmflows flow import flows.json
+**Bad** — one big step:
+```
+Step 1: Research the topic, write an outline, write the full article, and format it
 ```
 
-## Reference Flows
-
-Built-in flows (seeded on first run):
-- **`default`** — 3-step: understand, implement, validate
-- **`submit-pr`** — 1-step: push branch and create/comment on PR (gated on push)
-
-Example flows in `flows/` directory:
-- **`ripper-5`** — 7-step research-driven flow with artifact passing and multiple gates
-- **`react-js`** — 6-step flow demonstrating prompt/hitl steps: propose solutions (prompt) → execute → validate (gated) → take screenshots (gated) → hitl review → commit (gated)
-
-Study these for patterns. Export them to see the full JSON:
-
-```bash
-llmflows flow export | python -m json.tool
+**Good** — smaller steps with gates:
+```
+Step 0: Research → saves research notes to artifacts → gate: notes file exists
+Step 1: Outline → reads research from context, writes outline → gate: outline file exists
+Step 2: Write → reads outline from context, writes article → gate: article file exists
+Step 3: Format → reads article from context, formats and validates → gate: final file passes validation
 ```
 
-## Flow Chaining
+Each step has a single responsibility, its output can be validated, and if something goes wrong the agent only needs to redo that one step.
 
-Multiple flows can be chained to run in sequence:
+### Constraint progression
 
-```bash
-llmflows task start --id <task-id> --flow ripper-5 --flow submit-pr
+Tighten permissions as the flow advances:
+
+- **Early steps** (research/plan): `FORBIDDEN: No code changes, no git operations`
+- **Execute steps**: `FORBIDDEN: No git operations, no scope expansion`
+- **Commit/final steps**: `FORBIDDEN: Do not push to remote`
+
+### Keep steps self-contained
+
+The agent only sees one step at a time. Each step must include everything the agent needs:
+- What to do (workflow)
+- Where to save output (artifacts dir)
+- What constraints to follow (rules/forbidden)
+- Any file paths or configuration needed
+
+Don't assume the agent remembers instructions from previous steps — it doesn't.
+
+### Tell subsequent steps what to expect
+
+When a step consumes output from a previous step, describe the format explicitly. The agent receives previous artifacts as context but doesn't know the structure unless you say so.
+
+**Bad:** "Read the data from the previous step."
+**Good:** "The articles from the previous step are in your context. Each is a markdown file with: headline, author, date, URL, and full text."
+
+---
+
+## Reference Examples
+
+### Simple research flow (2 steps)
+
+```json
+{
+  "version": 1,
+  "flows": [
+    {
+      "name": "crypto-news",
+      "description": "Fetch the latest crypto news from CoinDesk, store each article, then summarize.",
+      "requirements": {
+        "tools": ["web_search"]
+      },
+      "steps": [
+        {
+          "name": "Fetch articles",
+          "position": 0,
+          "step_type": "agent",
+          "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles and save each as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load the target URL\n2. Extract the 5 most recent article links\n3. For each, fetch the full article and extract content\n4. Save each article to `{{artifacts_dir}}/article-N.md`\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully",
+          "gates": [
+            {
+              "command": "test -f {{artifacts_dir}}/article-1.md && test -f {{artifacts_dir}}/article-5.md",
+              "message": "Not all 5 article files were saved."
+            }
+          ]
+        },
+        {
+          "name": "Summarize",
+          "position": 1,
+          "step_type": "agent",
+          "content": "# SUMMARIZE\n\n## PURPOSE\n\nProduce a concise summary of all articles from the previous step.\n\n## WORKFLOW\n\n1. Read the articles from context (they are provided automatically)\n2. Write a 2-3 sentence summary for each\n3. Save to `{{artifacts_dir}}/_result.md`\n\n## RULES\n\n- Use article content from context, do not fetch anything\n- Preserve original headlines exactly"
+        }
+      ]
+    }
+  ]
+}
 ```
 
-When the last step of the first flow completes, the agent automatically advances to the first step of the next flow.
+### Flow with hitl approval
+
+```json
+{
+  "name": "reviewed-implementation",
+  "description": "Propose approaches, get user approval, then implement.",
+  "steps": [
+    {
+      "name": "propose",
+      "position": 0,
+      "step_type": "hitl",
+      "content": "# PROPOSE\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches.\n\n## WORKFLOW\n\n1. Study the codebase\n2. Propose 2-3 approaches with pros/cons\n3. End with: \"Which approach should I implement?\""
+    },
+    {
+      "name": "implement",
+      "position": 1,
+      "step_type": "agent",
+      "agent_alias": "max",
+      "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the approach the user chose.\n\n## WORKFLOW\n\n1. Read the user's response from context — it specifies which approach\n2. Implement that approach\n3. Write a summary of changes to `{{artifacts_dir}}/_result.md`",
+      "gates": [
+        {"command": "npm test -- --watchAll=false", "message": "Tests must pass."}
+      ],
+      "allow_max": true,
+      "max_gate_retries": 3
+    }
+  ]
+}
+```
+
+### Flow with conditional steps
+
+```json
+{
+  "name": "polyglot-lint",
+  "description": "Lint whatever languages are present in the project.",
+  "steps": [
+    {
+      "name": "lint-python",
+      "position": 0,
+      "step_type": "shell",
+      "content": "cd {{space.PROJECT_PATH}} && python -m ruff check . 2>&1",
+      "ifs": [
+        {"command": "test -f {{space.PROJECT_PATH}}/pyproject.toml", "message": "Python project exists"}
+      ]
+    },
+    {
+      "name": "lint-js",
+      "position": 1,
+      "step_type": "shell",
+      "content": "cd {{space.PROJECT_PATH}} && npx eslint . 2>&1",
+      "ifs": [
+        {"command": "test -f {{space.PROJECT_PATH}}/package.json", "message": "Node project exists"},
+        {"command": "grep -q eslint {{space.PROJECT_PATH}}/package.json", "message": "ESLint configured"}
+      ]
+    }
+  ]
+}
+```

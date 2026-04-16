@@ -277,7 +277,7 @@ export function RunDetailView() {
                       >
                         {step.step_type === "hitl" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
                         {stepLabel}
-                        {step.step_type && step.step_type !== "default" && step.step_type !== "code" && (
+                        {step.step_type && step.step_type !== "agent" && step.step_type !== "code" && (
                           <span className={`ml-1 text-[9px] ${
                             step.step_type === "shell" ? "text-orange-400" :
                             step.step_type === "hitl" ? "text-amber-400" : "text-gray-400"

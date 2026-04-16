@@ -17,7 +17,7 @@ SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 SPACE_DIR = ".llmflows"
 
 
-VALID_STEP_TYPES = ("default", "code", "shell", "hitl")
+VALID_STEP_TYPES = ("agent", "code", "shell", "hitl")
 
 KNOWN_AGENTS = [
     "cursor",
@@ -208,11 +208,11 @@ def resolve_alias(session, alias_type: str, alias_name: str = "normal") -> tuple
 
 
 def infer_step_type(agent: str) -> str:
-    """Derive step_type from agent's registry type. Returns 'code' or 'default'."""
+    """Derive step_type from agent's registry type. Returns 'code' or 'agent'."""
     reg = AGENT_REGISTRY.get(agent, {})
-    agent_type = reg.get("type", "default")
+    agent_type = reg.get("type", "agent")
     if agent_type in ("pi", "provider"):
-        return "default"
+        return "agent"
     return agent_type
 
 

@@ -10,15 +10,16 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep
 
-VALID_STEP_TYPES = ("default", "code", "shell", "hitl")
+VALID_STEP_TYPES = ("agent", "code", "shell", "hitl")
 
 
 def _normalize_step_type(value: str | None) -> str:
     """Normalize step type. Known explicit types pass through; anything else
-    (including None, empty string, or unknown values) becomes 'default'."""
-    if not value:
-        return "default"
-    return value if value in VALID_STEP_TYPES else "default"
+    (including None, empty string, or unknown values) becomes 'agent'.
+    'default' is accepted as a legacy alias for 'agent'."""
+    if not value or value == "default":
+        return "agent"
+    return value if value in VALID_STEP_TYPES else "agent"
 
 
 def _serialize_json_list(value) -> str:
@@ -121,7 +122,7 @@ class FlowService:
         self, flow_id: str, name: str, content: str = "",
         position: Optional[int] = None, gates: Optional[list] = None,
         ifs: Optional[list] = None,
-        agent_alias: str = "normal", step_type: str = "default",
+        agent_alias: str = "normal", step_type: str = "agent",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
     ) -> Optional[FlowStep]:
@@ -285,7 +286,7 @@ class FlowService:
                 if s.agent_alias and s.agent_alias != "normal":
                     step_data["agent_alias"] = s.agent_alias
                 st = _normalize_step_type(s.step_type)
-                if st != "default":
+                if st != "agent":
                     step_data["step_type"] = st
                 if s.allow_max:
                     step_data["allow_max"] = True

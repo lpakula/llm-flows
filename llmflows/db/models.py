@@ -156,7 +156,7 @@ class FlowStep(Base):
     gates: str = Column(Text, default="[]")
     ifs: str = Column(Text, default="[]")
     agent_alias: str = Column(String(50), default="normal")
-    step_type: str = Column(String(20), default="code")
+    step_type: str = Column(String(20), default="agent")
     allow_max: bool = Column(Boolean, default=False)
     max_gate_retries: int = Column(Integer, default=5)
     skills: str = Column(Text, default="[]")
