@@ -1,7 +1,7 @@
 """Base executor abstraction for step execution."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -21,16 +21,18 @@ class StepContext:
     working_path: Path
     space_dir: Path
     artifacts_dir: Path
-    tools: list[str] = field(default_factory=list)
     gate_failures: Optional[list[dict]] = None
     resume_prompt: str = ""
     attempt: int = 1
     user_responses: Optional[list[dict]] = None
     space_variables: Optional[dict] = None
     skills: Optional[list[dict]] = None
-    worktree_path: Optional[Path] = None
     log_path: str = ""
     prompt_content: str = ""
+
+    @property
+    def step_dir_name(self) -> str:
+        return f"{self.step_position:02d}-{self.step_name.replace(' ', '-')}"
 
 
 @dataclass

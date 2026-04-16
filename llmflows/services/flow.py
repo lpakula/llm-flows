@@ -44,12 +44,15 @@ class FlowService:
         space_id: str,
         description: str = "",
         steps: Optional[list[dict]] = None,
+        requirements: Optional[dict] = None,
     ) -> Flow:
         existing = self.get_by_name(name, space_id)
         if existing:
             raise ValueError(f"Flow '{name}' already exists in this space")
 
         flow = Flow(name=name, space_id=space_id, description=description)
+        if requirements:
+            flow.requirements = json.dumps(requirements)
         self.session.add(flow)
         self.session.flush()
 
@@ -67,7 +70,6 @@ class FlowService:
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
-                    tools=_serialize_json_list(step_data.get("tools")),
                 )
                 self.session.add(step)
 
@@ -122,7 +124,6 @@ class FlowService:
         agent_alias: str = "normal", step_type: str = "default",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
-        tools: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -140,7 +141,6 @@ class FlowService:
             step_type=_normalize_step_type(step_type),
             allow_max=allow_max, max_gate_retries=max_gate_retries,
             skills=_serialize_json_list(skills),
-            tools=_serialize_json_list(tools),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -219,8 +219,7 @@ class FlowService:
              "step_type": _normalize_step_type(s.step_type),
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
-             "skills": s.get_skills(),
-             "tools": s.get_tools()}
+             "skills": s.get_skills()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -228,6 +227,7 @@ class FlowService:
             space_id=source.space_id,
             description=source.description,
             steps=steps_data,
+            requirements=source.get_requirements(),
         )
 
     def build_flow_snapshot(self, flow_name: str, space_id: Optional[str] = None) -> Optional[dict]:
@@ -239,6 +239,7 @@ class FlowService:
             "id": source.id,
             "name": source.name,
             "description": source.description or "",
+            "requirements": source.get_requirements(),
             "steps": [
                 {
                     "name": s.name,
@@ -251,7 +252,6 @@ class FlowService:
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
-                    "tools": s.get_tools(),
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
@@ -266,11 +266,14 @@ class FlowService:
             "flows": [],
         }
         for flow in flows:
+            reqs = flow.get_requirements()
             flow_data = {
                 "name": flow.name,
                 "description": flow.description,
                 "steps": [],
             }
+            if reqs.get("variables") or reqs.get("tools"):
+                flow_data["requirements"] = reqs
             for s in sorted(flow.steps, key=lambda s: s.position):
                 step_data = {"name": s.name, "position": s.position, "content": s.content}
                 gates = s.get_gates()
@@ -291,9 +294,6 @@ class FlowService:
                 skills = s.get_skills()
                 if skills:
                     step_data["skills"] = skills
-                tools = s.get_tools()
-                if tools:
-                    step_data["tools"] = tools
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -322,6 +322,9 @@ class FlowService:
                 for step in list(existing.steps):
                     self.session.delete(step)
                 existing.description = flow_data.get("description", "")
+                reqs = flow_data.get("requirements")
+                if reqs:
+                    existing.requirements = json.dumps(reqs)
                 existing.updated_at = datetime.now(timezone.utc)
                 self.session.flush()
 
@@ -338,7 +341,6 @@ class FlowService:
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
-                        tools=_serialize_json_list(step_data.get("tools")),
                     )
                     self.session.add(step)
             else:
@@ -347,22 +349,51 @@ class FlowService:
                     space_id=space_id,
                     description=flow_data.get("description", ""),
                     steps=flow_data.get("steps", []),
+                    requirements=flow_data.get("requirements"),
                 )
             count += 1
 
         self.session.commit()
         return count
 
-    def validate_flow(self, flow_id: str) -> list[dict]:
+    def validate_flow(self, flow_id: str, space_id: Optional[str] = None) -> list[dict]:
         """Validate a flow's configuration. Returns a list of warning dicts."""
-        from ..config import AGENT_REGISTRY
-        from ..db.models import AgentAlias, AgentConfig
+        from ..config import AGENT_REGISTRY, load_system_config
+        from ..db.models import AgentAlias, AgentConfig, Space
 
         flow = self.get(flow_id)
         if not flow:
             return [{"step_name": "", "warning_type": "missing_flow", "message": "Flow not found"}]
 
         warnings: list[dict] = []
+
+        reqs = flow.get_requirements()
+        req_vars = reqs.get("variables", [])
+        req_tools = reqs.get("tools", [])
+
+        if req_vars:
+            sid = space_id or flow.space_id
+            space = self.session.query(Space).filter_by(id=sid).first()
+            space_vars = space.get_variables() if space else {}
+            for var in req_vars:
+                if not space_vars.get(var):
+                    warnings.append({
+                        "step_name": "",
+                        "warning_type": "missing_variable",
+                        "message": f"Required variable '{var}' is not set. Configure it in Space Settings > Variables.",
+                    })
+
+        if req_tools:
+            sys_config = load_system_config()
+            for tool in req_tools:
+                tool_config = sys_config.get(tool, {})
+                if not tool_config.get("enabled", False):
+                    warnings.append({
+                        "step_name": "",
+                        "warning_type": "missing_tool",
+                        "message": f"Required tool '{tool}' is not enabled. Enable it in Settings > Tools.",
+                    })
+
         for step in flow.steps:
             st = _normalize_step_type(step.step_type)
             alias_name = step.agent_alias or "normal"
@@ -411,15 +442,5 @@ class FlowService:
                             "message": f"API key '{api_key_env}' not configured for provider '{agent_key}'. "
                                        f"Set it as an env variable or in agent config on the Agents page.",
                         })
-
-            tools = step.get_tools()
-            supported = reg.get("supports_tools", [])
-            for tool in tools:
-                if tool not in supported:
-                    warnings.append({
-                        "step_name": step.name,
-                        "warning_type": "unsupported_tool",
-                        "message": f"Tool '{tool}' is not supported by provider '{agent_key}'.",
-                    })
 
         return warnings

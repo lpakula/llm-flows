@@ -37,7 +37,6 @@ export interface FlowRun {
   completed_at: string | null;
   created_at: string;
   log_path: string | null;
-  one_shot: boolean;
   paused_at: string | null;
   resume_prompt: string;
   duration_seconds: number | null;
@@ -53,11 +52,17 @@ export interface FlowWarning {
   message: string;
 }
 
+export interface FlowRequirements {
+  variables: string[];
+  tools: string[];
+}
+
 export interface Flow {
   id: string;
   space_id: string;
   name: string;
   description: string;
+  requirements: FlowRequirements;
   step_count: number;
   steps: FlowStep[];
   warnings?: FlowWarning[];
@@ -77,7 +82,6 @@ export interface FlowStep {
   allow_max: boolean;
   max_gate_retries: number;
   skills: string[];
-  tools: string[];
 }
 
 export interface Gate {
@@ -100,6 +104,24 @@ export interface GatewayConfig {
   telegram_enabled: boolean;
   telegram_bot_token: string;
   telegram_allowed_chat_ids: number[];
+}
+
+export interface ToolConfigField {
+  key: string;
+  label: string;
+  type: "select" | "secret" | "text";
+  options?: { value: string; label: string; hint?: string }[];
+  placeholder?: string;
+  show_when?: Record<string, string>;
+}
+
+export interface ToolConfig {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  config: Record<string, string>;
+  config_fields: ToolConfigField[];
 }
 
 export interface DashboardEntry {

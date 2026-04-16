@@ -66,7 +66,7 @@ class SkillService:
 
             results.append(SkillInfo(
                 name=skill_dir.name,
-                path=str(skill_file),
+                path=str(skill_file.relative_to(project_path)),
                 description=description,
                 compatibility=compatibility,
             ))

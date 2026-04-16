@@ -5,7 +5,7 @@ step transitions; the agent receives a self-contained prompt, does the
 work, and exits.
 
 Agent output is streamed to a per-step log file.
-Agent PID is stored in .llmflows/agent.pid for liveness checks.
+Agent PID is stored in .llmflows/runs/<run_id>/agent.pid for liveness checks.
 """
 
 import logging
@@ -23,15 +23,15 @@ logger = logging.getLogger("llmflows.agent")
 
 
 class AgentService:
-    def __init__(self, space_dir: Path, worktree_path: Optional[Path] = None):
+    def __init__(self, space_dir: Path, working_path: Optional[Path] = None):
         """Initialize agent service.
 
         Args:
             space_dir: .llmflows/ dir in the main space
-            worktree_path: Path to the worktree root (if launching in a worktree)
+            working_path: Root of the working directory for the agent
         """
         self.space_dir = space_dir
-        self.worktree_path = worktree_path or space_dir.parent
+        self.working_path = working_path or space_dir.parent
 
     def prepare_and_launch_step(
         self,
@@ -50,6 +50,8 @@ class AgentService:
         step_type: str = "agent",
         space_variables: Optional[dict] = None,
         skills: Optional[list[dict]] = None,
+        extensions: Optional[list[str]] = None,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[bool, str, str]:
         """Render a step prompt and launch an agent for it.
 
@@ -61,7 +63,7 @@ class AgentService:
             )
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        wt_llmflows = self.worktree_path / ".llmflows"
+        wt_llmflows = self.working_path / ".llmflows"
         wt_llmflows.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(wt_llmflows)
 
@@ -70,7 +72,7 @@ class AgentService:
         previous_artifacts = context_svc.collect_artifacts(artifacts_dir)
 
         is_summary = step_name == "__summary__"
-        step_output_dir = artifacts_dir / f"{step_position:02d}-{step_name}" if not is_summary else None
+        step_output_dir = artifacts_dir / ContextService.step_dir_name(step_position, step_name) if not is_summary else None
 
         spc_vars = space_variables or {}
         prompt_vars = {
@@ -92,18 +94,20 @@ class AgentService:
 
         prompts_dir = Path.home() / ".llmflows" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
-        prompt_md = prompts_dir / f"{run_id}-{step_position:02d}-{step_name}.md"
+        prompt_md = prompts_dir / f"{run_id}-{ContextService.step_dir_name(step_position, step_name)}.md"
         prompt_md.write_text(prompt_content)
 
+        run_dir = wt_llmflows / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
         attempt_suffix = f"-a{attempt}" if attempt and attempt > 1 else ""
-        log_file = wt_llmflows / f"agent-{run_id}-{step_position:02d}-{step_name}{attempt_suffix}.log"
-        pid_dir = wt_llmflows / run_id
-        pid_dir.mkdir(parents=True, exist_ok=True)
-        pid_file = pid_dir / "agent.pid"
+        log_file = run_dir / f"agent-{ContextService.step_dir_name(step_position, step_name)}{attempt_suffix}.log"
+        pid_file = run_dir / "agent.pid"
         launched = self._launch_agent(
-            self.worktree_path, prompt_md, log_file, pid_file,
+            self.working_path, prompt_md, log_file, pid_file,
             model=model, agent=agent,
             space_variables=spc_vars,
+            extensions=extensions,
+            extra_env=extra_env,
         )
         return launched, prompt_content, str(log_file)
 
@@ -124,7 +128,7 @@ class AgentService:
     def _ensure_gitignore(llmflows_dir: Path) -> None:
         """Ensure .llmflows/ has a .gitignore for ephemeral files."""
         gi = llmflows_dir / ".gitignore"
-        entries = {"agent-*.log", "agent.pid", "*/artifacts/"}
+        entries = {"runs/"}
         if gi.exists():
             existing = gi.read_text()
             missing = [e for e in sorted(entries) if e not in existing]
@@ -139,6 +143,8 @@ class AgentService:
         self, directory: Path, prompt_file: Path, log_file: Path, pid_file: Path,
         model: str = "", agent: str = "cursor",
         space_variables: Optional[dict] = None,
+        extensions: Optional[list[str]] = None,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> bool:
         """Launch the selected agent backend with output streamed to a log file."""
         reg = AGENT_REGISTRY.get(agent)
@@ -152,7 +158,7 @@ class AgentService:
         prompt_content = prompt_file.read_text()
 
         try:
-            cmd = self._build_agent_command(reg, prompt_file, prompt_content, model)
+            cmd = self._build_agent_command(reg, prompt_file, prompt_content, model, extensions=extensions)
             env = os.environ.copy()
             env["IS_SANDBOX"] = "1"
 
@@ -173,6 +179,8 @@ class AgentService:
 
             for k, v in (space_variables or {}).items():
                 env[k] = str(v)
+            for k, v in (extra_env or {}).items():
+                env[k] = v
 
             fh = open(log_file, "w")
             proc = subprocess.Popen(
@@ -190,7 +198,7 @@ class AgentService:
 
     @staticmethod
     def _build_agent_command(reg: dict, prompt_file: Path, prompt_content: str,
-                             model: str) -> list[str]:
+                             model: str, extensions: Optional[list[str]] = None) -> list[str]:
         """Build the CLI command list for a given agent backend."""
         binary = reg["binary"]
         mode = reg["prompt_mode"]
@@ -214,6 +222,8 @@ class AgentService:
             cmd = ["pi", "-p", prompt_content, "--mode", "json"]
             if model:
                 cmd.extend(["--model", model])
+            for ext in (extensions or []):
+                cmd.extend(["--extension", ext])
             return cmd
 
         cmd = [binary]
@@ -229,7 +239,7 @@ class AgentService:
     ) -> Optional[Path]:
         """Return the agent.pid path for a run, or None if not locatable."""
         if run_id:
-            return Path(project_path) / ".llmflows" / run_id / "agent.pid"
+            return Path(project_path) / ".llmflows" / "runs" / run_id / "agent.pid"
         return None
 
     @staticmethod

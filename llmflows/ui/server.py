@@ -32,11 +32,13 @@ class FlowCreate(BaseModel):
     name: str
     description: str = ""
     copy_from: Optional[str] = None
+    requirements: Optional[dict] = None
 
 
 class FlowUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    requirements: Optional[dict] = None
 
 
 class StepCreate(BaseModel):
@@ -50,7 +52,6 @@ class StepCreate(BaseModel):
     allow_max: bool = False
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
-    tools: Optional[list[str]] = None
 
 
 class StepUpdate(BaseModel):
@@ -64,7 +65,6 @@ class StepUpdate(BaseModel):
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
     skills: Optional[list[str]] = None
-    tools: Optional[list[str]] = None
 
 
 class StepRespondBody(BaseModel):
@@ -77,7 +77,6 @@ class ReorderSteps(BaseModel):
 
 class ScheduleBody(BaseModel):
     flow_id: str
-    one_shot: bool = False
 
 
 class DaemonConfigBody(BaseModel):
@@ -90,6 +89,11 @@ class GatewayConfigBody(BaseModel):
     telegram_enabled: Optional[bool] = None
     telegram_bot_token: Optional[str] = None
     telegram_allowed_chat_ids: Optional[list[int]] = None
+
+
+class ToolConfigBody(BaseModel):
+    enabled: Optional[bool] = None
+    config: Optional[dict] = None
 
 
 class SpaceSettingsUpdate(BaseModel):
@@ -189,6 +193,71 @@ async def update_gateway_config(body: GatewayConfigBody):
         "telegram_bot_token": tg.get("bot_token", ""),
         "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
     }
+
+
+TOOL_REGISTRY: list[dict] = [
+    {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": "Allow agents to search the web and fetch page content.",
+        "defaults": {"provider": "duckduckgo", "brave_api_key": ""},
+        "config_fields": [
+            {
+                "key": "provider",
+                "label": "Search Provider",
+                "type": "select",
+                "options": [
+                    {"value": "duckduckgo", "label": "DuckDuckGo", "hint": "No API key required"},
+                    {"value": "brave", "label": "Brave Search", "hint": "Requires API key"},
+                ],
+            },
+            {
+                "key": "brave_api_key",
+                "label": "Brave API Key",
+                "type": "secret",
+                "placeholder": "BSA...",
+                "show_when": {"provider": "brave"},
+            },
+        ],
+    },
+]
+
+
+def _tool_response(tool_def: dict, config: dict) -> dict:
+    tool_id = tool_def["id"]
+    stored = config.get(tool_id, {})
+    defaults = tool_def.get("defaults", {})
+    return {
+        "id": tool_id,
+        "name": tool_def["name"],
+        "description": tool_def["description"],
+        "enabled": stored.get("enabled", False),
+        "config": {k: stored.get(k, v) for k, v in defaults.items()},
+        "config_fields": tool_def.get("config_fields", []),
+    }
+
+
+@app.get("/api/config/tools")
+async def get_tools_config():
+    config = load_system_config()
+    return [_tool_response(t, config) for t in TOOL_REGISTRY]
+
+
+@app.patch("/api/config/tools/{tool_id}")
+async def update_tool_config(tool_id: str, body: ToolConfigBody):
+    tool_def = next((t for t in TOOL_REGISTRY if t["id"] == tool_id), None)
+    if not tool_def:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    config = load_system_config()
+    if tool_id not in config:
+        config[tool_id] = {}
+    if body.enabled is not None:
+        config[tool_id]["enabled"] = body.enabled
+    if body.config is not None:
+        for key, value in body.config.items():
+            config[tool_id][key] = value
+    save_system_config(config)
+    return _tool_response(tool_def, config)
 
 
 @app.post("/api/daemon/stop")
@@ -416,11 +485,7 @@ async def schedule_flow_run(space_id: str, body: ScheduleBody):
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
 
-        one_shot = body.one_shot
-        if one_shot and flow_svc.has_human_steps(flow.name, space_id=space_id):
-            one_shot = False
-
-        run = run_svc.enqueue(space_id, body.flow_id, one_shot=one_shot)
+        run = run_svc.enqueue(space_id, body.flow_id)
         return run.to_dict()
     finally:
         session.close()
@@ -592,22 +657,6 @@ async def get_run_steps(run_id: str):
         flow_svc = FlowService(session)
         step_runs = run_svc.list_step_runs(run_id)
 
-        one_shot_sr = next(
-            (sr for sr in step_runs if sr.step_name == "__one_shot__"), None
-        )
-        if one_shot_sr or bool(run.one_shot):
-            result = []
-            if one_shot_sr:
-                result.append({
-                    "name": "__one_shot__",
-                    "flow": one_shot_sr.flow_name,
-                    "status": one_shot_sr.status,
-                    "has_ifs": False,
-                    "step_run": one_shot_sr.to_dict(),
-                    "attempts": [one_shot_sr.to_dict()],
-                })
-            return {"steps": result}
-
         step_runs_by_name: dict[str, list] = {}
         for sr in step_runs:
             step_runs_by_name.setdefault(sr.step_name, []).append(sr)
@@ -659,7 +708,7 @@ async def get_run_steps(run_id: str):
                         artifacts_dir = ContextService.get_artifacts_dir(
                             Path(space.path), run_id,
                         )
-                        result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                        result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                         if result_file.exists():
                             step_data["user_message"] = result_file.read_text().strip()
                     except (PermissionError, OSError):
@@ -1046,7 +1095,7 @@ async def get_inbox():
                     artifacts_dir = ContextService.get_artifacts_dir(
                         Path(space.path), run.id,
                     )
-                    result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                    result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                     if result_file.exists():
                         user_message = result_file.read_text().strip()
                 except (PermissionError, OSError):
@@ -1236,6 +1285,7 @@ async def create_space_flow(space_id: str, body: FlowCreate):
                 name=body.name,
                 space_id=space_id,
                 description=body.description,
+                requirements=body.requirements,
             )
         return flow.to_dict()
     except ValueError as e:
@@ -1254,6 +1304,8 @@ async def update_flow(flow_id: str, body: FlowUpdate):
             updates["name"] = body.name
         if body.description is not None:
             updates["description"] = body.description
+        if body.requirements is not None:
+            updates["requirements"] = json.dumps(body.requirements)
         flow = flow_svc.update(flow_id, **updates)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1287,7 +1339,6 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
             skills=body.skills,
-            tools=body.tools,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1322,8 +1373,6 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["max_gate_retries"] = body.max_gate_retries
         if body.skills is not None:
             updates["skills"] = json.dumps(body.skills)
-        if body.tools is not None:
-            updates["tools"] = json.dumps(body.tools)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")

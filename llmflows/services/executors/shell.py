@@ -56,7 +56,7 @@ class ShellExecutor(StepExecutor):
             output = f"## Error\n\nFailed to execute command: {e}"
             success = False
 
-        step_output_dir = ctx.artifacts_dir / f"{ctx.step_position:02d}-{ctx.step_name}"
+        step_output_dir = ctx.artifacts_dir / ctx.step_dir_name
         step_output_dir.mkdir(parents=True, exist_ok=True)
         result_file = step_output_dir / "_result.md"
         result_file.write_text(output)
@@ -72,7 +72,7 @@ class ShellExecutor(StepExecutor):
         return False
 
     def get_output(self, ctx: StepContext) -> Optional[str]:
-        result_file = ctx.artifacts_dir / f"{ctx.step_position:02d}-{ctx.step_name}" / "_result.md"
+        result_file = ctx.artifacts_dir / ctx.step_dir_name / "_result.md"
         if result_file.exists():
             return result_file.read_text()
         return None

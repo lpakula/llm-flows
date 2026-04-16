@@ -42,6 +42,7 @@ import type {
   FlowRun,
   Flow,
   FlowStep,
+  FlowWarning,
   AgentAlias,
   DaemonStatus,
   DaemonConfig,
@@ -52,6 +53,7 @@ import type {
   AgentConfigEntry,
   ProviderInfo,
   GatewayConfig,
+  ToolConfig,
   SkillInfo,
 } from "./types";
 
@@ -81,8 +83,8 @@ export const api = {
     patch<AgentAlias>(`/api/agent-aliases/${id}`, body),
 
   // Scheduling
-  scheduleFlow: (spaceId: string, flowId: string, oneShot = false) =>
-    post<FlowRun>(`/api/spaces/${spaceId}/schedule`, { flow_id: flowId, one_shot: oneShot }),
+  scheduleFlow: (spaceId: string, flowId: string) =>
+    post<FlowRun>(`/api/spaces/${spaceId}/schedule`, { flow_id: flowId }),
 
   // Flow Runs
   listFlowRuns: (spaceId: string) => get<FlowRun[]>(`/api/spaces/${spaceId}/runs`),
@@ -107,8 +109,9 @@ export const api = {
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
   createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
     post<Flow>(`/api/spaces/${spaceId}/flows`, body),
-  updateFlow: (id: string, body: Partial<{ name: string; description: string }>) =>
+  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { variables: string[]; tools: string[] } }>) =>
     patch<Flow>(`/api/flows/${id}`, body),
+  validateFlow: (id: string) => get<{ warnings: FlowWarning[] }>(`/api/flows/${id}/validate`),
   deleteFlow: (id: string) => del<{ ok: boolean }>(`/api/flows/${id}`),
   addStep: (flowId: string, body: Record<string, unknown>) =>
     post<FlowStep>(`/api/flows/${flowId}/steps`, body),
@@ -152,5 +155,10 @@ export const api = {
   // Gateway
   getGatewayConfig: () => get<GatewayConfig>("/api/config/gateway"),
   updateGatewayConfig: (body: Partial<GatewayConfig>) => patch<GatewayConfig>("/api/config/gateway", body),
+
+  // Tools
+  getToolsConfig: () => get<ToolConfig[]>("/api/config/tools"),
+  updateToolConfig: (toolId: string, body: { enabled?: boolean; config?: Record<string, string> }) =>
+    patch<ToolConfig>(`/api/config/tools/${toolId}`, body),
 
 };

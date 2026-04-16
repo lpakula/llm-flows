@@ -82,9 +82,7 @@ export function RunDetailView() {
         const stepLabel =
           activeStep.name === "__summary__"
             ? "summary"
-            : activeStep.name === "__one_shot__"
-              ? "one-shot"
-              : activeStep.name;
+            : activeStep.name;
         setViewingStepName(stepLabel);
         setViewingStepPrompt(activeStep.step_run.prompt || null);
         setViewingStepAgentModel({
@@ -103,7 +101,7 @@ export function RunDetailView() {
   const viewStepLogs = (step: StepRunInfo) => {
     if (!step.step_run) return;
     setLogUrl(`/api/step-runs/${step.step_run.id}/logs`);
-    const name = step.name === "__summary__" ? "summary" : step.name === "__one_shot__" ? "one-shot" : step.name;
+    const name = step.name === "__summary__" ? "summary" : step.name;
     setViewingStepName(name);
     setViewingStepPrompt(step.step_run.prompt || null);
     setViewingStepAgentModel({
@@ -235,7 +233,7 @@ export function RunDetailView() {
             <div className="flex items-center overflow-x-auto pb-1">
               {steps.map((step, i) => {
                 const attempts = step.attempts || [];
-                const stepLabel = step.name === "__one_shot__" ? "one-shot" : step.name === "__summary__" ? "summary" : step.name;
+                const stepLabel = step.name === "__summary__" ? "summary" : step.name;
                 const isCancelled = run ? displayStatus(run) === "cancelled" : false;
                 const resolveStatus = (s: string) =>
                   isCancelled && (s === "failed" || s === "error") ? "skipped" : s;

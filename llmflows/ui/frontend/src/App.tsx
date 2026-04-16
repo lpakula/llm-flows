@@ -11,6 +11,7 @@ import { SpaceFlowsView } from "@/views/Flows";
 import { FlowEditorView } from "@/views/FlowEditor";
 import { AgentsView } from "@/views/Agents";
 import { GatewayView } from "@/views/Gateway";
+import { ToolsView } from "@/views/Tools";
 import { SettingsView } from "@/views/Settings";
 import { SpaceSettingsView } from "@/views/SpaceSettings";
 import { SkillsView } from "@/views/Skills";
@@ -72,6 +73,7 @@ function AppInner() {
           <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />
           <Route path="/gateway" element={<GatewayView />} />
+          <Route path="/tools" element={<ToolsView />} />
           <Route path="/settings" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

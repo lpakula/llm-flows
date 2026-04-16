@@ -15,13 +15,11 @@ class RunService:
     def __init__(self, session: Session):
         self.session = session
 
-    def enqueue(self, space_id: str, flow_id: str,
-                one_shot: bool = False) -> FlowRun:
+    def enqueue(self, space_id: str, flow_id: str) -> FlowRun:
         """Create a FlowRun in the queue."""
         run = FlowRun(
             space_id=space_id,
             flow_id=flow_id,
-            one_shot=one_shot,
         )
         self.session.add(run)
         self.session.commit()
@@ -121,7 +119,7 @@ class RunService:
                 Path(run.space.path), run_id,
             )
             for sr in steps_to_delete:
-                step_artifact_dir = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}"
+                step_artifact_dir = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name)
                 if step_artifact_dir.exists():
                     shutil.rmtree(step_artifact_dir, ignore_errors=True)
 
@@ -329,7 +327,7 @@ class RunService:
                 artifacts_dir = ContextService.get_artifacts_dir(
                     Path(space.path), run.id,
                 )
-                result_file = artifacts_dir / f"{sr.step_position:02d}-{sr.step_name}" / "_result.md"
+                result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                 if result_file.exists():
                     user_message = result_file.read_text().strip()
             except (PermissionError, OSError):

@@ -162,15 +162,12 @@ def run_show(run_id):
 
 @run.command("schedule")
 @click.option("--flow", "-f", "flow_id", required=True, help="Flow ID to run")
-@click.option("--one-shot", "one_shot", is_flag=True,
-              help="Run all steps in a single prompt (for capable models)")
 @click.option("--space", "-s", "space_id", default=None, help="Space ID")
-def run_schedule(flow_id, one_shot, space_id):
+def run_schedule(flow_id, space_id):
     """Schedule a new flow run.
 
     Examples:
       llmflows run schedule --flow abc123
-      llmflows run schedule --flow abc123 --one-shot
     """
     session = _get_session()
     try:
@@ -192,14 +189,7 @@ def run_schedule(flow_id, one_shot, space_id):
             click.echo(f"Flow {flow_id} not found.")
             raise SystemExit(1)
 
-        if one_shot and flow_svc.has_human_steps(flow.name, space_id=space.id):
-            click.echo(
-                click.style("Warning: ", fg="yellow")
-                + f"flow '{flow.name}' contains manual/prompt steps — ignoring --one-shot"
-            )
-            one_shot = False
-
-        new_run = run_svc.enqueue(space.id, flow_id, one_shot=one_shot)
+        new_run = run_svc.enqueue(space.id, flow_id)
         click.echo(
             f"Scheduled run {click.style(new_run.id, fg='cyan')} "
             f"for flow {click.style(flow.name, fg='bright_green')} "

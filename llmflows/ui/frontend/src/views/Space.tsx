@@ -231,9 +231,9 @@ export function SpaceView() {
 
   const openRunDetail = (runId: string) => navigate(`/space/${spaceId}/run/${runId}`);
 
-  const submitSchedule = async (flowId: string, oneShot: boolean) => {
+  const submitSchedule = async (flowId: string) => {
     if (!spaceId) return;
-    await api.scheduleFlow(spaceId, flowId, oneShot);
+    await api.scheduleFlow(spaceId, flowId);
     load();
   };
 

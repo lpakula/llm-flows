@@ -113,7 +113,7 @@ class TestScheduleAPI:
         fid = api_db["flow_id"]
         response = client.post(
             f"/api/spaces/{sid}/schedule",
-            json={"flow_id": fid, "one_shot": False},
+            json={"flow_id": fid},
         )
         assert response.status_code == 200
         data = response.json()
@@ -124,6 +124,6 @@ class TestScheduleAPI:
         sid = api_db["space_id"]
         response = client.post(
             f"/api/spaces/{sid}/schedule",
-            json={"flow_id": "nope", "one_shot": False},
+            json={"flow_id": "nope"},
         )
         assert response.status_code == 404

@@ -15,9 +15,11 @@ from .agent import AgentService
 from .context import ContextService
 from .executors import get_executor, StepContext
 from .flow import FlowService, _normalize_step_type
-from .gate import evaluate_gates, evaluate_ifs, _interpolate
+from .gate import evaluate_gates, evaluate_ifs
 from .space import SpaceService
 from .run import RunService
+
+_step_dir_name = ContextService.step_dir_name
 
 logger = logging.getLogger("llmflows.daemon")
 
@@ -298,12 +300,12 @@ class Daemon:
             run_svc.mark_step_completed(step_run.id, outcome="cancelled")
             return
 
-        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{run.id}-{step_run.step_position:02d}-{step_run.step_name}.md"
+        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{run.id}-{_step_dir_name(step_run.step_position, step_run.step_name)}.md"
         prompt_file.unlink(missing_ok=True)
 
         space_root = Path(space.path)
         step_artifacts = ContextService.get_artifacts_dir(space_root, run.id) / \
-            f"{step_run.step_position:02d}-{step_run.step_name}" / "attachments"
+            _step_dir_name(step_run.step_position, step_run.step_name) / "attachments"
         if step_artifacts.is_dir():
             self._publish_attachments(step_artifacts, run.id)
 
@@ -329,7 +331,7 @@ class Daemon:
             try:
                 result_file = ContextService.get_artifacts_dir(
                     space_root, run.id,
-                ) / f"{step_run.step_position:02d}-{step_run.step_name}" / "_result.md"
+                ) / _step_dir_name(step_run.step_position, step_run.step_name) / "_result.md"
                 if result_file.exists():
                     user_message = result_file.read_text().strip()
             except (PermissionError, OSError):
@@ -360,14 +362,6 @@ class Daemon:
             f" (${cost_usd:.4f}, {token_count} tokens)" if cost_usd else "",
         )
 
-        if step_run.step_name == "__one_shot__":
-            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
-            summary = ContextService.read_summary_artifact(artifacts_dir)
-            logger.info("Run %s one-shot completed", run.id)
-            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
-            self._maybe_create_completed_inbox(run, run_svc)
-            return
-
         self._post_step_completion(
             run, space, step_run, working_path, run_svc, flow_svc,
         )
@@ -381,7 +375,7 @@ class Daemon:
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space_root = Path(space.path)
         artifact_dir = ContextService.get_artifacts_dir(space_root, run.id)
-        step_artifact_dir = artifact_dir / f"{step_run.step_position:02d}-{step_run.step_name}"
+        step_artifact_dir = artifact_dir / _step_dir_name(step_run.step_position, step_run.step_name)
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": step_run.flow_name,
@@ -561,24 +555,9 @@ class Daemon:
         """Launch the first step of a run that has been started but has no steps yet."""
         flow_name = run.flow_name
         if not flow_name:
-            self._launch_one_shot(
-                run, working_path,
-                run_svc, flow_svc,
-            )
+            logger.error("Run %s has no flow_name, cannot launch", run.id)
+            run_svc.mark_completed(run.id, outcome="error")
             return
-
-        if run.one_shot:
-            if flow_name and flow_svc.has_human_steps(flow_name, space_id=run.space_id):
-                logger.warning(
-                    "Run %s: one-shot disabled — flow '%s' contains hitl steps",
-                    run.id, flow_name,
-                )
-            else:
-                self._launch_one_shot(
-                    run, working_path,
-                    run_svc, flow_svc,
-                )
-                return
 
         if not run.flow_snapshot:
             snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=run.space_id)
@@ -633,102 +612,6 @@ class Daemon:
             run_svc, flow_svc,
         )
 
-    def _launch_one_shot(
-        self, run, working_path: Path,
-        run_svc: RunService, flow_svc: FlowService,
-    ) -> None:
-        """Assemble all steps into a single prompt and launch one agent."""
-        gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
-
-        collected_steps = []
-        active_flow = run.flow_name or "default"
-
-        if run.flow_name:
-            step_vars = self._build_step_vars({
-                "run.id": run.id, "flow.name": run.flow_name,
-            }, space)
-            step_names = flow_svc.get_flow_steps(run.flow_name, space_id=run.space_id)
-            for sname in step_names:
-                step_obj = flow_svc.get_step_obj(run.flow_name, sname, space_id=run.space_id)
-                if not step_obj:
-                    continue
-                ifs = step_obj.get_ifs()
-                if ifs and not evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
-                    continue
-                content = (step_obj.content or "").rstrip()
-                if content:
-                    content = _interpolate(content, step_vars)
-                gates = list(step_obj.get_gates())
-                collected_steps.append({
-                    "name": sname,
-                    "content": content,
-                    "gates": gates,
-                })
-
-        space_root = Path(space.path)
-        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
-        ctx = ContextService(working_path / ".llmflows")
-        summary_content = ctx.render_summary_step({
-            "artifacts_dir": str(artifacts_dir),
-        })
-        collected_steps.append({
-            "name": "summary",
-            "content": summary_content,
-            "gates": [],
-        })
-
-        resolved_agent, resolved_model = resolve_alias(run_svc.session, "code", "max")
-
-        step_run = run_svc.create_step_run(
-            run_id=run.id,
-            step_name="__one_shot__",
-            step_position=0,
-            flow_name=active_flow,
-            agent=resolved_agent,
-            model=resolved_model,
-        )
-        run_svc.update_run_step(run.id, "__one_shot__", active_flow)
-
-        prompt_content = ctx.render_one_shot({
-            "run_id": run.id,
-            "flow_name": run.flow_name or "",
-            "steps": collected_steps,
-            "artifacts_dir": str(artifacts_dir),
-        })
-
-        space_dir = Path(space.path) / ".llmflows"
-        agent_svc = AgentService(space_dir, working_path)
-
-        wt_llmflows = working_path / ".llmflows" / run.id
-        wt_llmflows.mkdir(parents=True, exist_ok=True)
-
-        prompts_dir = Path.home() / ".llmflows" / "prompts"
-        prompts_dir.mkdir(parents=True, exist_ok=True)
-        prompt_file = prompts_dir / f"{run.id}-00-__one_shot__.md"
-        prompt_file.write_text(prompt_content)
-
-        log_file = wt_llmflows / f"agent-{run.id}-00-__one_shot__.log"
-        pid_file = wt_llmflows / "agent.pid"
-
-        launched = agent_svc._launch_agent(
-            working_path, prompt_file, log_file, pid_file,
-            model=resolved_model, agent=resolved_agent,
-            space_variables=space.get_variables(),
-        )
-
-        if launched:
-            run_svc.set_step_prompt(step_run.id, prompt_content)
-            run_svc.set_step_log_path(step_run.id, str(log_file))
-            logger.info(
-                "Launched one-shot run %s (agent=%s, model=%s, steps=%d)",
-                run.id, resolved_agent, resolved_model, len(collected_steps),
-            )
-        else:
-            logger.error("Failed to launch one-shot agent for run %s", run.id)
-            run_svc.mark_step_completed(step_run.id, outcome="error")
-            run_svc.mark_completed(run.id, outcome="error")
-
     def _launch_step(
         self, run, working_path: Path,
         step_name: str, step_position: int, flow_name: str,
@@ -744,7 +627,7 @@ class Daemon:
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
-        step_artifact_dir = artifacts_dir / f"{step_position:02d}-{step_name}"
+        step_artifact_dir = artifacts_dir / _step_dir_name(step_position, step_name)
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": flow_name,
@@ -761,10 +644,6 @@ class Daemon:
             (snap_step or {}).get("step_type")
             or getattr(step_obj, 'step_type', None)
         )
-
-        tools = (snap_step or {}).get("tools") or (
-            step_obj.get_tools() if step_obj and hasattr(step_obj, 'get_tools') else []
-        ) or []
 
         alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "normal"
         alias_type = "code" if step_type == "code" else "pi"
@@ -834,14 +713,12 @@ class Daemon:
             working_path=working_path,
             space_dir=space_dir,
             artifacts_dir=artifacts_dir,
-            tools=tools,
             gate_failures=gate_failures,
             resume_prompt=resume_prompt,
             attempt=attempt,
             user_responses=user_responses,
             space_variables=space.get_variables(),
             skills=skill_refs,
-            worktree_path=working_path,
         )
         result = executor.launch(ctx)
 

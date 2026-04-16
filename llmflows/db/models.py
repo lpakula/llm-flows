@@ -112,6 +112,7 @@ class Flow(Base):
     space_id: str = Column(String(6), ForeignKey("spaces.id"), nullable=False)
     name: str = Column(String(255), nullable=False)
     description: str = Column(Text, default="")
+    requirements: str = Column(Text, default="{}")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -120,12 +121,24 @@ class Flow(Base):
     steps = relationship("FlowStep", back_populates="flow", cascade="all, delete-orphan",
                          order_by="FlowStep.position")
 
+    def get_requirements(self) -> dict:
+        import json
+        try:
+            raw = json.loads(self.requirements or "{}")
+        except (json.JSONDecodeError, TypeError):
+            raw = {}
+        return {
+            "variables": raw.get("variables", []),
+            "tools": raw.get("tools", []),
+        }
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "space_id": self.space_id,
             "name": self.name,
             "description": self.description,
+            "requirements": self.get_requirements(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "steps": [s.to_dict() for s in self.steps],
@@ -178,14 +191,6 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
-    def get_tools(self) -> list[str]:
-        """Parse tools JSON into a list of tool names."""
-        import json
-        try:
-            return json.loads(self.tools or "[]")
-        except (json.JSONDecodeError, TypeError):
-            return []
-
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -200,7 +205,6 @@ class FlowStep(Base):
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
-            "tools": self.get_tools(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -301,7 +305,6 @@ class FlowRun(Base):
             "summary": self.summary,
             "steps_completed": self.steps_completed,
             "recovery_count": self.recovery_count or 0,
-            "one_shot": bool(self.one_shot),
             "paused_at": self.paused_at.isoformat() if self.paused_at else None,
             "resume_prompt": self.resume_prompt or "",
             "created_at": self.created_at.isoformat() if self.created_at else None,

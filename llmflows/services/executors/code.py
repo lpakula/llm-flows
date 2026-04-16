@@ -17,8 +17,7 @@ logger = logging.getLogger("llmflows.executor.code")
 class CodeExecutor(StepExecutor):
 
     def launch(self, ctx: StepContext) -> LaunchResult:
-        worktree = ctx.worktree_path or ctx.working_path
-        agent_svc = AgentService(ctx.space_dir, worktree)
+        agent_svc = AgentService(ctx.space_dir, ctx.working_path)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=ctx.run_id,
@@ -51,7 +50,7 @@ class CodeExecutor(StepExecutor):
         )
 
     def get_output(self, ctx: StepContext) -> Optional[str]:
-        result_file = ctx.artifacts_dir / f"{ctx.step_position:02d}-{ctx.step_name}" / "_result.md"
+        result_file = ctx.artifacts_dir / ctx.step_dir_name / "_result.md"
         if result_file.exists():
             return result_file.read_text()
         return None

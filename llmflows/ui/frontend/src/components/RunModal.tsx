@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import type { Flow } from "@/api/types";
+import { api } from "@/api/client";
+import type { Flow, FlowWarning } from "@/api/types";
 
 function FlowDropdown({
   flows,
@@ -98,22 +99,36 @@ export function ScheduleModal({
 }: {
   flows: Flow[];
   onClose: () => void;
-  onSubmit: (flowId: string, oneShot: boolean) => Promise<void>;
+  onSubmit: (flowId: string) => Promise<void>;
 }) {
   const [selectedFlowId, setSelectedFlowId] = useState(flows[0]?.id ?? "");
-  const [oneShot, setOneShot] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [warnings, setWarnings] = useState<FlowWarning[]>([]);
+  const [loadingWarnings, setLoadingWarnings] = useState(false);
 
-  const selectedFlow = flows.find((f) => f.id === selectedFlowId);
-  const hasHumanSteps = selectedFlow?.steps.some(
-    (s) => s.step_type === "hitl",
-  ) ?? false;
+  const hasBlockingWarnings = warnings.some(
+    (w) => w.warning_type === "missing_variable" || w.warning_type === "missing_tool",
+  );
+
+  useEffect(() => {
+    if (!selectedFlowId) { setWarnings([]); return; }
+    let cancelled = false;
+    setLoadingWarnings(true);
+    api.validateFlow(selectedFlowId).then((res) => {
+      if (!cancelled) setWarnings(res.warnings);
+    }).catch(() => {
+      if (!cancelled) setWarnings([]);
+    }).finally(() => {
+      if (!cancelled) setLoadingWarnings(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectedFlowId]);
 
   const submit = async () => {
     if (!selectedFlowId) return;
     setSubmitting(true);
     try {
-      await onSubmit(selectedFlowId, oneShot && !hasHumanSteps);
+      await onSubmit(selectedFlowId);
       onClose();
     } finally {
       setSubmitting(false);
@@ -139,33 +154,15 @@ export function ScheduleModal({
           {flows.length === 0 && (
             <p className="text-xs text-gray-600 italic">No flows defined for this space.</p>
           )}
-
-          {/* One-shot */}
-          <div>
-            <label className={`flex items-center gap-2 text-sm select-none ${hasHumanSteps ? "cursor-not-allowed text-gray-600" : "cursor-pointer text-gray-400"}`}>
-              <input
-                type="checkbox"
-                checked={oneShot && !hasHumanSteps}
-                onChange={(e) => setOneShot(e.target.checked)}
-                disabled={hasHumanSteps}
-                className="rounded"
-              />
-              One-shot
-            </label>
-            <p className="text-xs text-gray-600 mt-1 ml-5">
-              {hasHumanSteps
-                ? "Not available — this flow contains human-in-the-loop steps that require user interaction."
-                : <>All flow steps and their gates are combined into a single prompt and handed to the agent at once. Gates are included as guidance but not enforced — no retries, no step-by-step validation. Uses the <span className="text-gray-400 font-mono">max</span> alias (highest-capability model).</>
-              }
-            </p>
-          </div>
         </div>
 
-        {selectedFlow?.warnings && selectedFlow.warnings.length > 0 && (
+        {!loadingWarnings && warnings.length > 0 && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2 mt-4">
-            <p className="text-xs text-amber-400 font-medium mb-1">Configuration warnings:</p>
+            <p className="text-xs text-amber-400 font-medium mb-1">
+              {hasBlockingWarnings ? "Cannot run — missing requirements:" : "Configuration warnings:"}
+            </p>
             <ul className="space-y-0.5">
-              {selectedFlow.warnings.map((w, i) => (
+              {warnings.map((w, i) => (
                 <li key={i} className="text-xs text-amber-300/80">
                   {w.step_name && <span className="font-mono mr-1">{w.step_name}:</span>}
                   {w.message}
@@ -181,7 +178,7 @@ export function ScheduleModal({
           </button>
           <button
             onClick={submit}
-            disabled={submitting || !selectedFlowId}
+            disabled={submitting || !selectedFlowId || hasBlockingWarnings || loadingWarnings}
             className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-500 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {submitting ? "Scheduling…" : "Run"}

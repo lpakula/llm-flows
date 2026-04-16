@@ -1,6 +1,6 @@
 """Context service -- renders step prompts and collects artifacts."""
 
-import json
+
 from pathlib import Path
 
 from jinja2 import Environment, TemplateError
@@ -43,18 +43,6 @@ class ContextService:
     def render_summary_step(self, context: dict) -> str:
         """Render summary_step.md as step content for the auto-appended summary step."""
         template_file = DEFAULTS_DIR / "step_summary.md"
-        if not template_file.exists():
-            return ""
-        try:
-            env = Environment(autoescape=False)
-            template = env.from_string(template_file.read_text())
-            return template.render(context)
-        except TemplateError:
-            return ""
-
-    def render_one_shot(self, context: dict) -> str:
-        """Render one_shot.md with all steps assembled into a single prompt."""
-        template_file = DEFAULTS_DIR / "one_shot.md"
         if not template_file.exists():
             return ""
         try:
@@ -157,3 +145,8 @@ class ContextService:
     def get_artifacts_dir(project_path: Path, run_id: str) -> Path:
         """Return the artifacts directory for a run, always under the main space root."""
         return project_path / ".llmflows" / "runs" / run_id / "artifacts"
+
+    @staticmethod
+    def step_dir_name(position: int, step_name: str) -> str:
+        """Build a filesystem-safe artifact directory name for a step."""
+        return f"{position:02d}-{step_name.replace(' ', '-').lower()}"

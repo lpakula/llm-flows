@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Flow, FlowStep, FlowWarning, Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
+import type { Flow, FlowStep, FlowRequirements, FlowWarning, Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
 
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
   { value: "default", label: "Default", desc: "Pi-powered LLM with read/write/shell tools" },
@@ -11,9 +11,70 @@ const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
   { value: "hitl", label: "HITL (human in the loop)", desc: "LLM + human approval" },
 ];
 
-const AVAILABLE_TOOLS = ["web_search"];
-
 const VARIABLES = ["{{run.id}}", "{{flow.name}}", "{{artifacts_dir}}", "{{steps.<name>.user_response}}"];
+
+const KNOWN_TOOLS = ["web_search"];
+
+function TagInput({
+  tags,
+  onChange,
+  placeholder,
+  suggestions,
+}: {
+  tags: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  suggestions?: string[];
+}) {
+  const [input, setInput] = useState("");
+
+  const add = (value: string) => {
+    const v = value.trim();
+    if (v && !tags.includes(v)) onChange([...tags, v]);
+    setInput("");
+  };
+
+  const unusedSuggestions = suggestions?.filter((s) => !tags.includes(s)) || [];
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {tags.map((t) => (
+          <span
+            key={t}
+            className="inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono"
+          >
+            {t}
+            <button
+              onClick={() => onChange(tags.filter((x) => x !== t))}
+              className="text-gray-500 hover:text-red-400 ml-0.5"
+            >
+              x
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add(input))}
+          placeholder={placeholder}
+          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-gray-500 w-48"
+        />
+        {unusedSuggestions.map((s) => (
+          <button
+            key={s}
+            onClick={() => add(s)}
+            className="text-xs text-gray-500 hover:text-gray-300 border border-gray-700 rounded px-2 py-1 hover:border-gray-500"
+          >
+            + {s}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function GateEditor({
   label,
@@ -113,41 +174,6 @@ function StepSkillPicker({
   );
 }
 
-function ToolsPicker({
-  selected,
-  onChange,
-}: {
-  selected: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const toggle = (name: string) => {
-    if (selected.includes(name)) onChange(selected.filter((s) => s !== name));
-    else onChange([...selected, name]);
-  };
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-gray-400 font-medium">Tools</span>
-        <span className="text-xs text-gray-600">Provider-native tools for this step</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {AVAILABLE_TOOLS.map((t) => {
-          const active = selected.includes(t);
-          const base = "px-3 py-1.5 rounded-lg text-xs font-mono border transition cursor-pointer";
-          const style = active
-            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-            : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300";
-          return (
-            <button key={t} onClick={() => toggle(t)} className={`${base} ${style}`}>
-              {t}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function StepEditForm({
   form,
   aliases,
@@ -167,7 +193,6 @@ function StepEditForm({
     allow_max: boolean;
     max_gate_retries: number;
     skills: string[];
-    tools: string[];
   };
   aliases: AgentAlias[];
   skills: SkillInfo[];
@@ -180,9 +205,8 @@ function StepEditForm({
   const aliasType = st === "code" ? "code" : "pi";
   const filteredAliases = aliases.filter((a) => a.type === aliasType);
   const showAlias = st !== "shell";
-  const showSkills = st === "code";
+  const showSkills = st !== "shell";
   const hasGates = form.gates.length > 0;
-  const showTools = false;
 
   return (
     <div className="p-5 space-y-4">
@@ -215,10 +239,6 @@ function StepEditForm({
           selected={form.skills}
           onChange={(s) => onChange({ skills: s })}
         />
-      )}
-
-      {showTools && (
-        <ToolsPicker selected={form.tools} onChange={(t) => onChange({ tools: t })} />
       )}
 
       <GateEditor
@@ -271,7 +291,7 @@ function StepEditForm({
           <label className="text-xs text-gray-400 font-medium block mb-1">Step Type</label>
           <select
             value={form.step_type}
-            onChange={(e) => onChange({ step_type: e.target.value, tools: [] })}
+            onChange={(e) => onChange({ step_type: e.target.value })}
             className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm"
           >
             {STEP_TYPES.map((t) => (
@@ -337,18 +357,18 @@ export function FlowEditorView() {
 
   const [flow, setFlow] = useState<Flow | null>(null);
   const [editingMeta, setEditingMeta] = useState(false);
-  const [metaForm, setMetaForm] = useState({ name: "", description: "" });
+  const [metaForm, setMetaForm] = useState({ name: "", description: "", requirements: { variables: [], tools: [] } as FlowRequirements });
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [stepForm, setStepForm] = useState({
     name: "", content: "", gates: [] as Gate[], ifs: [] as Gate[],
     agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
-    skills: [] as string[], tools: [] as string[],
+    skills: [] as string[],
   });
   const [showAddStep, setShowAddStep] = useState(false);
   const [newStep, setNewStep] = useState({
     name: "", content: "", position: "", gates: [] as Gate[], ifs: [] as Gate[],
     agent_alias: "normal", step_type: "default" as string, allow_max: false, max_gate_retries: 3,
-    skills: [] as string[], tools: [] as string[],
+    skills: [] as string[],
   });
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
   const [spaceSkills, setSpaceSkills] = useState<SkillInfo[]>([]);
@@ -361,7 +381,7 @@ export function FlowEditorView() {
     const [f, al] = await Promise.all([api.getFlow(flowId), api.listAgentAliases()]);
     setFlow(f);
     setSelectedSpaceId(f.space_id);
-    setMetaForm({ name: f.name, description: f.description || "" });
+    setMetaForm({ name: f.name, description: f.description || "", requirements: f.requirements || { variables: [], tools: [] } });
     setAliases(al);
     setLocalOrder([...f.steps].sort((a, b) => a.position - b.position).map((s) => s.id));
     try {
@@ -376,7 +396,7 @@ export function FlowEditorView() {
 
   const saveMeta = async () => {
     if (!flow) return;
-    await api.updateFlow(flow.id, { name: metaForm.name, description: metaForm.description });
+    await api.updateFlow(flow.id, { name: metaForm.name, description: metaForm.description, requirements: metaForm.requirements });
     setEditingMeta(false);
     load();
     reload();
@@ -394,7 +414,6 @@ export function FlowEditorView() {
       allow_max: step.allow_max || false,
       max_gate_retries: step.max_gate_retries ?? 3,
       skills: step.skills || [],
-      tools: step.tools || [],
     });
   };
 
@@ -410,7 +429,6 @@ export function FlowEditorView() {
       allow_max: stepForm.allow_max,
       max_gate_retries: stepForm.max_gate_retries,
       skills: stepForm.skills,
-      tools: stepForm.tools,
     });
     setEditingStep(null);
     load();
@@ -426,7 +444,6 @@ export function FlowEditorView() {
       allow_max: newStep.allow_max,
       max_gate_retries: newStep.max_gate_retries,
       skills: newStep.skills,
-      tools: newStep.tools,
     };
     const gates = newStep.gates.filter((g) => g.command.trim());
     const ifs = newStep.ifs.filter((g) => g.command.trim());
@@ -434,7 +451,7 @@ export function FlowEditorView() {
     if (ifs.length) body.ifs = ifs;
     if (newStep.position) body.position = parseInt(newStep.position);
     await api.addStep(flow.id, body);
-    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "default", allow_max: false, max_gate_retries: 3, skills: [], tools: [] });
+    setNewStep({ name: "", content: "", position: "", gates: [], ifs: [], agent_alias: "normal", step_type: "default", allow_max: false, max_gate_retries: 3, skills: [] });
     setShowAddStep(false);
     load();
   };
@@ -487,6 +504,20 @@ export function FlowEditorView() {
                 {flow?.description && (
                   <p className="text-sm text-gray-400 mt-1">{flow.description}</p>
                 )}
+                {flow?.requirements && (flow.requirements.variables.length > 0 || flow.requirements.tools.length > 0) && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {flow.requirements.variables.map((v) => (
+                      <span key={v} className="text-[10px] font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400">
+                        var:{v}
+                      </span>
+                    ))}
+                    {flow.requirements.tools.map((t) => (
+                      <span key={t} className="text-[10px] font-mono bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-emerald-400">
+                        tool:{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <div className="space-y-2">
@@ -501,6 +532,25 @@ export function FlowEditorView() {
                   placeholder="Description"
                   className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
                 />
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-400 font-medium block mb-1">Required Variables</label>
+                    <TagInput
+                      tags={metaForm.requirements.variables}
+                      onChange={(variables) => setMetaForm({ ...metaForm, requirements: { ...metaForm.requirements, variables } })}
+                      placeholder="e.g. GITHUB_TOKEN"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 font-medium block mb-1">Required Tools</label>
+                    <TagInput
+                      tags={metaForm.requirements.tools}
+                      onChange={(tools) => setMetaForm({ ...metaForm, requirements: { ...metaForm.requirements, tools } })}
+                      placeholder="e.g. web_search"
+                      suggestions={KNOWN_TOOLS}
+                    />
+                  </div>
+                </div>
                 <div className="flex gap-3">
                   <button onClick={saveMeta} className="text-xs text-blue-400 hover:text-blue-300">
                     Save
@@ -643,9 +693,6 @@ export function FlowEditorView() {
                       </span>
                       {step.agent_alias && step.step_type !== "shell" && (
                         <span className="text-[10px] text-cyan-400">{step.agent_alias}</span>
-                      )}
-                      {step.tools?.length > 0 && (
-                        <span className="text-[10px] text-emerald-400">{step.tools.join(", ")}</span>
                       )}
                       {step.allow_max && <span className="text-[10px] text-yellow-400">max</span>}
                       {step.max_gate_retries !== 3 && (
