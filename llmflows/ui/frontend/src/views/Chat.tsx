@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { RotateCcw, Send, Loader2, Workflow, Rocket, HelpCircle, ArrowUp } from "lucide-react";
+import { RotateCcw, Loader2, Workflow, Rocket, HelpCircle, ArrowUp } from "lucide-react";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
 import { MarkdownContent } from "@/components/MarkdownContent";
