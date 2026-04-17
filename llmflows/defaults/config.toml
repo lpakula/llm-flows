@@ -5,6 +5,9 @@ gate_timeout_seconds = 60
 [ui]
 port = 4300
 host = "localhost"
+[browser]
+enabled = false
+headless = true
 [telegram]
 enabled = false
 bot_token = ""

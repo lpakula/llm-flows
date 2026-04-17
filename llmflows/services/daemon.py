@@ -16,6 +16,7 @@ from .context import ContextService
 from .executors import get_executor, StepContext
 from .flow import FlowService, _normalize_step_type
 from .gate import evaluate_gates, evaluate_ifs
+from .browser import BrowserService
 from .space import SpaceService
 from .run import RunService
 
@@ -59,6 +60,7 @@ class Daemon:
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
         from .gateway.notifications import NotificationService
         self.notifications = NotificationService()
+        self.browser_service = BrowserService()
         self._telegram = None
 
     @staticmethod
@@ -68,6 +70,22 @@ class Daemon:
         for k, v in space.get_variables().items():
             merged[f"space.{k}"] = v
         return merged
+
+    def _finalize_run(self, run_id: str) -> None:
+        """Cleanup run-scoped resources (browser, etc.)."""
+        self.browser_service.cleanup(run_id)
+
+    @staticmethod
+    def _flow_requires_browser(run) -> bool:
+        """Check if the run's flow snapshot declares a browser tool requirement."""
+        if not run.flow_snapshot:
+            return False
+        try:
+            snap = json.loads(run.flow_snapshot)
+            tools = snap.get("requirements", {}).get("tools", [])
+            return "browser" in tools
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+            return False
 
     def _maybe_start_telegram(self) -> None:
         """Start the Telegram bot if configured."""
@@ -105,6 +123,7 @@ class Daemon:
                 logger.exception("Error in daemon tick")
             self._stop_event.wait(self.poll_interval)
 
+        self.browser_service.cleanup_all()
         if self._telegram:
             self._telegram.stop()
         logger.info("Daemon stopped")
@@ -257,6 +276,7 @@ class Daemon:
             working_path=working_path,
             space_dir=Path(space.path) / ".llmflows",
             artifacts_dir=artifacts_dir,
+            log_path=step_run.log_path or "",
         )
         agent_running = executor.is_running(ctx)
 
@@ -278,6 +298,7 @@ class Daemon:
                     )
                     AgentService.kill_agent(space.path, run_id=run.id)
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
+                    self._finalize_run(run.id)
                     run_svc.mark_completed(run.id, outcome="timeout")
                     self.notifications.notify("run.timeout", {
                         "flow_name": run.flow_name or run.id,
@@ -455,6 +476,7 @@ class Daemon:
                         "Run %s step '%s' gate failed after %d retries, marking interrupted",
                         run.id, step_run.step_name, retry_count,
                     )
+                    self._finalize_run(run.id)
                     run_svc.mark_completed(run.id, outcome="interrupted")
                     self.notifications.notify("run.completed", {
                         "flow_name": run.flow_name or run.id,
@@ -487,6 +509,7 @@ class Daemon:
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Run %s completed", run.id)
+            self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
             return
@@ -556,6 +579,7 @@ class Daemon:
         flow_name = run.flow_name
         if not flow_name:
             logger.error("Run %s has no flow_name, cannot launch", run.id)
+            self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="error")
             return
 
@@ -563,6 +587,7 @@ class Daemon:
             snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=run.space_id)
             if not snapshot:
                 logger.error("Flow '%s' not found for run %s", flow_name, run.id)
+                self._finalize_run(run.id)
                 run_svc.mark_completed(run.id, outcome="error")
                 return
             run.flow_snapshot = json.dumps(snapshot)
@@ -576,6 +601,7 @@ class Daemon:
         steps = self._get_snapshot_steps(run)
         if not steps:
             logger.error("Flow '%s' has no steps for run %s", flow_name, run.id)
+            self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="error")
             return
 
@@ -702,6 +728,17 @@ class Daemon:
             for info in SkillService.resolve_skills(space.path, skill_names):
                 skill_refs.append({"name": info.name, "description": info.description, "path": info.path})
 
+        extra_env: dict[str, str] = {}
+        browser_config = load_system_config().get("browser", {})
+        if self._flow_requires_browser(run) and browser_config.get("enabled", False):
+            headless = browser_config.get("headless", True)
+            try:
+                ws = self.browser_service.ensure_browser(run.id, headless=headless)
+                extra_env["BROWSER_WS_ENDPOINT"] = ws
+                extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
+            except Exception:
+                logger.exception("Failed to start browser for run %s", run.id)
+
         space_dir = Path(space.path) / ".llmflows"
         executor = get_executor(step_type)
         ctx = StepContext(
@@ -722,6 +759,7 @@ class Daemon:
             user_responses=user_responses,
             space_variables=space.get_variables(),
             skills=skill_refs,
+            extra_env=extra_env,
         )
         result = executor.launch(ctx)
 
@@ -768,6 +806,7 @@ class Daemon:
                 step_name, run.id,
             )
             run_svc.mark_step_completed(step_run.id, outcome="error")
+            self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="error")
 
     def _launch_summary_step(
@@ -825,6 +864,7 @@ class Daemon:
             run_svc.mark_step_completed(step_run.id, outcome="error")
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
             summary = ContextService.read_summary_artifact(artifacts_dir)
+            self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
 

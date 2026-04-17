@@ -344,7 +344,10 @@ Flows can declare requirements — tools and variables they need to function. Re
 
 A list of tool names that must be enabled in system config (Settings > Tools). If a required tool is not enabled, a `missing_tool` warning is shown in the UI. The run modal treats this as a **blocking warning** — the user must enable the tool before starting.
 
-Currently supported tools: `"web_search"` (gives Pi steps access to `web_search` and `web_fetch` tools).
+Currently supported tools:
+
+- `"web_search"` — gives Pi steps access to `web_search` and `web_fetch` tools for searching the web and fetching page content.
+- `"browser"` — gives Pi steps access to `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` tools for controlling a real Chromium browser. The browser session persists across all steps in a run, so login state, cookies, and page context carry over between steps. 
 
 ### `requirements.variables`
 
@@ -439,6 +442,66 @@ The export/import format. One file can contain multiple flows.
 ```
 
 Fields at their default values can be omitted — see the Step Fields Reference for defaults.
+
+---
+
+## Browser Automation
+
+Flows can control a real Chromium browser by declaring `"browser"` in `requirements.tools`. The browser session is managed by the daemon and persists across all steps in a run — login state, cookies, and open pages carry over between steps, including across `hitl` pauses.
+
+### How it works
+
+1. When a run starts and the flow requires `"browser"`, the daemon launches a Chromium browser server
+2. Each step's agent receives browser tools that connect to the running browser
+3. The agent interacts with pages using a **snapshot-and-ref model**: `browser_snapshot` returns a text representation of the page where interactive elements are tagged with `[ref=N]`, and the agent targets elements by ref number
+4. When the run completes (or fails/times out), the daemon kills the browser
+
+### Available browser tools
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `browser_navigate` | `url: string` | Navigate to a URL. Returns page snapshot with refs. |
+| `browser_snapshot` | *(none)* | Get current page structure with `[ref=N]` tags for interactive elements. |
+| `browser_click` | `ref: number` | Click an element by its ref number. Returns fresh snapshot. |
+| `browser_fill` | `ref: number, value: string` | Fill an input/textarea by ref. Clears existing content first. Returns fresh snapshot. |
+| `browser_screenshot` | `filename?: string` | Save a screenshot to the artifacts directory. Returns the file path. |
+
+### The snapshot-and-ref model
+
+Instead of CSS selectors, the agent sees a clean text representation of interactive elements:
+
+```
+Page: https://example.com/login
+
+heading "Sign In"
+  textbox "Email" [ref=1]
+  textbox "Password" [ref=2]
+  button "Sign In" [ref=3]
+  link "Forgot password?" [ref=4]
+```
+
+The agent then uses ref numbers to interact: `browser_fill(ref=1, value="user@example.com")`, `browser_click(ref=3)`. Refs are rebuilt on each snapshot/navigate/click/fill call, so they always reflect the current page state.
+
+### Writing browser steps
+
+- **Always start with `browser_navigate`** to go to the target URL — the agent gets a snapshot automatically
+- **Use `browser_snapshot`** after actions that change the page (navigation, form submissions) to see the updated state
+- **Use `browser_screenshot`** to capture visual confirmation and save to artifacts (useful for gates and for `hitl` steps where the user needs to see the page)
+- **Browser state persists across steps** — if step 1 logs in, step 2 sees the authenticated session
+- **`hitl` steps work naturally with browser** — the browser stays alive while waiting for user input (e.g., MFA codes)
+
+### Browser flow requirements
+
+```json
+{
+  "requirements": {
+    "tools": ["browser"],
+    "variables": ["USERNAME", "PASSWORD"]
+  }
+}
+```
+
+The `"browser"` tool must be enabled in Settings > Tools. Space variables are available in step content via `{{space.USERNAME}}` and as environment variables in shell steps.
 
 ---
 
@@ -583,6 +646,48 @@ When a step consumes output from a previous step, describe the format explicitly
         {"command": "test -f {{space.PROJECT_PATH}}/package.json", "message": "Node project exists"},
         {"command": "grep -q eslint {{space.PROJECT_PATH}}/package.json", "message": "ESLint configured"}
       ]
+    }
+  ]
+}
+```
+
+### Flow with browser automation and hitl
+
+```json
+{
+  "name": "login-and-act",
+  "description": "Log into a website with MFA, then perform an action in the browser.",
+  "requirements": {
+    "tools": ["browser"],
+    "variables": ["TARGET_URL", "USERNAME", "PASSWORD"]
+  },
+  "steps": [
+    {
+      "name": "login",
+      "position": 0,
+      "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{artifacts_dir}}/login.png`\n6. Write the current page state to `{{artifacts_dir}}/_result.md`",
+      "gates": [
+        {"command": "test -f {{artifacts_dir}}/login.png", "message": "Login screenshot must exist."}
+      ]
+    },
+    {
+      "name": "get-mfa-code",
+      "position": 1,
+      "step_type": "hitl",
+      "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{artifacts_dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{artifacts_dir}}/_result.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it"
+    },
+    {
+      "name": "submit-mfa",
+      "position": 2,
+      "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code provided by the user and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.get-mfa-code.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{artifacts_dir}}/_result.md`",
+      "gates": [
+        {"command": "test -f {{artifacts_dir}}/screenshot.png", "message": "Confirmation screenshot must exist."}
+      ]
+    },
+    {
+      "name": "perform-action",
+      "position": 3,
+      "content": "# PERFORM ACTION\n\n## PURPOSE\n\nExecute the target action in the authenticated browser session.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or `browser_snapshot` to find the target page/form\n2. Fill in any required fields and submit\n3. Take a `browser_screenshot` to confirm the action\n4. Write a summary of what was done to `{{artifacts_dir}}/_result.md`"
     }
   ]
 }

@@ -221,6 +221,23 @@ TOOL_REGISTRY: list[dict] = [
             },
         ],
     },
+    {
+        "id": "browser",
+        "name": "Browser",
+        "description": "Allow agents to control a real browser — navigate pages, click, fill forms, take screenshots. Requires Playwright.",
+        "defaults": {"headless": "true"},
+        "config_fields": [
+            {
+                "key": "headless",
+                "label": "Headless Mode",
+                "type": "select",
+                "options": [
+                    {"value": "true", "label": "Headless (no visible window)"},
+                    {"value": "false", "label": "Headed (visible browser window)"},
+                ],
+            },
+        ],
+    },
 ]
 
 
@@ -1568,8 +1585,9 @@ async def list_models(agent: Optional[str] = None):
 # --- Chat endpoints ---
 
 CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
-SAVE_FLOW_TOOL = Path(__file__).resolve().parents[2] / "tools" / "save-flow.ts"
-_SKILLS_FALLBACK_DIR = Path(__file__).resolve().parents[2] / ".agents" / "skills"
+SAVE_FLOW_TOOL = Path(__file__).resolve().parent.parent / "tools" / "save-flow.ts"
+_SKILLS_FALLBACK_DIR = Path(__file__).resolve().parent.parent.parent / ".agents" / "skills"
+_NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
 CHAT_SKILLS = ["flows", "overview"]
 
 
@@ -1715,6 +1733,8 @@ async def chat(body: ChatBody, request: Request):
         cmd.extend(["--extension", str(WEB_SEARCH_TOOL)])
         for k, v in _resolve_web_search_env().items():
             env[k] = v
+
+    env["NODE_PATH"] = str(_NODE_MODULES)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,

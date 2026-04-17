@@ -7,6 +7,10 @@ to how CodeExecutor works for Cursor/Claude Code.
 When web search is enabled in config.toml ([web_search] enabled = true),
 the web-search extension is loaded, giving Pi runs access to web_search
 and web_fetch tools.
+
+When browser is enabled and BROWSER_WS_ENDPOINT is set in ctx.extra_env,
+the browser extension is loaded, giving Pi runs access to browser_navigate,
+browser_snapshot, browser_click, browser_fill, and browser_screenshot tools.
 """
 
 import logging
@@ -18,7 +22,10 @@ from ..agent import AgentService
 
 logger = logging.getLogger("llmflows.executor.pi")
 
-WEB_SEARCH_TOOL = Path(__file__).resolve().parents[3] / "tools" / "web-search.ts"
+_TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
+_NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
+WEB_SEARCH_TOOL = _TOOLS_DIR / "web-search.ts"
+BROWSER_TOOL = _TOOLS_DIR / "browser.ts"
 
 
 def _load_web_search_config() -> dict:
@@ -50,10 +57,18 @@ class PiExecutor(StepExecutor):
         agent_svc = AgentService(ctx.space_dir, ctx.working_path)
 
         extensions = []
-        extra_env = {}
+        extra_env: dict[str, str] = {}
         if _is_web_search_enabled():
             extensions.append(str(WEB_SEARCH_TOOL))
-            extra_env = _resolve_web_search_env()
+            extra_env.update(_resolve_web_search_env())
+
+        if ctx.extra_env:
+            extra_env.update(ctx.extra_env)
+            if ctx.extra_env.get("BROWSER_WS_ENDPOINT"):
+                extensions.append(str(BROWSER_TOOL))
+
+        if extensions:
+            extra_env["NODE_PATH"] = str(_NODE_MODULES)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=ctx.run_id,
@@ -83,9 +98,32 @@ class PiExecutor(StepExecutor):
         )
 
     def is_running(self, ctx: StepContext) -> bool:
-        return AgentService.is_agent_running(
+        alive = AgentService.is_agent_running(
             str(ctx.working_path), run_id=ctx.run_id,
         )
+        if not alive:
+            return False
+        # Pi may have finished but the process hangs because an extension
+        # (e.g. browser) keeps a WebSocket connection alive.
+        #
+        # The NDJSON log's "agent_end" event is the definitive completion
+        # marker — the same signal the UI uses to render "Pi agent finished".
+        # It appears exactly once, as the last line.  The line can be 100 KB+
+        # (it embeds the full conversation), so we read a generous tail.
+        if ctx.log_path:
+            try:
+                log = Path(ctx.log_path)
+                if log.exists() and log.stat().st_size > 0:
+                    tail = log.read_bytes()[-262144:]
+                    if b'"type":"agent_end"' in tail:
+                        logger.info("Pi finished but process still alive — killing")
+                        AgentService.kill_agent(
+                            str(ctx.working_path), run_id=ctx.run_id,
+                        )
+                        return False
+            except Exception:
+                pass
+        return True
 
     def get_output(self, ctx: StepContext) -> Optional[str]:
         result_file = ctx.artifacts_dir / ctx.step_dir_name / "_result.md"

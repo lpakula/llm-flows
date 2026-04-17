@@ -57,7 +57,7 @@ log_muted() {
 }
 
 STAGE_CURRENT=0
-STAGE_TOTAL=4
+STAGE_TOTAL=5
 
 log_stage() {
     STAGE_CURRENT=$((STAGE_CURRENT + 1))
@@ -496,6 +496,105 @@ check_pipx() {
 }
 
 # ---------------------------------------------------------------------------
+# Node.js detection & installation (needed for browser tools / Playwright)
+# ---------------------------------------------------------------------------
+NODE_CMD=""
+
+find_node() {
+    NODE_CMD="$(command -v node 2>/dev/null || true)"
+    if [[ -n "$NODE_CMD" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+install_node() {
+    if [[ "$OS" == "macos" ]]; then
+        local brew_bin=""
+        brew_bin="$(resolve_brew_bin || true)"
+        if [[ -n "$brew_bin" ]]; then
+            activate_brew_for_session || true
+            run_quiet_step "Installing Node.js via Homebrew" "$brew_bin" install node
+            refresh_shell_command_cache
+        fi
+    elif [[ "$OS" == "linux" ]]; then
+        require_sudo
+        if command -v apt-get &>/dev/null; then
+            if is_root; then
+                run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs npm
+            else
+                run_quiet_step "Installing Node.js" sudo apt-get install -y -qq nodejs npm
+            fi
+        elif command -v dnf &>/dev/null; then
+            if is_root; then
+                run_quiet_step "Installing Node.js" dnf install -y -q nodejs npm
+            else
+                run_quiet_step "Installing Node.js" sudo dnf install -y -q nodejs npm
+            fi
+        fi
+        refresh_shell_command_cache
+    fi
+}
+
+check_node() {
+    log_info "Checking Node.js..."
+
+    if find_node; then
+        local version=""
+        version="$(node --version 2>/dev/null || true)"
+        log_success "Node.js ${version} found"
+        return 0
+    fi
+
+    log_info "Node.js not found, attempting install"
+    install_node
+
+    if find_node; then
+        local version=""
+        version="$(node --version 2>/dev/null || true)"
+        log_success "Node.js ${version} installed"
+        return 0
+    fi
+
+    log_warning "Node.js not found — browser tools will not be available"
+    log_muted "  Install Node.js from https://nodejs.org to enable browser automation"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Node tool dependencies (installed to ~/.llmflows/node_modules/)
+# ---------------------------------------------------------------------------
+install_node_tools() {
+    if ! command -v npm &>/dev/null; then
+        log_warning "npm not found — skipping Node tool dependencies"
+        return 1
+    fi
+
+    local tools_dir="$HOME/.llmflows"
+    mkdir -p "$tools_dir"
+
+    log_info "Installing Node tool dependencies to $tools_dir ..."
+
+    if run_quiet_step "Installing Node packages" npm install --prefix "$tools_dir" playwright "@sinclair/typebox" tsx; then
+        log_success "Node tool dependencies installed"
+    else
+        log_warning "Failed to install Node tool dependencies"
+        log_muted "  Run manually: npm install --prefix ~/.llmflows playwright @sinclair/typebox tsx"
+        return 1
+    fi
+
+    log_info "Downloading Chromium browser..."
+    if run_quiet_step "Downloading Chromium" "$tools_dir/node_modules/.bin/playwright" install chromium; then
+        log_success "Chromium browser downloaded"
+        return 0
+    fi
+
+    log_warning "Failed to download Chromium — browser tools may not work"
+    log_muted "  Run manually: ~/.llmflows/node_modules/.bin/playwright install chromium"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # llmflows installation
 # ---------------------------------------------------------------------------
 REPO_URL="git+https://github.com/lpakula/llm-flows"
@@ -715,7 +814,13 @@ main() {
     check_uv || true
     install_llmflows
 
-    # Stage 4: Verify
+    # Stage 4: Browser tools (Node.js + dependencies)
+    log_stage "Setting up browser tools"
+    if check_node; then
+        install_node_tools || true
+    fi
+
+    # Stage 5: Verify
     log_stage "Verifying"
     verify_installation
 

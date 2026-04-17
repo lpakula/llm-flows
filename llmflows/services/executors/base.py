@@ -27,6 +27,7 @@ class StepContext:
     user_responses: Optional[list[dict]] = None
     space_variables: Optional[dict] = None
     skills: Optional[list[dict]] = None
+    extra_env: Optional[dict[str, str]] = None
     log_path: str = ""
     prompt_content: str = ""
 

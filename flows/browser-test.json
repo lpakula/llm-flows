@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "flows": [
+    {
+      "name": "browser-test",
+      "description": "Test browser automation: navigate to a page, pause for user review, then click a navigation link.",
+      "requirements": {
+        "tools": ["browser"]
+      },
+      "steps": [
+        {
+          "name": "Navigate to page",
+          "position": 0,
+          "content": "# NAVIGATE TO PAGE\n\n## PURPOSE\n\nOpen the Anthropic Claude Opus 4.7 announcement page in the browser and capture its content.\n\n## TOOLS\n\nUse ONLY the browser_* tools. Do NOT use shell commands, curl, python, or web_fetch.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://www.anthropic.com/news/claude-opus-4-7\n2. Use `browser_snapshot` to see the full page structure\n3. Take a `browser_screenshot` and save as `{{artifacts_dir}}/page.png`\n4. Write to `{{artifacts_dir}}/_result.md` (using the snapshot output from step 2):\n   - The page title and URL\n   - A summary of what's visible on the page (headline, key content)\n   - List all navigation links visible in the header with their ref numbers",
+          "gates": [
+            {"command": "test -f {{artifacts_dir}}/page.png", "message": "Screenshot of the page must exist."}
+          ]
+        },
+        {
+          "name": "Review page",
+          "position": 1,
+          "step_type": "hitl",
+          "content": "# REVIEW PAGE\n\n## PURPOSE\n\nPause for the user to confirm the page loaded correctly before continuing.\n\n## WORKFLOW\n\n1. Read the previous step's result from `{{artifacts_dir}}/../00-navigate-to-page/_result.md`\n2. Write to `{{artifacts_dir}}/_result.md`:\n   - Summarize what the previous step found (page title, URL, key content)\n   - Ask: \"The page is loaded. I'll click the 'News' link next. Type 'go' to continue.\""
+        },
+        {
+          "name": "Click News link",
+          "position": 2,
+          "content": "# CLICK NEWS LINK\n\n## PURPOSE\n\nClick the \"News\" link in the header navigation and capture the resulting page.\n\n## TOOLS\n\nUse ONLY the browser_* tools. Do NOT use shell commands, curl, python, or web_fetch.\n\n## WORKFLOW\n\n1. Use `browser_snapshot` to find the \"News\" link in the header navigation\n2. Use `browser_click` with the ref number of the \"News\" link\n3. Wait for the page to load, then take a `browser_snapshot`\n4. Take a `browser_screenshot` and save as `{{artifacts_dir}}/news-page.png`\n5. Write to `{{artifacts_dir}}/_result.md` (using the snapshot output from step 3):\n   - Confirm the navigation to the News page succeeded\n   - The new page URL and title\n   - List the first few news article headlines visible on the page",
+          "gates": [
+            {"command": "test -f {{artifacts_dir}}/news-page.png", "message": "Screenshot of the News page must exist."}
+          ]
+        }
+      ]
+    }
+  ]
+}
