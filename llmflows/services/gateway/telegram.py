@@ -142,6 +142,9 @@ class TelegramBot:
             .build()
         )
 
+        from telegram.ext import CommandHandler
+        app.add_handler(CommandHandler("run", self._handle_run_command))
+        app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -149,6 +152,7 @@ class TelegramBot:
 
         try:
             self._loop.run_until_complete(app.initialize())
+            self._loop.run_until_complete(self._register_commands())
             self._loop.run_until_complete(app.start())
             self._loop.run_until_complete(
                 app.updater.start_polling(
@@ -163,10 +167,86 @@ class TelegramBot:
         finally:
             self._loop.close()
 
+    async def _register_commands(self) -> None:
+        from telegram import BotCommand
+        await self._app.bot.set_my_commands([
+            BotCommand("run", "Start a flow"),
+            BotCommand("active", "List active & queued runs"),
+        ])
+        logger.info("Telegram bot commands registered")
+
     def _is_allowed(self, chat_id: int) -> bool:
         if not self.allowed_ids:
             return True
         return chat_id in self.allowed_ids
+
+    # ── /run command — space → flow → enqueue ───────────────────────────────
+
+    async def _handle_run_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        from ..space import SpaceService
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            if not spaces:
+                await update.message.reply_text("No spaces registered.")
+                return
+            buttons = [
+                [InlineKeyboardButton(s.name, callback_data=f"space:{s.id}")]
+                for s in spaces
+            ]
+            await update.message.reply_text(
+                "Select a space:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        finally:
+            session.close()
+
+    # ── /active command — list running & queued runs ────────────────────────
+
+    async def _handle_active_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        from ..space import SpaceService
+        from ..run import RunService
+
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            run_svc = RunService(session)
+
+            lines: list[str] = []
+            for space in spaces:
+                active = run_svc.get_active_by_space(space.id)
+                pending = run_svc.get_all_pending(space.id)
+                if not active and not pending:
+                    continue
+                lines.append(f"<b>{space.name}</b>")
+                for r in active:
+                    step = r.current_step or "starting"
+                    lines.append(f"  ▶ {r.flow_name or '?'} — <i>{step}</i>  <code>{r.id}</code>")
+                for r in pending:
+                    lines.append(f"  ⏳ {r.flow_name or '?'} — queued  <code>{r.id}</code>")
+
+            if not lines:
+                await update.message.reply_text("No active or queued runs.")
+                return
+
+            await update.message.reply_text(
+                "\n".join(lines),
+                parse_mode="HTML",
+            )
+        finally:
+            session.close()
 
     # ── Message handler (prompt responses) ───────────────────────────────────
 
@@ -219,6 +299,14 @@ class TelegramBot:
                 pass
 
     async def _dispatch_callback(self, query, chat_id: int, data: str) -> None:
+        if data.startswith("space:"):
+            await self._cb_select_space(query, data[len("space:"):])
+            return
+
+        if data.startswith("run:"):
+            await self._cb_enqueue_run(query, data[len("run:"):])
+            return
+
         if data.startswith("respond:"):
             step_run_id = data[len("respond:"):]
             self._awaiting_response[chat_id] = step_run_id
@@ -262,6 +350,62 @@ class TelegramBot:
                     await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
                 except Exception:
                     logger.debug("Failed to delete attachment message %s", message_id)
+
+    # ── /run callback helpers ────────────────────────────────────────────────
+
+    async def _cb_select_space(self, query, space_id: str) -> None:
+        from ..space import SpaceService
+        from ..flow import FlowService
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                await query.edit_message_text("Space not found.")
+                return
+            flows = FlowService(session).list_by_space(space_id)
+            if not flows:
+                await query.edit_message_text(f"No flows in <b>{space.name}</b>.", parse_mode="HTML")
+                return
+            buttons = [
+                [InlineKeyboardButton(f.name, callback_data=f"run:{space_id}:{f.id}")]
+                for f in flows
+            ]
+            await query.edit_message_text(
+                f"<b>{space.name}</b> — select a flow:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        finally:
+            session.close()
+
+    async def _cb_enqueue_run(self, query, payload: str) -> None:
+        from ..run import RunService
+        from ..flow import FlowService
+
+        parts = payload.split(":", 1)
+        if len(parts) != 2:
+            await query.edit_message_text("Invalid selection.")
+            return
+        space_id, flow_id = parts
+
+        session = self.session_factory()
+        try:
+            flow_svc = FlowService(session)
+            flow = flow_svc.get(flow_id)
+            if not flow:
+                await query.edit_message_text("Flow not found.")
+                return
+
+            run_svc = RunService(session)
+            run = run_svc.enqueue(space_id, flow_id)
+            await query.edit_message_text(
+                f"Queued <b>{flow.name}</b>\nRun <code>{run.id}</code>",
+                parse_mode="HTML",
+            )
+        finally:
+            session.close()
 
     # ── NotificationChannel interface ────────────────────────────────────────
 
