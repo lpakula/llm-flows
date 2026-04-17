@@ -47,16 +47,18 @@ Other files saved to `{{artifacts_dir}}/` are also collected, but with a lower p
 ### Artifact directory layout
 
 ```
-.llmflows/runs/<run_id>/artifacts/
-├── 00-fetch-articles/         # Step 0 artifacts
-│   ├── _result.md             # Primary output (required)
-│   ├── article-1.md           # Additional files
-│   ├── article-2.md
-│   └── attachments/           # Published to run summary
-│       └── screenshot.png
-├── 01-summarize/              # Step 1 artifacts
-│   └── _result.md
-└── summary.md                 # Auto-generated run summary
+.llmflows/<flow-name>/                # Persistent flow directory ({{flow_dir}})
+├── runs/<run_id>/artifacts/          # Per-run artifacts ({{artifacts_dir}})
+│   ├── 00-fetch-articles/            # Step 0 artifacts
+│   │   ├── _result.md                # Primary output (required)
+│   │   ├── article-1.md              # Additional files
+│   │   ├── article-2.md
+│   │   └── attachments/              # Published to run summary
+│   │       └── screenshot.png
+│   ├── 01-summarize/                 # Step 1 artifacts
+│   │   └── _result.md
+│   └── summary.md                    # Auto-generated run summary
+└── ...                               # Any persistent cross-run data
 ```
 
 Step directories are named `NN-step-name` — zero-padded position + step name lowercased with spaces replaced by hyphens (e.g. step `"Fetch articles"` at position 0 → `00-fetch-articles`).
@@ -302,6 +304,7 @@ Step content, gate commands, gate messages, and IF commands support `{{variable}
 | `{{run.id}}` — current run ID | Yes | Yes | Yes |
 | `{{flow.name}}` — current flow name | Yes | Yes | Yes |
 | `{{artifacts_dir}}` — absolute path to this step's artifact output directory | Yes | Yes | **No** |
+| `{{flow_dir}}` — persistent flow directory (`.llmflows/<flow>/`), shared across runs | Yes | Yes | Yes |
 | `{{space.KEY}}` — space variable (set via Settings or CLI) | Yes | Yes | Yes |
 | `{{steps.STEP_NAME.user_response}}` — user's response from a completed `hitl` step | Yes | Yes | **No** |
 
@@ -344,7 +347,7 @@ Flows can declare requirements — tools and variables they need to function. Re
 
 A list of tool names that must be enabled in system config (Settings > Tools). If a required tool is not enabled, a `missing_tool` warning is shown in the UI. The run modal treats this as a **blocking warning** — the user must enable the tool before starting.
 
-Currently supported tools:
+Pi always has `read`, `write`, `edit`, and `shell` tools available — these do not need to be declared in `requirements.tools`. The following optional tools can be enabled:
 
 - `"web_search"` — gives Pi steps access to `web_search` and `web_fetch` tools for searching the web and fetching page content.
 - `"browser"` — gives Pi steps access to `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` tools for controlling a real Chromium browser. The browser session persists across all steps in a run, so login state, cookies, and page context carry over between steps. 

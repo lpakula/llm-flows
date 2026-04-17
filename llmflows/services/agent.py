@@ -5,7 +5,7 @@ step transitions; the agent receives a self-contained prompt, does the
 work, and exits.
 
 Agent output is streamed to a per-step log file.
-Agent PID is stored in .llmflows/runs/<run_id>/agent.pid for liveness checks.
+Agent PID is stored in .llmflows/<flow>/runs/<run_id>/agent.pid for liveness checks.
 """
 
 import logging
@@ -57,11 +57,15 @@ class AgentService:
 
         Returns (success, prompt_content, log_path).
         """
+        space_root = self.space_dir.parent
         if artifacts_dir is None:
             artifacts_dir = ContextService.get_artifacts_dir(
-                self.space_dir.parent, run_id,
+                space_root, run_id, flow_name,
             )
         artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        flow_dir = ContextService.get_flow_dir(space_root, flow_name)
+        flow_dir.mkdir(parents=True, exist_ok=True)
 
         wt_llmflows = self.working_path / ".llmflows"
         wt_llmflows.mkdir(parents=True, exist_ok=True)
@@ -78,6 +82,7 @@ class AgentService:
         prompt_vars = {
             "run_id": run_id,
             "flow_name": flow_name,
+            "flow_dir": str(flow_dir),
             "step_name": step_name,
             "step_content": step_content,
             "artifacts": previous_artifacts,
@@ -97,7 +102,8 @@ class AgentService:
         prompt_md = prompts_dir / f"{run_id}-{ContextService.step_dir_name(step_position, step_name)}.md"
         prompt_md.write_text(prompt_content)
 
-        run_dir = wt_llmflows / "runs" / run_id
+        safe_flow = ContextService._safe_flow_dir(flow_name) if flow_name else "_default"
+        run_dir = wt_llmflows / safe_flow / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         attempt_suffix = f"-a{attempt}" if attempt and attempt > 1 else ""
         log_file = run_dir / f"agent-{ContextService.step_dir_name(step_position, step_name)}{attempt_suffix}.log"
@@ -128,7 +134,7 @@ class AgentService:
     def _ensure_gitignore(llmflows_dir: Path) -> None:
         """Ensure .llmflows/ has a .gitignore for ephemeral files."""
         gi = llmflows_dir / ".gitignore"
-        entries = {"runs/"}
+        entries = {"*/runs/"}
         if gi.exists():
             existing = gi.read_text()
             missing = [e for e in sorted(entries) if e not in existing]
@@ -235,17 +241,18 @@ class AgentService:
 
     @staticmethod
     def _resolve_pid_file(
-        project_path: str, run_id: str = ""
+        project_path: str, run_id: str = "", flow_name: str = "",
     ) -> Optional[Path]:
         """Return the agent.pid path for a run, or None if not locatable."""
         if run_id:
-            return Path(project_path) / ".llmflows" / "runs" / run_id / "agent.pid"
+            safe_flow = ContextService._safe_flow_dir(flow_name) if flow_name else "_default"
+            return Path(project_path) / ".llmflows" / safe_flow / "runs" / run_id / "agent.pid"
         return None
 
     @staticmethod
-    def kill_agent(project_path: str, run_id: str = "") -> bool:
+    def kill_agent(project_path: str, run_id: str = "", flow_name: str = "") -> bool:
         """Kill the agent process for a run. Returns True if a process was killed."""
-        pid_file = AgentService._resolve_pid_file(project_path, run_id)
+        pid_file = AgentService._resolve_pid_file(project_path, run_id, flow_name)
         if not pid_file or not pid_file.exists():
             return False
         try:
@@ -267,9 +274,9 @@ class AgentService:
             return False
 
     @staticmethod
-    def is_agent_running(project_path: str, run_id: str = "") -> bool:
+    def is_agent_running(project_path: str, run_id: str = "", flow_name: str = "") -> bool:
         """Check if an agent process is alive for a given run."""
-        pid_file = AgentService._resolve_pid_file(project_path, run_id)
+        pid_file = AgentService._resolve_pid_file(project_path, run_id, flow_name)
         if not pid_file or not pid_file.exists():
             return False
         try:

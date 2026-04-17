@@ -46,7 +46,7 @@ class CodeExecutor(StepExecutor):
 
     def is_running(self, ctx: StepContext) -> bool:
         return AgentService.is_agent_running(
-            str(ctx.working_path), run_id=ctx.run_id,
+            str(ctx.working_path), run_id=ctx.run_id, flow_name=ctx.flow_name,
         )
 
     def get_output(self, ctx: StepContext) -> Optional[str]:

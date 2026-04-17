@@ -99,7 +99,7 @@ class PiExecutor(StepExecutor):
 
     def is_running(self, ctx: StepContext) -> bool:
         alive = AgentService.is_agent_running(
-            str(ctx.working_path), run_id=ctx.run_id,
+            str(ctx.working_path), run_id=ctx.run_id, flow_name=ctx.flow_name,
         )
         if not alive:
             return False
@@ -118,7 +118,7 @@ class PiExecutor(StepExecutor):
                     if b'"type":"agent_end"' in tail:
                         logger.info("Pi finished but process still alive — killing")
                         AgentService.kill_agent(
-                            str(ctx.working_path), run_id=ctx.run_id,
+                            str(ctx.working_path), run_id=ctx.run_id, flow_name=ctx.flow_name,
                         )
                         return False
             except Exception:

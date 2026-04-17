@@ -49,7 +49,7 @@ def agent_list(show_all):
         for spc in spaces:
             active_runs = run_svc.get_active_by_space(spc.id)
             for r in active_runs:
-                if AgentService.is_agent_running(spc.path, run_id=r.id):
+                if AgentService.is_agent_running(spc.path, run_id=r.id, flow_name=r.flow_name or ""):
                     found = True
                     click.echo(f"  {r.id}  {'running':10s}  {r.flow_name or 'run'}")
                     click.echo(f"         space: {spc.name}")

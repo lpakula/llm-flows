@@ -116,7 +116,7 @@ class RunService:
         if steps_to_delete and run.space:
             from .context import ContextService
             artifacts_dir = ContextService.get_artifacts_dir(
-                Path(run.space.path), run_id,
+                Path(run.space.path), run_id, run.flow_name or "",
             )
             for sr in steps_to_delete:
                 step_artifact_dir = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name)
@@ -325,7 +325,7 @@ class RunService:
             user_message = ""
             try:
                 artifacts_dir = ContextService.get_artifacts_dir(
-                    Path(space.path), run.id,
+                    Path(space.path), run.id, run.flow_name or "",
                 )
                 result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                 if result_file.exists():

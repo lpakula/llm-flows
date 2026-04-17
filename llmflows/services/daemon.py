@@ -92,7 +92,7 @@ class Daemon:
             "Run %s exceeded max spend $%.4f (limit $%.2f, step '%s')",
             run.id, total_cost, flow.max_spend_usd, step_run.step_name,
         )
-        AgentService.kill_agent(space.path, run_id=run.id)
+        AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
         run_svc.mark_step_completed(step_run.id, outcome="max_spend")
         self._finalize_run(run.id)
         run_svc.mark_completed(run.id, outcome="max_spend")
@@ -309,7 +309,7 @@ class Daemon:
         executor = get_executor(step_type)
 
         space_root = Path(space.path)
-        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = StepContext(
             run_id=run.id,
             step_name=step_run.step_name,
@@ -352,7 +352,7 @@ class Daemon:
                         "Run %s timed out after %dm (step '%s')",
                         run.id, int(elapsed / 60), step_run.step_name,
                     )
-                    AgentService.kill_agent(space.path, run_id=run.id)
+                    AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     self._finalize_run(run.id)
                     run_svc.mark_completed(run.id, outcome="timeout")
@@ -381,7 +381,7 @@ class Daemon:
         prompt_file.unlink(missing_ok=True)
 
         space_root = Path(space.path)
-        step_artifacts = ContextService.get_artifacts_dir(space_root, run.id) / \
+        step_artifacts = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "") / \
             _step_dir_name(step_run.step_position, step_run.step_name) / "attachments"
         if step_artifacts.is_dir():
             self._publish_attachments(step_artifacts, run.id)
@@ -407,7 +407,7 @@ class Daemon:
             user_message = ""
             try:
                 result_file = ContextService.get_artifacts_dir(
-                    space_root, run.id,
+                    space_root, run.id, run.flow_name or "",
                 ) / _step_dir_name(step_run.step_position, step_run.step_name) / "_result.md"
                 if result_file.exists():
                     user_message = result_file.read_text().strip()
@@ -451,11 +451,13 @@ class Daemon:
         """Run gate evaluation and advance after a step completes (shared by sync and async paths)."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space_root = Path(space.path)
-        artifact_dir = ContextService.get_artifacts_dir(space_root, run.id)
+        artifact_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         step_artifact_dir = artifact_dir / _step_dir_name(step_run.step_position, step_run.step_name)
+        flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": step_run.flow_name,
+            "flow_dir": str(flow_dir),
             "artifacts_dir": str(step_artifact_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
@@ -556,13 +558,15 @@ class Daemon:
         """Determine the next step and launch it, or complete the run."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": current_flow,
+            "flow_dir": str(flow_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         if current_step_name == "__summary__":
-            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
+            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
             logger.info("Run %s completed", run.id)
             self._finalize_run(run.id)
@@ -708,11 +712,13 @@ class Daemon:
 
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
-        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         step_artifact_dir = artifacts_dir / _step_dir_name(step_position, step_name)
+        flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": flow_name,
+            "flow_dir": str(flow_dir),
             "artifacts_dir": str(step_artifact_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
         for sr in run_svc.list_step_runs(run.id):
@@ -872,7 +878,7 @@ class Daemon:
         """Launch the auto-appended summary step."""
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
-        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = ContextService(working_path / ".llmflows")
         summary_content = ctx.render_summary_step({
             "artifacts_dir": str(artifacts_dir),
@@ -918,7 +924,7 @@ class Daemon:
         else:
             logger.error("Failed to launch summary step for run %s", run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
-            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
+            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
             self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome="completed", summary=summary)

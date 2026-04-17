@@ -142,9 +142,29 @@ class ContextService:
             return ""
 
     @staticmethod
-    def get_artifacts_dir(project_path: Path, run_id: str) -> Path:
-        """Return the artifacts directory for a run, always under the main space root."""
-        return project_path / ".llmflows" / "runs" / run_id / "artifacts"
+    def _safe_flow_dir(flow_name: str) -> str:
+        """Return a filesystem-safe directory name for a flow."""
+        import re
+        slug = flow_name.strip().lower().replace(" ", "-")
+        slug = re.sub(r"[^a-z0-9._-]", "", slug)
+        return slug or "_default"
+
+    @staticmethod
+    def get_flow_dir(project_path: Path, flow_name: str = "") -> Path:
+        """Return the persistent flow directory: .llmflows/<flow_name>/
+
+        Useful for data that should persist across runs of the same flow.
+        """
+        flow_dir = ContextService._safe_flow_dir(flow_name) if flow_name else "_default"
+        return project_path / ".llmflows" / flow_dir
+
+    @staticmethod
+    def get_artifacts_dir(project_path: Path, run_id: str, flow_name: str = "") -> Path:
+        """Return the artifacts directory for a run, always under the main space root.
+
+        Layout: .llmflows/<flow_name>/runs/<run_id>/artifacts/
+        """
+        return ContextService.get_flow_dir(project_path, flow_name) / "runs" / run_id / "artifacts"
 
     @staticmethod
     def step_dir_name(position: int, step_name: str) -> str:

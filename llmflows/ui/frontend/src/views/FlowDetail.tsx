@@ -455,7 +455,7 @@ export function FlowDetailView() {
         <div className="mb-6">
           <h3 className="text-sm font-medium text-gray-200 mb-1">Tools</h3>
           <p className="text-xs text-gray-500 mb-3">
-            Select which tools are available to agents during this flow's execution.
+            Read, write, edit, and shell tools are always available. Select additional tools for this flow:
           </p>
           <div className="flex flex-wrap gap-2">
             {tools.map((tool) => {

@@ -110,5 +110,23 @@ class TestContextService:
         assert result == ""
 
     def test_get_artifacts_dir(self, temp_dir):
+        result = ContextService.get_artifacts_dir(temp_dir, "run1", "my-flow")
+        assert result == temp_dir / ".llmflows" / "my-flow" / "runs" / "run1" / "artifacts"
+
+    def test_get_artifacts_dir_default(self, temp_dir):
         result = ContextService.get_artifacts_dir(temp_dir, "run1")
-        assert result == temp_dir / ".llmflows" / "runs" / "run1" / "artifacts"
+        assert result == temp_dir / ".llmflows" / "_default" / "runs" / "run1" / "artifacts"
+
+    def test_get_flow_dir(self, temp_dir):
+        result = ContextService.get_flow_dir(temp_dir, "my-flow")
+        assert result == temp_dir / ".llmflows" / "my-flow"
+
+    def test_get_flow_dir_default(self, temp_dir):
+        result = ContextService.get_flow_dir(temp_dir)
+        assert result == temp_dir / ".llmflows" / "_default"
+
+    def test_safe_flow_dir(self):
+        assert ContextService._safe_flow_dir("My Flow") == "my-flow"
+        assert ContextService._safe_flow_dir("crypto-news") == "crypto-news"
+        assert ContextService._safe_flow_dir("") == "_default"
+        assert ContextService._safe_flow_dir("  ") == "_default"

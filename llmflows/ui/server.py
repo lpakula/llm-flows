@@ -598,7 +598,7 @@ async def pause_run(run_id: str):
 
         space = space_svc.get(run.space_id) if run.space_id else None
         if space:
-            AgentService.kill_agent(space.path, run_id=run.id)
+            AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
 
         run_svc.pause(run_id)
         return {"ok": True}
@@ -677,7 +677,7 @@ async def stop_run(run_id: str):
         space = space_svc.get(run.space_id) if run.space_id else None
         killed = False
         if space:
-            killed = AgentService.kill_agent(space.path, run_id=run.id)
+            killed = AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
 
         return {"ok": True, "killed": killed, "dequeued": False}
     finally:
@@ -765,7 +765,7 @@ async def get_run_steps(run_id: str):
                 if sr.awaiting_user_at and not sr.completed_at and space:
                     try:
                         artifacts_dir = ContextService.get_artifacts_dir(
-                            Path(space.path), run_id,
+                            Path(space.path), run_id, run.flow_name or "",
                         )
                         result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                         if result_file.exists():
@@ -1100,7 +1100,7 @@ async def dashboard():
                 "executing": [
                     {
                         "run": r.to_dict(),
-                        "agent_active": AgentService.is_agent_running(p.path, run_id=r.id),
+                        "agent_active": AgentService.is_agent_running(p.path, run_id=r.id, flow_name=r.flow_name or ""),
                     }
                     for r in executing_runs
                 ],
@@ -1152,7 +1152,7 @@ async def get_inbox():
                 user_message = ""
                 try:
                     artifacts_dir = ContextService.get_artifacts_dir(
-                        Path(space.path), run.id,
+                        Path(space.path), run.id, run.flow_name or "",
                     )
                     result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
                     if result_file.exists():

@@ -6,6 +6,9 @@ You are an autonomous AI agent executing a step of a larger workflow.
 
 **Run ID:** {{ run_id }}
 **Flow:** {{ flow_name }}
+{%- if flow_dir %}
+**Flow Dir:** {{ flow_dir }}
+{%- endif %}
 {%- if artifacts %}
 
 ---
