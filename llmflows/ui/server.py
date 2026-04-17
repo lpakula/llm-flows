@@ -1712,9 +1712,19 @@ _CHAT_SYSTEM_PROMPT = """\
 You are the llm-flows assistant — a friendly, knowledgeable guide for the llm-flows platform. \
 You help users understand how llm-flows works and build automations using flows.
 
+## Style
+
+- Be concise. Short paragraphs, bullet points when useful. Avoid walls of text.
+- llm-flows is already installed — never explain installation.
+- Do NOT explain flow concepts, step types, gates, artifacts, or flow-building details \
+unless the user explicitly asks about them. Assume the user wants actionable answers, not tutorials.
+- When asked "how to get started", focus only on the essential setup: starting the daemon, \
+configuring agents (API keys and aliases), and setting up the gateway. \
+End by mentioning that you can help build flows whenever they're ready.
+
 ## Your role
 
-- Explain llm-flows concepts clearly and concisely
+- Explain llm-flows concepts clearly and concisely — only when asked
 - Help users design and plan automation workflows
 - Create flows using the `save_flow` tool when asked — they appear immediately in the UI
 - Follow best practices from your loaded skills when creating flows
@@ -1728,8 +1738,14 @@ Then ask follow-up questions to understand the goal better — the more you know
 Ask about things like: where the data comes from, what the final output should look like, \
 whether it should pause for human review, how often it will run, etc.
 
-Keep questions short and conversational. Ask one or two at a time, not a big list. \
-When you have enough context, build the flow immediately.
+Keep questions short and conversational. Ask one or two at a time, not a big list.
+
+When you have enough context, present the planned flow to the user before creating it:
+1. Show a short summary of each step — name, what it does, and why
+2. Ask the user to confirm or adjust ("Does this look good? Want to change anything?")
+3. Only call `save_flow` after the user explicitly confirms
+
+This gives the user a chance to add, remove, or tweak steps before the flow is created.
 
 NEVER ask about implementation details like steps, tools, gates, agent aliases, or step types. \
 You are the expert — figure those out yourself. The user describes the goal, you design the automation.
@@ -1812,10 +1828,10 @@ async def chat(body: ChatBody, request: Request):
     except (ValueError, Exception):
         pass
 
-    # Build Pi command — text mode for real-time streaming
+    # Build Pi command — JSON mode for token-level streaming
     cmd = [
         "pi", "-p", body.message,
-        "--print",
+        "--mode", "json",
         "--session", str(session_file),
         "--append-system-prompt", str(system_file),
     ]
@@ -1848,7 +1864,7 @@ async def chat(body: ChatBody, request: Request):
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stderr=asyncio.subprocess.DEVNULL,
         env=env,
         cwd=space.path if space else str(Path.home()),
     )
@@ -1856,12 +1872,31 @@ async def chat(body: ChatBody, request: Request):
     async def stream():
         try:
             assert proc.stdout is not None
+            buf = b""
             while True:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     break
-                text = chunk.decode(errors="replace")
-                yield f"data: {json.dumps({'type': 'text_delta', 'text': text})}\n\n"
+                buf += chunk
+                while b"\n" in buf:
+                    line_bytes, buf = buf.split(b"\n", 1)
+                    line = line_bytes.decode(errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ev_type = ev.get("type")
+                    if ev_type == "message_update":
+                        ame = ev.get("assistantMessageEvent", {})
+                        ame_type = ame.get("type")
+                        if ame_type == "text_delta":
+                            delta = ame.get("delta", "")
+                            if delta:
+                                yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
+                        elif ame_type == "thinking_start":
+                            yield f"data: {json.dumps({'type': 'thinking'})}\n\n"
             await proc.wait()
         except asyncio.CancelledError:
             if proc.returncode is None:

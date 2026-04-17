@@ -15,11 +15,23 @@ import { SpaceSettingsView } from "@/views/SpaceSettings";
 import { SkillsView } from "@/views/Skills";
 import { ChatView } from "@/views/Chat";
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface ChatState {
+  messages: ChatMessage[];
+  sessionId: string | null;
+}
+
 interface AppContextType {
   spaces: Space[];
   selectedSpaceId: string | null;
   setSelectedSpaceId: (id: string | null) => void;
   reload: () => Promise<void>;
+  chatState: ChatState;
+  setChatState: React.Dispatch<React.SetStateAction<ChatState>>;
 }
 
 const AppContext = createContext<AppContextType>({
@@ -27,6 +39,8 @@ const AppContext = createContext<AppContextType>({
   selectedSpaceId: null,
   setSelectedSpaceId: () => {},
   reload: async () => {},
+  chatState: { messages: [], sessionId: null },
+  setChatState: () => {},
 });
 
 export function useApp() {
@@ -36,6 +50,7 @@ export function useApp() {
 function AppInner() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [manualSpaceId, setManualSpaceId] = useState<string | null>(null);
+  const [chatState, setChatState] = useState<ChatState>({ messages: [], sessionId: null });
   const location = useLocation();
 
   const reload = useCallback(async () => {
@@ -59,7 +74,7 @@ function AppInner() {
   const selectedSpaceId = urlSpaceId || manualSpaceId;
 
   return (
-    <AppContext.Provider value={{ spaces, selectedSpaceId, setSelectedSpaceId: setManualSpaceId, reload }}>
+    <AppContext.Provider value={{ spaces, selectedSpaceId, setSelectedSpaceId: setManualSpaceId, reload, chatState, setChatState }}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
