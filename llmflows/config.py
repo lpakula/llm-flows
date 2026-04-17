@@ -89,7 +89,6 @@ AGENT_REGISTRY = {
             "anthropic/claude-haiku-4-5",
             "anthropic/claude-opus-4-6",
             "openai/gpt-5.4",
-            "openai/gpt-5.4-mini",
             "openai/gpt-5.4-nano",
             "openai/gpt-5.2",
             "openai/gpt-5",
@@ -112,7 +111,7 @@ AGENT_REGISTRY = {
         "label": "OpenAI",
         "api_key_env": "OPENAI_API_KEY",
         "models": [
-            "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
+            "gpt-5.4", "gpt-5.4-nano",
             "gpt-5.2", "gpt-5",
             "gpt-5-mini", "gpt-5-nano",
             "o3", "o4-mini",
@@ -153,7 +152,7 @@ AGENT_REGISTRY = {
 KNOWN_MODELS = list({m for reg in AGENT_REGISTRY.values() for m in reg.get("models", [])})
 
 PROVIDER_DEFAULT_TIERS: dict[str, dict[str, str]] = {
-    "openai": {"mini": "gpt-5.4-mini", "normal": "gpt-4o", "max": "gpt-5.4"},
+    "openai": {"mini": "gpt-5.4-nano", "normal": "gpt-4o-mini", "max": "gpt-5.4"},
     "anthropic": {"mini": "claude-haiku-4-5", "normal": "claude-sonnet-4-6", "max": "claude-opus-4-7"},
     "google": {"mini": "gemini-3.1-flash-lite", "normal": "gemini-3-flash", "max": "gemini-3.1-pro"},
     "ollama": {"mini": "llama3.3", "normal": "llama3.3", "max": "llama3.3"},
