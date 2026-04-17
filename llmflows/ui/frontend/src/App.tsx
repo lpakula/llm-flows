@@ -5,10 +5,8 @@ import type { Space } from "@/api/types";
 import { Layout } from "@/components/Layout";
 import { Dashboard } from "@/views/Dashboard";
 import { InboxView } from "@/views/Inbox";
-import { SpaceView } from "@/views/Space";
-import { RunDetailView } from "@/views/RunDetail";
 import { SpaceFlowsView } from "@/views/Flows";
-import { FlowEditorView } from "@/views/FlowEditor";
+import { FlowDetailView } from "@/views/FlowDetail";
 import { AgentsView } from "@/views/Agents";
 import { GatewayView } from "@/views/Gateway";
 import { ToolsView } from "@/views/Tools";
@@ -67,12 +65,11 @@ function AppInner() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/inbox" element={<InboxView />} />
           <Route path="/chat" element={<ChatView />} />
-          <Route path="/space/:spaceId" element={<SpaceView />} />
+          <Route path="/space/:spaceId" element={<Navigate to="flows" replace />} />
           <Route path="/space/:spaceId/flows" element={<SpaceFlowsView />} />
-          <Route path="/space/:spaceId/run/:runId" element={<RunDetailView />} />
+          <Route path="/space/:spaceId/flow/:flowId" element={<FlowDetailView />} />
           <Route path="/space/:spaceId/skills" element={<SkillsView />} />
           <Route path="/space/:spaceId/settings" element={<SpaceSettingsView />} />
-          <Route path="/flow-editor/:flowId" element={<FlowEditorView />} />
           <Route path="/agents" element={<AgentsView />} />
           <Route path="/gateway" element={<GatewayView />} />
           <Route path="/tools" element={<ToolsView />} />

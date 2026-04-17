@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle } from "lucide-react";
+import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -44,7 +44,7 @@ export function Sidebar() {
     setSpaceMenuOpen(false);
     if (id) {
       setSelectedSpaceId(id);
-      navigate(`/space/${id}`);
+      navigate(`/space/${id}/flows`);
     } else {
       setSelectedSpaceId(null);
       navigate("/");
@@ -138,10 +138,6 @@ export function Sidebar() {
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 pt-2 space-y-0.5">
         {selectedSpace && (
           <>
-            <NavLink to={`/space/${selectedSpace.id}`} end className={navClass}>
-              <LayoutDashboard size={14} className="flex-shrink-0" />
-              Board
-            </NavLink>
             <NavLink to={`/space/${selectedSpace.id}/flows`} className={navClass}>
               <Workflow size={14} className="flex-shrink-0" />
               Flows

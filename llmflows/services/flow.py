@@ -241,6 +241,7 @@ class FlowService:
             "name": source.name,
             "description": source.description or "",
             "requirements": source.get_requirements(),
+            "variables": source.get_variables(),
             "steps": [
                 {
                     "name": s.name,
@@ -273,8 +274,11 @@ class FlowService:
                 "description": flow.description,
                 "steps": [],
             }
-            if reqs.get("variables") or reqs.get("tools"):
+            if reqs.get("tools"):
                 flow_data["requirements"] = reqs
+            flow_variables = flow.get_variables()
+            if flow_variables:
+                flow_data["variables"] = flow_variables
             for s in sorted(flow.steps, key=lambda s: s.position):
                 step_data = {"name": s.name, "position": s.position, "content": s.content}
                 gates = s.get_gates()
@@ -326,6 +330,9 @@ class FlowService:
                 reqs = flow_data.get("requirements")
                 if reqs:
                     existing.requirements = json.dumps(reqs)
+                imported_vars = flow_data.get("variables")
+                if imported_vars:
+                    existing.variables = json.dumps(imported_vars)
                 existing.updated_at = datetime.now(timezone.utc)
                 self.session.flush()
 
@@ -360,7 +367,7 @@ class FlowService:
     def validate_flow(self, flow_id: str, space_id: Optional[str] = None) -> list[dict]:
         """Validate a flow's configuration. Returns a list of warning dicts."""
         from ..config import AGENT_REGISTRY, load_system_config
-        from ..db.models import AgentAlias, AgentConfig, Space
+        from ..db.models import AgentAlias, AgentConfig
 
         flow = self.get(flow_id)
         if not flow:
@@ -369,20 +376,16 @@ class FlowService:
         warnings: list[dict] = []
 
         reqs = flow.get_requirements()
-        req_vars = reqs.get("variables", [])
         req_tools = reqs.get("tools", [])
 
-        if req_vars:
-            sid = space_id or flow.space_id
-            space = self.session.query(Space).filter_by(id=sid).first()
-            space_vars = space.get_variables() if space else {}
-            for var in req_vars:
-                if not space_vars.get(var):
-                    warnings.append({
-                        "step_name": "",
-                        "warning_type": "missing_variable",
-                        "message": f"Required variable '{var}' is not set. Configure it in Space Settings > Variables.",
-                    })
+        flow_vars = flow.get_variables()
+        for var_name, var_value in flow_vars.items():
+            if not var_value:
+                warnings.append({
+                    "step_name": "",
+                    "warning_type": "missing_variable",
+                    "message": f"Variable '{var_name}' has no value. Fill it in on the flow page before running.",
+                })
 
         if req_tools:
             sys_config = load_system_config()
