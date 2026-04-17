@@ -1202,6 +1202,7 @@ async def get_inbox():
                     "outcome": run.outcome or "",
                     "summary": run.summary or "",
                     "duration_seconds": run.duration_seconds,
+                    "cost_usd": run.cost_usd,
                     "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,
                     "attachments": attachments,
                 })

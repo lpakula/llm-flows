@@ -205,6 +205,7 @@ export interface CompletedRunItem {
   outcome: string;
   summary: string;
   duration_seconds: number | null;
+  cost_usd: number | null;
   completed_at: string;
   attachments?: { name: string; url: string }[];
 }

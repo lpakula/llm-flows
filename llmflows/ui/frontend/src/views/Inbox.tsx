@@ -161,7 +161,9 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
             {item.duration_seconds != null && (
               <span><span className="text-gray-600">Time:</span> {formatSeconds(item.duration_seconds)}</span>
             )}
-            <span className="font-mono">{item.run_id}</span>
+            {item.cost_usd != null && (
+              <span><span className="text-gray-600">Cost:</span> ${item.cost_usd.toFixed(4)}</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">

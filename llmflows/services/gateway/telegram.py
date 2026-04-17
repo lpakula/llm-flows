@@ -80,6 +80,21 @@ def _to_telegram_html(text: str) -> str:
     return result
 
 
+def _format_elapsed(start, now) -> str:
+    if not start:
+        return ""
+    from datetime import timezone as _tz
+    s = start if start.tzinfo else start.replace(tzinfo=_tz.utc)
+    secs = int((now - s).total_seconds())
+    if secs < 60:
+        return f"{secs}s"
+    mins = secs // 60
+    if mins < 60:
+        return f"{mins}m"
+    hours, mins = divmod(mins, 60)
+    return f"{hours}h{mins}m"
+
+
 class TelegramBot:
     """Telegram bot for notifications and human-step responses."""
 
@@ -218,11 +233,13 @@ class TelegramBot:
 
         from ..space import SpaceService
         from ..run import RunService
+        from datetime import datetime, timezone
 
         session = self.session_factory()
         try:
             spaces = SpaceService(session).list_all()
             run_svc = RunService(session)
+            now = datetime.now(timezone.utc)
 
             lines: list[str] = []
             for space in spaces:
@@ -233,9 +250,11 @@ class TelegramBot:
                 lines.append(f"<b>{space.name}</b>")
                 for r in active:
                     step = r.current_step or "starting"
-                    lines.append(f"  ▶ {r.flow_name or '?'} — <i>{step}</i>  <code>{r.id}</code>")
+                    elapsed = _format_elapsed(r.started_at, now)
+                    lines.append(f"  🟢 {r.flow_name or '?'} — <i>{step}</i>  {elapsed}")
                 for r in pending:
-                    lines.append(f"  ⏳ {r.flow_name or '?'} — queued  <code>{r.id}</code>")
+                    waited = _format_elapsed(r.created_at, now)
+                    lines.append(f"  ⏳ {r.flow_name or '?'} — queued {waited}")
 
             if not lines:
                 await update.message.reply_text("No active or queued runs.")
@@ -501,6 +520,23 @@ class TelegramBot:
             outcome = payload.get("outcome", "completed")
             summary = payload.get("summary")
             text = f"**{name}** — {outcome}"
+
+            meta: list[str] = []
+            dur = payload.get("duration_seconds")
+            if dur is not None:
+                secs = int(dur)
+                if secs < 60:
+                    meta.append(f"{secs}s")
+                elif secs < 3600:
+                    meta.append(f"{secs // 60}m")
+                else:
+                    meta.append(f"{secs // 3600}h{(secs % 3600) // 60}m")
+            cost = payload.get("cost_usd")
+            if cost is not None:
+                meta.append(f"${cost:.4f}")
+            if meta:
+                text += f"  ({' · '.join(meta)})"
+
             if summary:
                 text += f"\n\n{summary}"
             return text

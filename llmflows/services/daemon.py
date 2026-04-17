@@ -1027,6 +1027,8 @@ class Daemon:
             "outcome": run.outcome or "completed",
             "summary": run.summary or "",
             "inbox_id": inbox_id,
+            "cost_usd": run.cost_usd,
+            "duration_seconds": run.duration_seconds,
         })
 
     @staticmethod
