@@ -70,12 +70,12 @@ export const api = {
   getSpaceSettings: (id: string) => get<SpaceSettings>(`/api/spaces/${id}/settings`),
   updateSpaceSettings: (id: string, body: Partial<SpaceSettings>) =>
     patch<SpaceSettings>(`/api/spaces/${id}/settings`, body),
-  getSpaceVariables: (id: string) =>
-    get<Record<string, string>>(`/api/spaces/${id}/variables`),
-  setSpaceVariable: (id: string, key: string, value: string) =>
-    put<Record<string, string>>(`/api/spaces/${id}/variables/${encodeURIComponent(key)}`, { value }),
-  deleteSpaceVariable: (id: string, key: string) =>
-    del<Record<string, string>>(`/api/spaces/${id}/variables/${encodeURIComponent(key)}`),
+  getFlowVariables: (flowId: string) =>
+    get<Record<string, string>>(`/api/flows/${flowId}/variables`),
+  setFlowVariable: (flowId: string, key: string, value: string) =>
+    put<Record<string, string>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`, { value }),
+  deleteFlowVariable: (flowId: string, key: string) =>
+    del<Record<string, string>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`),
 
   // Agent Aliases (pre-defined, edit agent/model only)
   listAgentAliases: () => get<AgentAlias[]>("/api/agent-aliases"),
@@ -88,6 +88,7 @@ export const api = {
 
   // Flow Runs
   listFlowRuns: (spaceId: string) => get<FlowRun[]>(`/api/spaces/${spaceId}/runs`),
+  listRunsByFlow: (flowId: string) => get<FlowRun[]>(`/api/flows/${flowId}/runs`),
   stopRun: (runId: string) => post<{ ok: boolean; killed: boolean }>(`/api/runs/${runId}/stop`),
   pauseRun: (runId: string) => post<{ ok: boolean }>(`/api/runs/${runId}/pause`),
   resumeRun: (runId: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/resume`, { prompt }),
@@ -109,7 +110,7 @@ export const api = {
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
   createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
     post<Flow>(`/api/spaces/${spaceId}/flows`, body),
-  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { variables: string[]; tools: string[] } }>) =>
+  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { tools: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean }>) =>
     patch<Flow>(`/api/flows/${id}`, body),
   validateFlow: (id: string) => get<{ warnings: FlowWarning[] }>(`/api/flows/${id}/validate`),
   deleteFlow: (id: string) => del<{ ok: boolean }>(`/api/flows/${id}`),

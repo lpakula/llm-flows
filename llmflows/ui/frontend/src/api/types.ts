@@ -53,7 +53,6 @@ export interface FlowWarning {
 }
 
 export interface FlowRequirements {
-  variables: string[];
   tools: string[];
 }
 
@@ -63,9 +62,18 @@ export interface Flow {
   name: string;
   description: string;
   requirements: FlowRequirements;
+  variables: Record<string, string>;
   step_count: number;
   steps: FlowStep[];
   warnings?: FlowWarning[];
+  max_concurrent_runs: number;
+  max_spend_usd: number | null;
+  starred?: boolean;
+  run_count?: number;
+  total_cost_usd?: number;
+  total_duration_seconds?: number | null;
+  last_run_at?: string | null;
+  active_run_count?: number;
   created_at: string;
   updated_at: string;
 }

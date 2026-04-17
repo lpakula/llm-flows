@@ -113,6 +113,10 @@ class Flow(Base):
     name: str = Column(String(255), nullable=False)
     description: str = Column(Text, default="")
     requirements: str = Column(Text, default="{}")
+    variables: str = Column(Text, default="{}")
+    max_concurrent_runs: int = Column(Integer, default=1)
+    max_spend_usd: float = Column(Float, nullable=True)
+    starred: bool = Column(Boolean, default=False)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -128,9 +132,15 @@ class Flow(Base):
         except (json.JSONDecodeError, TypeError):
             raw = {}
         return {
-            "variables": raw.get("variables", []),
             "tools": raw.get("tools", []),
         }
+
+    def get_variables(self) -> dict:
+        import json
+        try:
+            return json.loads(self.variables or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     def to_dict(self) -> dict:
         return {
@@ -139,6 +149,10 @@ class Flow(Base):
             "name": self.name,
             "description": self.description,
             "requirements": self.get_requirements(),
+            "variables": self.get_variables(),
+            "max_concurrent_runs": self.max_concurrent_runs if self.max_concurrent_runs is not None else 1,
+            "max_spend_usd": self.max_spend_usd,
+            "starred": bool(self.starred),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "steps": [s.to_dict() for s in self.steps],
@@ -377,7 +391,7 @@ class StepRun(Base):
     def duration_seconds(self) -> float | None:
         if not self.started_at:
             return None
-        end = self.completed_at or datetime.now(timezone.utc)
+        end = self.completed_at or (self.run and self.run.completed_at) or datetime.now(timezone.utc)
         start = self.started_at if self.started_at.tzinfo else self.started_at.replace(tzinfo=timezone.utc)
         end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
         return (end - start).total_seconds()

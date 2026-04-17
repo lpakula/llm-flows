@@ -64,16 +64,46 @@ class Daemon:
         self._telegram = None
 
     @staticmethod
-    def _build_step_vars(base_vars: dict, space) -> dict:
-        """Build template variables by merging base vars with space-level variables."""
+    def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
+        """Build template variables by merging base vars with flow-level variables."""
         merged = dict(base_vars)
-        for k, v in space.get_variables().items():
+        flow_vars = {}
+        if flow_snapshot and isinstance(flow_snapshot, dict):
+            flow_vars = flow_snapshot.get("variables", {})
+        for k, v in flow_vars.items():
+            merged[f"flow.{k}"] = v
             merged[f"space.{k}"] = v
         return merged
 
     def _finalize_run(self, run_id: str) -> None:
         """Cleanup run-scoped resources (browser, etc.)."""
         self.browser_service.cleanup(run_id)
+
+    def _check_max_spend(self, run, space, step_run, run_svc: RunService) -> bool:
+        """Check if the run's cumulative cost exceeds the flow's max_spend_usd. Returns True if cancelled."""
+        flow = run.flow
+        if not flow or not flow.max_spend_usd:
+            return False
+        run_svc.session.refresh(run)
+        total_cost = run.cost_usd or 0
+        if total_cost <= flow.max_spend_usd:
+            return False
+        logger.warning(
+            "Run %s exceeded max spend $%.4f (limit $%.2f, step '%s')",
+            run.id, total_cost, flow.max_spend_usd, step_run.step_name,
+        )
+        AgentService.kill_agent(space.path, run_id=run.id)
+        run_svc.mark_step_completed(step_run.id, outcome="max_spend")
+        self._finalize_run(run.id)
+        run_svc.mark_completed(run.id, outcome="max_spend")
+        self.notifications.notify("run.max_spend", {
+            "flow_name": run.flow_name or run.id,
+            "run_id": run.id,
+            "space_name": space.name,
+            "cost_usd": total_cost,
+            "max_spend_usd": flow.max_spend_usd,
+        })
+        return True
 
     @staticmethod
     def _flow_requires_browser(run) -> bool:
@@ -146,6 +176,16 @@ class Daemon:
                 self._process_space(space, run_svc, flow_svc)
         finally:
             session.close()
+
+    @staticmethod
+    def _get_snapshot(run) -> Optional[dict]:
+        """Parse and return the run's flow_snapshot as a dict, or None."""
+        if not run.flow_snapshot:
+            return None
+        try:
+            return json.loads(run.flow_snapshot)
+        except (json.JSONDecodeError, TypeError):
+            return None
 
     @staticmethod
     def _get_snapshot_steps(run) -> list[str]:
@@ -225,12 +265,18 @@ class Daemon:
                             run_svc, flow_svc,
                         )
 
-        max_concurrent = space.max_concurrent_tasks or 1
-        active_count = len(active_runs)
+        active_by_flow: dict[str, int] = {}
+        for r in active_runs:
+            fid = r.flow_id or ""
+            active_by_flow[fid] = active_by_flow.get(fid, 0) + 1
 
         for pending in run_svc.get_all_pending(space.id):
-            if active_count < max_concurrent:
-                active_count += 1
+            fid = pending.flow_id or ""
+            flow_obj = flow_svc.get(fid) if fid else None
+            max_concurrent = (flow_obj.max_concurrent_runs if flow_obj and flow_obj.max_concurrent_runs else None) or 1
+            current = active_by_flow.get(fid, 0)
+            if current < max_concurrent:
+                active_by_flow[fid] = current + 1
                 self._start_run(pending, run_svc, flow_svc, space)
 
     def _relaunch_current_step(
@@ -281,6 +327,16 @@ class Daemon:
         agent_running = executor.is_running(ctx)
 
         if agent_running:
+            if step_run.agent == "pi" and step_run.log_path:
+                c, t = _extract_pi_cost(Path(step_run.log_path))
+                if c or t:
+                    step_run.cost_usd = c or None
+                    step_run.token_count = t or None
+                    run_svc.session.commit()
+
+            if self._check_max_spend(run, space, step_run, run_svc):
+                return
+
             if self.run_timeout_minutes and step_run.started_at:
                 completed_time = sum(
                     sr.duration_seconds for sr in run_svc.list_step_runs(run.id)
@@ -401,7 +457,7 @@ class Daemon:
             "run.id": run.id,
             "flow.name": step_run.flow_name,
             "artifacts_dir": str(step_artifact_dir),
-        }, space)
+        }, space, flow_snapshot=self._get_snapshot(run))
 
         snap_step = self._get_snapshot_step(run, step_run.step_name)
         step_obj = flow_svc.get_step_obj(step_run.flow_name, step_run.step_name, space_id=run.space_id)
@@ -503,7 +559,7 @@ class Daemon:
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": current_flow,
-        }, space)
+        }, space, flow_snapshot=self._get_snapshot(run))
 
         if current_step_name == "__summary__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id)
@@ -596,7 +652,7 @@ class Daemon:
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         step_vars = self._build_step_vars({
             "run.id": run.id, "flow.name": flow_name,
-        }, space)
+        }, space, flow_snapshot=self._get_snapshot(run))
 
         steps = self._get_snapshot_steps(run)
         if not steps:
@@ -658,7 +714,7 @@ class Daemon:
             "run.id": run.id,
             "flow.name": flow_name,
             "artifacts_dir": str(step_artifact_dir),
-        }, space)
+        }, space, flow_snapshot=self._get_snapshot(run))
         for sr in run_svc.list_step_runs(run.id):
             if sr.completed_at and sr.user_response:
                 step_vars[f"steps.{sr.step_name}.user_response"] = sr.user_response
@@ -757,7 +813,7 @@ class Daemon:
             resume_prompt=resume_prompt,
             attempt=attempt,
             user_responses=user_responses,
-            space_variables=space.get_variables(),
+            space_variables=self._get_snapshot(run).get("variables", {}) if self._get_snapshot(run) else {},
             skills=skill_refs,
             extra_env=extra_env,
         )
@@ -850,7 +906,7 @@ class Daemon:
             flow_name=flow_label,
             model=resolved_model,
             agent=summary_agent,
-            space_variables=space.get_variables(),
+            space_variables=self._get_snapshot(run).get("variables", {}) if self._get_snapshot(run) else {},
         )
 
         if launched:

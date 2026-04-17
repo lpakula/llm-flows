@@ -40,6 +40,9 @@ class FlowUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     requirements: Optional[dict] = None
+    max_concurrent_runs: Optional[int] = None
+    max_spend_usd: Optional[float] = None
+    starred: Optional[bool] = None
 
 
 class StepCreate(BaseModel):
@@ -437,49 +440,52 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
         session.close()
 
 
-@app.get("/api/spaces/{space_id}/variables")
-async def get_space_variables(space_id: str):
-    session, space_svc = _get_services()
-    try:
-        space = space_svc.get(space_id)
-        if not space:
-            raise HTTPException(status_code=404, detail="Space not found")
-        return space.get_variables()
-    finally:
-        session.close()
-
-
 class VariableUpdate(BaseModel):
     value: str
 
 
-@app.put("/api/spaces/{space_id}/variables/{key}")
-async def set_space_variable(space_id: str, key: str, body: VariableUpdate):
-    session, space_svc = _get_services()
+@app.get("/api/flows/{flow_id}/variables")
+async def get_flow_variables(flow_id: str):
+    session, _ = _get_services()
     try:
-        space = space_svc.get(space_id)
-        if not space:
-            raise HTTPException(status_code=404, detail="Space not found")
-        variables = space.get_variables()
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        return flow.get_variables()
+    finally:
+        session.close()
+
+
+@app.put("/api/flows/{flow_id}/variables/{key}")
+async def set_flow_variable(flow_id: str, key: str, body: VariableUpdate):
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        variables = flow.get_variables()
         variables[key] = body.value
-        space_svc.update(space_id, variables=json.dumps(variables))
+        flow_svc.update(flow_id, variables=json.dumps(variables))
         return variables
     finally:
         session.close()
 
 
-@app.delete("/api/spaces/{space_id}/variables/{key}")
-async def delete_space_variable(space_id: str, key: str):
-    session, space_svc = _get_services()
+@app.delete("/api/flows/{flow_id}/variables/{key}")
+async def delete_flow_variable(flow_id: str, key: str):
+    session, _ = _get_services()
     try:
-        space = space_svc.get(space_id)
-        if not space:
-            raise HTTPException(status_code=404, detail="Space not found")
-        variables = space.get_variables()
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        variables = flow.get_variables()
         if key not in variables:
             raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
         del variables[key]
-        space_svc.update(space_id, variables=json.dumps(variables))
+        flow_svc.update(flow_id, variables=json.dumps(variables))
         return variables
     finally:
         session.close()
@@ -521,6 +527,41 @@ async def list_space_runs(space_id: str):
             raise HTTPException(status_code=404, detail="Space not found")
         run_svc = RunService(session)
         runs = run_svc.list_by_space(space_id)
+        result = []
+        for r in runs:
+            d = r.to_dict()
+            run_att_dir = ATTACHMENTS_DIR / r.id
+            if run_att_dir.is_dir():
+                d["attachments"] = sorted(
+                    [{"name": f.name, "url": f"/api/attachments/{r.id}/{f.name}"}
+                     for f in run_att_dir.iterdir() if f.is_file()],
+                    key=lambda x: x["name"],
+                )
+            else:
+                d["attachments"] = []
+            result.append(d)
+        return result
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/runs")
+async def list_flow_runs(flow_id: str):
+    """All runs for a specific flow."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        run_svc = RunService(session)
+        from ..db.models import FlowRun
+        runs = (
+            session.query(FlowRun)
+            .filter_by(flow_id=flow_id)
+            .order_by(FlowRun.created_at.desc())
+            .all()
+        )
         result = []
         for r in runs:
             d = r.to_dict()
@@ -1207,22 +1248,82 @@ async def list_space_flows(space_id: str):
             raise HTTPException(status_code=404, detail="Space not found")
         flow_svc = FlowService(session)
         flows = flow_svc.list_by_space(space_id)
-        return [
-            {
+
+        from sqlalchemy import func
+        from ..db.models import FlowRun, StepRun
+        stats_q = (
+            session.query(
+                FlowRun.flow_id,
+                func.count(FlowRun.id).label("run_count"),
+                func.max(FlowRun.created_at).label("last_run_at"),
+            )
+            .filter(FlowRun.space_id == space_id)
+            .group_by(FlowRun.flow_id)
+            .all()
+        )
+        stats_map = {row.flow_id: {"run_count": row.run_count, "last_run_at": row.last_run_at} for row in stats_q}
+
+        cost_q = (
+            session.query(
+                FlowRun.flow_id,
+                func.sum(StepRun.cost_usd).label("total_cost"),
+            )
+            .join(StepRun, StepRun.flow_run_id == FlowRun.id)
+            .filter(FlowRun.space_id == space_id)
+            .group_by(FlowRun.flow_id)
+            .all()
+        )
+        cost_map = {row.flow_id: row.total_cost for row in cost_q}
+
+        duration_q = (
+            session.query(
+                FlowRun.flow_id,
+                func.sum(func.julianday(FlowRun.completed_at) - func.julianday(FlowRun.started_at)).label("total_days"),
+            )
+            .filter(FlowRun.space_id == space_id)
+            .filter(FlowRun.started_at.isnot(None))
+            .filter(FlowRun.completed_at.isnot(None))
+            .group_by(FlowRun.flow_id)
+            .all()
+        )
+        duration_map = {row.flow_id: round(row.total_days * 86400, 1) if row.total_days else None for row in duration_q}
+
+        active_q = (
+            session.query(
+                FlowRun.flow_id,
+                func.count(FlowRun.id).label("active_count"),
+            )
+            .filter(FlowRun.space_id == space_id)
+            .filter(FlowRun.completed_at.is_(None))
+            .group_by(FlowRun.flow_id)
+            .all()
+        )
+        active_map = {row.flow_id: row.active_count for row in active_q}
+
+        result = []
+        for f in flows:
+            s = stats_map.get(f.id, {})
+            last_run = s.get("last_run_at")
+            result.append({
                 "id": f.id,
                 "space_id": f.space_id,
                 "name": f.name,
                 "description": f.description,
                 "step_count": len(f.steps),
                 "steps": [
-                    {"name": s.name, "position": s.position, "step_type": s.step_type or "agent"}
-                    for s in sorted(f.steps, key=lambda s: s.position)
+                    {"name": st.name, "position": st.position, "step_type": st.step_type or "agent"}
+                    for st in sorted(f.steps, key=lambda st: st.position)
                 ],
+                "run_count": s.get("run_count", 0),
+                "total_cost_usd": round(cost_map.get(f.id) or 0, 6),
+                "total_duration_seconds": duration_map.get(f.id),
+                "last_run_at": last_run.isoformat() if last_run else None,
+                "active_run_count": active_map.get(f.id, 0),
+                "starred": bool(f.starred),
                 "created_at": f.created_at.isoformat() if f.created_at else None,
                 "updated_at": f.updated_at.isoformat() if f.updated_at else None,
-            }
-            for f in flows
-        ]
+            })
+        return result
     finally:
         session.close()
 
@@ -1324,6 +1425,12 @@ async def update_flow(flow_id: str, body: FlowUpdate):
             updates["description"] = body.description
         if body.requirements is not None:
             updates["requirements"] = json.dumps(body.requirements)
+        if body.max_concurrent_runs is not None:
+            updates["max_concurrent_runs"] = max(1, body.max_concurrent_runs)
+        if body.max_spend_usd is not None:
+            updates["max_spend_usd"] = body.max_spend_usd if body.max_spend_usd > 0 else None
+        if body.starred is not None:
+            updates["starred"] = body.starred
         flow = flow_svc.update(flow_id, **updates)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")

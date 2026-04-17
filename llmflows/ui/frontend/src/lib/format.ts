@@ -41,6 +41,7 @@ export function statusBadge(status: string): string {
       interrupted: "bg-red-900/50 text-red-300",
       error: "bg-red-900/50 text-red-300",
       timeout: "bg-orange-900/50 text-orange-300",
+      max_spend: "bg-orange-900/50 text-orange-300",
       idle: "bg-gray-700 text-gray-300",
     } as Record<string, string>)[status] || "bg-gray-700 text-gray-300"
   );
@@ -52,7 +53,7 @@ export function statusDot(status: string, outcome?: string | null): string {
   if (status === "paused") return "bg-purple-400";
   if (status === "queued") return "bg-blue-400";
   if (status === "interrupted" || status === "error" || status === "cancelled") return "bg-red-500";
-  if (status === "timeout") return "bg-orange-400";
+  if (status === "timeout" || status === "max_spend") return "bg-orange-400";
   if (status === "completed") {
     if (outcome === "failed") return "bg-red-500";
     if (outcome === "cancelled") return "bg-red-400";
@@ -63,6 +64,7 @@ export function statusDot(status: string, outcome?: string | null): string {
 
 export function displayStatus(run: { status: string; outcome: string | null }): string {
   if (run.status === "completed" && run.outcome && run.outcome !== "completed") {
+    if (run.outcome === "max_spend") return "over budget";
     return run.outcome;
   }
   if (run.status === "awaiting_user") return "waiting";
@@ -82,6 +84,7 @@ export function stepBoxClass(status: string): string {
       pending: "bg-gray-900/50 border-gray-700 text-gray-500",
       failed: "bg-red-900/40 border-red-700 text-red-400",
       timeout: "bg-orange-900/40 border-orange-700 text-orange-400",
+      max_spend: "bg-orange-900/40 border-orange-700 text-orange-400",
       error: "bg-red-900/40 border-red-700 text-red-400",
     } as Record<string, string>)[status] || "bg-gray-900/50 border-gray-700 text-gray-500"
   );

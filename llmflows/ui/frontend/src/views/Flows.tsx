@@ -2,7 +2,18 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
+import { useInterval } from "@/hooks/useInterval";
 import type { Flow, Space } from "@/api/types";
+import { formatCost, formatSeconds } from "@/lib/format";
+import { Circle, Star, Clock } from "lucide-react";
+
+function shortDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+}
 
 export function SpaceFlowsView() {
   const { spaceId } = useParams<{ spaceId: string }>();
@@ -23,6 +34,7 @@ export function SpaceFlowsView() {
   useEffect(() => {
     load();
   }, [load]);
+  useInterval(load, 5000);
 
   const createFlow = async () => {
     if (!spaceId) return;
@@ -42,16 +54,18 @@ export function SpaceFlowsView() {
     }
   };
 
-  const deleteFlow = async (flowId: string) => {
-    if (!confirm("Delete this flow?")) return;
-    try {
-      await api.deleteFlow(flowId);
-      load();
-      reload();
-    } catch (e: unknown) {
-      alert("Error: " + (e instanceof Error ? e.message : String(e)));
-    }
+
+  const toggleStar = async (flowId: string, currentlyStarred: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await api.updateFlow(flowId, { starred: !currentlyStarred });
+    load();
   };
+
+  const sortedFlows = [...flows].sort((a, b) => {
+    if (a.starred && !b.starred) return -1;
+    if (!a.starred && b.starred) return 1;
+    return 0;
+  });
 
   const exportFlows = async () => {
     if (!spaceId) return;
@@ -143,38 +157,48 @@ export function SpaceFlowsView() {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        {flows.map((flow) => (
+        {sortedFlows.map((flow) => (
           <div
             key={flow.id}
-            className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition flex flex-col"
+            onClick={() => navigate(`/space/${spaceId}/flow/${flow.id}`)}
+            className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition flex flex-col cursor-pointer"
           >
-            <div
-              className="flex-1 cursor-pointer"
-              onClick={() => navigate(`/flow-editor/${flow.id}`)}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-white">{flow.name}</h3>
-                </div>
-                <span className="text-xs text-gray-500">{flow.step_count} steps</span>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-semibold text-white">{flow.name}</h3>
+                <button
+                  onClick={(e) => toggleStar(flow.id, !!flow.starred, e)}
+                  className="shrink-0 hover:scale-110 transition-transform"
+                  title={flow.starred ? "Unstar" : "Star"}
+                >
+                  <Star
+                    size={14}
+                    className={flow.starred
+                      ? "text-yellow-400 fill-yellow-400"
+                      : "text-gray-600 hover:text-yellow-400"
+                    }
+                  />
+                </button>
+                {(flow.active_run_count ?? 0) > 0 && (
+                  <Circle size={8} className="text-yellow-400 fill-yellow-400 animate-pulse shrink-0" />
+                )}
               </div>
-              {flow.description && (
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">{flow.description}</p>
-              )}
+              <span className="text-xs text-gray-500">{flow.step_count} steps</span>
             </div>
-            <div className="flex items-center gap-3 mt-4">
-              <button
-                onClick={() => navigate(`/flow-editor/${flow.id}`)}
-                className="text-xs text-blue-400 hover:text-blue-300"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => deleteFlow(flow.id)}
-                className="text-xs text-red-500 hover:text-red-400"
-              >
-                Delete
-              </button>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2 min-h-[2.5em]">
+              {flow.description || "\u00A0"}
+            </p>
+            <div className="flex items-center gap-4 mt-auto pt-3 border-t border-gray-800 text-[10px] tabular-nums">
+              <span className="text-blue-400">{flow.run_count ?? 0} runs</span>
+              {flow.total_duration_seconds != null && flow.total_duration_seconds > 0 && (
+                <span className="text-gray-400 flex items-center gap-0.5"><Clock size={9} className="opacity-50" />{formatSeconds(flow.total_duration_seconds)}</span>
+              )}
+              {(flow.total_cost_usd ?? 0) > 0 && (
+                <span className="text-emerald-400">{formatCost(flow.total_cost_usd!)}</span>
+              )}
+              {flow.last_run_at && (
+                <span className="ml-auto text-gray-500">{shortDateTime(flow.last_run_at)}</span>
+              )}
             </div>
           </div>
         ))}
