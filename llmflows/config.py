@@ -152,6 +152,13 @@ AGENT_REGISTRY = {
 
 KNOWN_MODELS = list({m for reg in AGENT_REGISTRY.values() for m in reg.get("models", [])})
 
+PROVIDER_DEFAULT_TIERS: dict[str, dict[str, str]] = {
+    "openai": {"mini": "gpt-5.4-mini", "normal": "gpt-4o", "max": "gpt-5.4"},
+    "anthropic": {"mini": "claude-haiku-4-5", "normal": "claude-sonnet-4-6", "max": "claude-opus-4-7"},
+    "google": {"mini": "gemini-3.1-flash-lite", "normal": "gemini-3-flash", "max": "gemini-3.1-pro"},
+    "ollama": {"mini": "llama3.3", "normal": "llama3.3", "max": "llama3.3"},
+}
+
 _DEFAULTS_FILE = Path(__file__).parent / "defaults" / "config.toml"
 
 
@@ -219,21 +226,16 @@ def save_system_config(config: dict[str, Any]) -> Path:
 
 
 def resolve_alias(session, alias_type: str, alias_name: str = "normal") -> tuple[str, str]:
-    """Look up (agent, model) for a type + alias tier.
+    """Look up (agent, model) for a type + alias tier from configured DB aliases.
 
-    Falls back to the first matching agent's default tiers from AGENT_REGISTRY.
+    Raises ValueError if no alias is configured — callers must handle the error
+    instead of silently falling back to defaults.
     """
     from .db.models import AgentAlias
     alias = session.query(AgentAlias).filter_by(type=alias_type, name=alias_name).first()
     if alias:
         return alias.agent, alias.model
-    for agent_key, reg in AGENT_REGISTRY.items():
-        if reg.get("type") != alias_type:
-            continue
-        tiers = reg.get("tiers", {})
-        if alias_name in tiers:
-            return agent_key, tiers[alias_name]
-    raise ValueError(f"Alias '{alias_name}' not found for type '{alias_type}'")
+    raise ValueError(f"Alias '{alias_name}' not found for type '{alias_type}'. Configure it on the Agents page.")
 
 
 def infer_step_type(agent: str) -> str:

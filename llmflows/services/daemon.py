@@ -770,12 +770,29 @@ class Daemon:
         alias_type = "code" if step_type == "code" else "pi"
         try:
             resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_type, alias_name)
-            if alias_type == "pi" and resolved_agent in KNOWN_LLM_PROVIDERS and "/" not in resolved_model:
-                resolved_model = f"{resolved_agent}/{resolved_model}"
+            if alias_type == "pi" and resolved_agent in KNOWN_LLM_PROVIDERS:
+                if "/" not in resolved_model:
+                    resolved_model = f"{resolved_agent}/{resolved_model}"
                 resolved_agent = "pi"
-        except ValueError:
-            resolved_agent = "cursor" if alias_type == "code" else "pi"
-            resolved_model = ""
+        except ValueError as exc:
+            logger.error(
+                "Run %s step '%s': %s — aborting run",
+                run.id, step_name, exc,
+            )
+            self._finalize_run(run.id)
+            run.outcome = "error"
+            run_svc.session.commit()
+            self._launch_summary_step(
+                run, working_path,
+                step_position, run_svc, flow_svc,
+                error_context={
+                    "outcome": "error",
+                    "failed_step": step_name,
+                    "error_details": str(exc),
+                    "log_tail": "",
+                },
+            )
+            return
 
         attempt = len([
             sr for sr in run_svc.list_step_runs(run.id)
@@ -946,7 +963,12 @@ class Daemon:
         try:
             summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
         except ValueError:
-            summary_agent, resolved_model = "pi", ""
+            logger.warning("No 'mini' alias configured — skipping summary step for run %s", run.id)
+            outcome = run.outcome or "completed"
+            self._finalize_run(run.id)
+            run_svc.mark_completed(run.id, outcome=outcome, summary="")
+            self._maybe_create_completed_inbox(run, run_svc)
+            return
 
         flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(

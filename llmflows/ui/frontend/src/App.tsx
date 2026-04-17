@@ -1,9 +1,8 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 import { api } from "@/api/client";
 import type { Space } from "@/api/types";
 import { Layout } from "@/components/Layout";
-import { Dashboard } from "@/views/Dashboard";
 import { InboxView } from "@/views/Inbox";
 import { SpaceFlowsView } from "@/views/Flows";
 import { FlowDetailView } from "@/views/FlowDetail";
@@ -14,6 +13,7 @@ import { SettingsView } from "@/views/Settings";
 import { SpaceSettingsView } from "@/views/SpaceSettings";
 import { SkillsView } from "@/views/Skills";
 import { ChatView } from "@/views/Chat";
+import { WelcomeView } from "@/views/Welcome";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -51,7 +51,18 @@ function AppInner() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [manualSpaceId, setManualSpaceId] = useState<string | null>(null);
   const [chatState, setChatState] = useState<ChatState>({ messages: [], sessionId: null });
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const checkSetup = useCallback(async () => {
+    try {
+      const status = await api.getSetupStatus();
+      setNeedsSetup(status.needs_setup);
+    } catch {
+      setNeedsSetup(false);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     const s = await api.listSpaces();
@@ -59,8 +70,9 @@ function AppInner() {
   }, []);
 
   useEffect(() => {
+    checkSetup();
     reload();
-  }, [reload]);
+  }, [checkSetup, reload]);
 
   const urlSpaceId = useMemo(() => {
     const m = location.pathname.match(/\/space\/([a-z0-9]+)/);
@@ -73,11 +85,19 @@ function AppInner() {
 
   const selectedSpaceId = urlSpaceId || manualSpaceId;
 
+  if (needsSetup === null) return null;
+
+  if (needsSetup) {
+    return (
+      <WelcomeView onComplete={() => { setNeedsSetup(false); navigate("/chat", { replace: true }); }} />
+    );
+  }
+
   return (
     <AppContext.Provider value={{ spaces, selectedSpaceId, setSelectedSpaceId: setManualSpaceId, reload, chatState, setChatState }}>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/inbox" element={<InboxView />} />
           <Route path="/chat" element={<ChatView />} />
           <Route path="/space/:spaceId" element={<Navigate to="flows" replace />} />

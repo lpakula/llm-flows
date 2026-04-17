@@ -528,6 +528,12 @@ async def schedule_flow_run(space_id: str, body: ScheduleBody):
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
 
+        errors = flow_svc.validate_flow(flow.id, space_id=space_id)
+        blockers = [w for w in errors if w["warning_type"] in ("missing_alias", "missing_variable")]
+        if blockers:
+            messages = "; ".join(w["message"] for w in blockers)
+            raise HTTPException(status_code=400, detail=messages)
+
         run = run_svc.enqueue(space_id, body.flow_id)
         return run.to_dict()
     finally:
@@ -1069,6 +1075,64 @@ async def space_queue(space_id: str):
         runs = run_svc.list_by_space(space_id)
         active = [r.to_dict() for r in runs if r.completed_at is None]
         return active
+    finally:
+        session.close()
+
+
+@app.get("/api/setup-status")
+async def setup_status():
+    """Check whether initial setup is complete (at least one API key configured)."""
+    from ..db.models import AgentConfig, AgentAlias
+    import os
+    session, _ = _get_services()
+    try:
+        has_any_key = False
+        for name, reg in AGENT_REGISTRY.items():
+            api_key_env = reg.get("api_key_env", "")
+            if not api_key_env:
+                continue
+            if os.environ.get(api_key_env):
+                has_any_key = True
+                break
+            cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
+            if cfg and cfg.value:
+                has_any_key = True
+                break
+
+        has_configured_alias = False
+        for alias in session.query(AgentAlias).all():
+            if alias.agent and alias.model:
+                has_configured_alias = True
+                break
+
+        return {
+            "needs_setup": not has_any_key,
+            "has_api_key": has_any_key,
+            "has_aliases": has_configured_alias,
+        }
+    finally:
+        session.close()
+
+
+@app.post("/api/setup/configure-provider/{provider}")
+async def setup_configure_provider(provider: str):
+    """Reconfigure pi alias tiers to use the given provider's default models."""
+    from ..config import PROVIDER_DEFAULT_TIERS
+    from ..db.models import AgentAlias
+
+    tiers = PROVIDER_DEFAULT_TIERS.get(provider)
+    if not tiers:
+        raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'")
+
+    session, _ = _get_services()
+    try:
+        for tier_name, model in tiers.items():
+            alias = session.query(AgentAlias).filter_by(type="pi", name=tier_name).first()
+            if alias:
+                alias.agent = provider
+                alias.model = f"{provider}/{model}"
+        session.commit()
+        return {"ok": True, "provider": provider}
     finally:
         session.close()
 
@@ -1637,6 +1701,79 @@ async def providers_status():
         session.close()
 
 
+class ValidateKeyBody(BaseModel):
+    key: str
+
+
+@app.post("/api/agents/{agent_name}/validate-key")
+async def validate_agent_key(agent_name: str, body: ValidateKeyBody):
+    """Validate an API key by making a lightweight call to the provider."""
+    import httpx
+
+    reg = AGENT_REGISTRY.get(agent_name)
+    if not reg:
+        raise HTTPException(status_code=404, detail="Unknown agent/provider")
+
+    key = body.key.strip()
+    if not key:
+        return {"valid": False, "error": "API key is empty"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            if agent_name == "openai":
+                r = await client.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 401:
+                    return {"valid": False, "error": "Invalid API key"}
+                if r.status_code == 200:
+                    return {"valid": True}
+                return {"valid": False, "error": f"Unexpected response ({r.status_code})"}
+
+            elif agent_name == "anthropic":
+                r = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={"model": "claude-haiku-4-5", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
+                )
+                if r.status_code == 401:
+                    return {"valid": False, "error": "Invalid API key"}
+                return {"valid": True}
+
+            elif agent_name == "google":
+                r = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                )
+                if r.status_code in (401, 403):
+                    return {"valid": False, "error": "Invalid API key"}
+                if r.status_code == 200:
+                    return {"valid": True}
+                return {"valid": False, "error": f"Unexpected response ({r.status_code})"}
+
+            elif agent_name == "ollama":
+                host = key if key.startswith("http") else f"http://{key}"
+                host = host.rstrip("/")
+                r = await client.get(f"{host}/api/tags")
+                if r.status_code == 200:
+                    return {"valid": True}
+                return {"valid": False, "error": f"Cannot reach Ollama at {host}"}
+
+            else:
+                return {"valid": True}
+
+    except httpx.TimeoutException:
+        return {"valid": False, "error": "Connection timed out"}
+    except httpx.ConnectError:
+        return {"valid": False, "error": "Could not connect to provider"}
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
 @app.get("/api/agents/{agent_name}/config")
 async def get_agent_config(agent_name: str):
     from ..db.models import AgentConfig
@@ -1836,8 +1973,9 @@ async def chat(body: ChatBody):
     try:
         _db = _get_db_session()
         chat_agent, chat_model = resolve_alias(_db, "pi", "max")
-        if chat_agent in KNOWN_LLM_PROVIDERS and "/" not in chat_model:
-            chat_model = f"{chat_agent}/{chat_model}"
+        if chat_agent in KNOWN_LLM_PROVIDERS:
+            if "/" not in chat_model:
+                chat_model = f"{chat_agent}/{chat_model}"
         _db.close()
     except (ValueError, Exception):
         pass

@@ -58,6 +58,14 @@ import type {
 } from "./types";
 
 export const api = {
+  // Setup
+  getSetupStatus: () => get<{ needs_setup: boolean; has_api_key: boolean; has_aliases: boolean }>("/api/setup-status"),
+
+  configureProvider: (provider: string) =>
+    post<{ ok: boolean }>(`/api/setup/configure-provider/${provider}`),
+  validateAgentKey: (agent: string, key: string) =>
+    post<{ valid: boolean; error?: string }>(`/api/agents/${agent}/validate-key`, { key }),
+
   // Dashboard
   getDashboard: () => get<DashboardEntry[]>("/api/dashboard"),
 

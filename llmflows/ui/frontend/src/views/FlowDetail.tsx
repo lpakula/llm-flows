@@ -816,7 +816,7 @@ export function FlowDetailView() {
               {viewingStepAgentModel && (
                 <div className="px-5 py-2 border-b border-gray-800/80">
                   <span className="text-[10px] uppercase tracking-wide text-gray-500">
-                    MODEL: <span className="text-gray-200 font-mono normal-case">{viewingStepAgentModel.agent || "—"}/{viewingStepAgentModel.model || "—"}</span>
+                    MODEL: <span className="text-gray-200 font-mono normal-case">{viewingStepAgentModel.model?.includes("/") ? viewingStepAgentModel.model : `${viewingStepAgentModel.agent || "—"}/${viewingStepAgentModel.model || "—"}`}</span>
                   </span>
                 </div>
               )}

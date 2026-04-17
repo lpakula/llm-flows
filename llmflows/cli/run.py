@@ -189,6 +189,15 @@ def run_schedule(flow_id, space_id):
             click.echo(f"Flow {flow_id} not found.")
             raise SystemExit(1)
 
+        errors = flow_svc.validate_flow(flow.id, space_id=space.id)
+        blockers = [w for w in errors if w["warning_type"] in ("missing_alias", "missing_variable")]
+        if blockers:
+            click.echo(click.style("Cannot schedule run:", fg="red"))
+            for w in blockers:
+                step_prefix = f"[{w['step_name']}] " if w["step_name"] else ""
+                click.echo(f"  {step_prefix}{w['message']}")
+            raise SystemExit(1)
+
         new_run = run_svc.enqueue(space.id, flow_id)
         click.echo(
             f"Scheduled run {click.style(new_run.id, fg='cyan')} "
