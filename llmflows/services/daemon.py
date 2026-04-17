@@ -51,6 +51,22 @@ def _extract_pi_cost(log_path: Path) -> tuple[float, int]:
     return round(total_cost, 6), total_tokens
 
 
+_LOG_TAIL_LIMIT = 8_000
+
+
+def _read_log_tail(log_path: str, limit: int = _LOG_TAIL_LIMIT) -> str:
+    """Read the last *limit* characters of a log file, or return empty on failure."""
+    if not log_path:
+        return ""
+    try:
+        text = Path(log_path).read_text(errors="replace")
+        if len(text) > limit:
+            return "...(truncated)\n" + text[-limit:]
+        return text
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
+
 class Daemon:
     def __init__(self):
         self.running = False
@@ -108,7 +124,7 @@ class Daemon:
                 "outcome": "max_spend",
                 "failed_step": step_run.step_name,
                 "error_details": f"Run exceeded the spending limit: ${total_cost:.4f} spent vs ${flow.max_spend_usd:.2f} allowed.",
-                "log_path": step_run.log_path or "",
+                "log_tail": _read_log_tail(step_run.log_path or ""),
             },
         )
         self.notifications.notify("run.max_spend", {
@@ -380,7 +396,7 @@ class Daemon:
                             "outcome": "timeout",
                             "failed_step": step_run.step_name,
                             "error_details": f"Run timed out after {elapsed_mins}m (limit: {self.run_timeout_minutes}m).",
-                            "log_path": step_run.log_path or "",
+                            "log_tail": _read_log_tail(step_run.log_path or ""),
                         },
                     )
                     self.notifications.notify("run.timeout", {
@@ -571,7 +587,7 @@ class Daemon:
                             "outcome": "interrupted",
                             "failed_step": step_run.step_name,
                             "error_details": f"Step '{step_run.step_name}' failed gate checks after {retry_count} retries.",
-                            "log_path": step_run.log_path or "",
+                            "log_tail": _read_log_tail(step_run.log_path or ""),
                         },
                     )
                     self.notifications.notify("run.completed", {
@@ -917,7 +933,7 @@ class Daemon:
                     "outcome": "error",
                     "failed_step": step_name,
                     "error_details": f"Failed to launch agent for step '{step_name}'.",
-                    "log_path": step_run.log_path or "",
+                    "log_tail": _read_log_tail(step_run.log_path or ""),
                 },
             )
 
