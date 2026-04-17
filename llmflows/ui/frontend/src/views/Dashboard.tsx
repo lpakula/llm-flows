@@ -25,7 +25,7 @@ export function Dashboard() {
 
   const stepLabel = (step: string | null) => {
     if (!step) return "-";
-    if (step === "__summary__") return "summary";
+    if (step === "__summarizer__") return "summarizer";
     return step;
   };
 

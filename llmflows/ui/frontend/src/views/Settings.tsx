@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
 import type { DaemonConfig } from "@/api/types";
 
-type RowType = "number" | "bool" | "string";
+type RowType = "number" | "bool" | "string" | "select";
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
 
 interface SettingRow {
   key: keyof DaemonConfig;
@@ -11,6 +16,7 @@ interface SettingRow {
   unit?: string;
   type: RowType;
   min?: number;
+  options?: SelectOption[];
 }
 
 const ROWS: SettingRow[] = [
@@ -38,7 +44,78 @@ const ROWS: SettingRow[] = [
     type: "number",
     min: 1,
   },
+  {
+    key: "summarizer_language",
+    label: "Summarizer language",
+    description: "Language for auto-generated run summaries",
+    type: "select",
+    options: [
+      { value: "English", label: "English" },
+      { value: "Arabic", label: "Arabic" },
+      { value: "Chinese", label: "Chinese" },
+      { value: "Dutch", label: "Dutch" },
+      { value: "French", label: "French" },
+      { value: "German", label: "German" },
+      { value: "Hindi", label: "Hindi" },
+      { value: "Italian", label: "Italian" },
+      { value: "Japanese", label: "Japanese" },
+      { value: "Korean", label: "Korean" },
+      { value: "Polish", label: "Polish" },
+      { value: "Portuguese", label: "Portuguese" },
+      { value: "Russian", label: "Russian" },
+      { value: "Spanish", label: "Spanish" },
+      { value: "Turkish", label: "Turkish" },
+      { value: "Ukrainian", label: "Ukrainian" },
+    ],
+  },
 ];
+
+function SelectDropdown({ value, options, onSelect }: {
+  value: string;
+  options: SelectOption[];
+  onSelect: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div ref={ref} className="relative inline-block" {...(open ? { "data-dropdown-open": "" } : {})}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:border-gray-500 cursor-pointer flex items-center gap-1.5"
+      >
+        {selected?.label || value}
+        <span className="text-[9px] text-gray-500">▼</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[140px] max-h-64 overflow-y-auto">
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onSelect(opt.value); setOpen(false); }}
+              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-gray-700 transition-colors ${opt.value === value ? "text-blue-400" : "text-gray-300"}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function SettingsView() {
   const [config, setConfig] = useState<DaemonConfig | null>(null);
@@ -94,7 +171,7 @@ export function SettingsView() {
       {loading && <div className="text-gray-500">Loading...</div>}
 
       {!loading && config && (
-        <div className="border border-gray-800 rounded-xl overflow-hidden">
+        <div className="border border-gray-800 rounded-xl overflow-clip [&:has([data-dropdown-open])]:overflow-visible">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800 bg-gray-900/60">
@@ -118,7 +195,26 @@ export function SettingsView() {
                     <td className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.label}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{row.description}</td>
                     <td className="px-4 py-3">
-                      {row.type === "bool" ? (
+                      {row.type === "select" ? (
+                        <SelectDropdown
+                          value={val as string}
+                          options={row.options!}
+                          onSelect={async (next) => {
+                            setEditing((prev) => ({ ...prev, [row.key]: next }));
+                            setSavingKey(row.key);
+                            try {
+                              const updated = await api.updateDaemonConfig({ [row.key]: next } as Partial<DaemonConfig>);
+                              setConfig(updated);
+                              setEditing((prev) => { const n = { ...prev }; delete n[row.key]; return n; });
+                              setSavedKey(row.key);
+                              setTimeout(() => setSavedKey((k) => (k === row.key ? null : k)), 2000);
+                            } catch (e2) {
+                              console.error(e2);
+                            }
+                            setSavingKey(null);
+                          }}
+                        />
+                      ) : row.type === "bool" ? (
                         <button
                           onClick={async () => {
                             const next = !val;
@@ -157,7 +253,7 @@ export function SettingsView() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {row.type !== "bool" && (
+                      {row.type !== "bool" && row.type !== "select" && (
                         saved ? (
                           <span className="text-xs text-green-400">Saved</span>
                         ) : (
@@ -170,7 +266,7 @@ export function SettingsView() {
                           </button>
                         )
                       )}
-                      {row.type === "bool" && saved && (
+                      {(row.type === "bool" || row.type === "select") && saved && (
                         <span className="text-xs text-green-400">Saved</span>
                       )}
                     </td>

@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -87,6 +87,7 @@ class DaemonConfigBody(BaseModel):
     poll_interval_seconds: Optional[int] = None
     run_timeout_minutes: Optional[int] = None
     gate_timeout_seconds: Optional[int] = None
+    summarizer_language: Optional[str] = None
 
 
 class GatewayConfigBody(BaseModel):
@@ -164,6 +165,8 @@ async def update_daemon_config(body: DaemonConfigBody):
         config["daemon"]["run_timeout_minutes"] = body.run_timeout_minutes
     if body.gate_timeout_seconds is not None:
         config["daemon"]["gate_timeout_seconds"] = body.gate_timeout_seconds
+    if body.summarizer_language is not None:
+        config["daemon"]["summarizer_language"] = body.summarizer_language
     save_system_config(config)
     return config["daemon"]
 
@@ -204,7 +207,7 @@ TOOL_REGISTRY: list[dict] = [
         "id": "web_search",
         "name": "Web Search",
         "description": "Allow agents to search the web and fetch page content.",
-        "defaults": {"provider": "duckduckgo", "brave_api_key": ""},
+        "defaults": {"provider": "duckduckgo", "brave_api_key": "", "perplexity_api_key": "", "serpapi_api_key": ""},
         "config_fields": [
             {
                 "key": "provider",
@@ -213,6 +216,8 @@ TOOL_REGISTRY: list[dict] = [
                 "options": [
                     {"value": "duckduckgo", "label": "DuckDuckGo", "hint": "No API key required"},
                     {"value": "brave", "label": "Brave Search", "hint": "Requires API key"},
+                    {"value": "perplexity", "label": "Perplexity Search", "hint": "Requires API key"},
+                    {"value": "serpapi", "label": "SerpAPI (Google)", "hint": "Requires API key"},
                 ],
             },
             {
@@ -221,6 +226,20 @@ TOOL_REGISTRY: list[dict] = [
                 "type": "secret",
                 "placeholder": "BSA...",
                 "show_when": {"provider": "brave"},
+            },
+            {
+                "key": "perplexity_api_key",
+                "label": "Perplexity API Key",
+                "type": "secret",
+                "placeholder": "pplx-...",
+                "show_when": {"provider": "perplexity"},
+            },
+            {
+                "key": "serpapi_api_key",
+                "label": "SerpAPI Key",
+                "type": "secret",
+                "placeholder": "Your SerpAPI key...",
+                "show_when": {"provider": "serpapi"},
             },
         ],
     },
@@ -623,24 +642,6 @@ async def resume_run(run_id: str, body: ResumeBody):
         session.close()
 
 
-class RetryStepBody(BaseModel):
-    step_name: str
-
-
-@app.post("/api/runs/{run_id}/retry-step")
-async def retry_step(run_id: str, body: RetryStepBody):
-    """Re-activate an interrupted run and re-run from a specific step."""
-    session, _ = _get_services()
-    try:
-        run_svc = RunService(session)
-        run = run_svc.retry_step(run_id, body.step_name)
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
-        return {"ok": True}
-    finally:
-        session.close()
-
-
 @app.post("/api/step-runs/{step_run_id}/complete")
 async def complete_step_manually(step_run_id: str):
     """Manually mark a step as completed so the flow can advance."""
@@ -788,10 +789,10 @@ async def get_run_steps(run_id: str):
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
 
-        summary_sr = step_run_map.get("__summary__")
-        if summary_sr and not any(s["name"] == "__summary__" for s in result):
+        summary_sr = step_run_map.get("__summarizer__")
+        if summary_sr and not any(s["name"] == "__summarizer__" for s in result):
             result.append({
-                "name": "__summary__",
+                "name": "__summarizer__",
                 "flow": run.flow_name or "",
                 "status": summary_sr.status,
                 "has_ifs": False,
@@ -1695,7 +1696,6 @@ async def list_models(agent: Optional[str] = None):
 # --- Chat endpoints ---
 
 CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
-SAVE_FLOW_TOOL = Path(__file__).resolve().parent.parent / "tools" / "save-flow.ts"
 _SKILLS_FALLBACK_DIR = Path(__file__).resolve().parent.parent.parent / ".agents" / "skills"
 _NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
 CHAT_SKILLS = ["flows", "overview"]
@@ -1719,15 +1719,17 @@ You help users understand how llm-flows works and build automations using flows.
 - llm-flows is already installed — never explain installation.
 - Do NOT explain flow concepts, step types, gates, artifacts, or flow-building details \
 unless the user explicitly asks about them. Assume the user wants actionable answers, not tutorials.
-- When asked "how to get started", focus only on the essential setup: starting the daemon, \
-configuring agents (API keys and aliases), and setting up the gateway. \
-End by mentioning that you can help build flows whenever they're ready.
+- When asked "how to get started", focus on the essential setup: registering the space, \
+starting the daemon, configuring agents (API keys and aliases), enabling tools (Settings → Tools), \
+and mentioning skills (per-space prompt snippets that give agents domain knowledge). \
+The gateway is nice-to-have for remote control, not essential — mention it briefly at the end. \
+End by offering to help build their first flow.
 
 ## Your role
 
 - Explain llm-flows concepts clearly and concisely — only when asked
 - Help users design and plan automation workflows
-- Create flows using the `save_flow` tool when asked — they appear immediately in the UI
+- Build flows by writing flow JSON files and importing them via the CLI
 - Follow best practices from your loaded skills when creating flows
 
 ## Building flows
@@ -1744,12 +1746,22 @@ Keep questions short and conversational. Ask one or two at a time, not a big lis
 When you have enough context, present the planned flow to the user before creating it:
 1. Show a short summary of each step — name, what it does, and why
 2. Ask the user to confirm or adjust ("Does this look good? Want to change anything?")
-3. Only call `save_flow` after the user explicitly confirms
-
-This gives the user a chance to add, remove, or tweak steps before the flow is created.
+3. Only after the user confirms, write the flow and import it
 
 NEVER ask about implementation details like steps, tools, gates, agent aliases, or step types. \
 You are the expert — figure those out yourself. The user describes the goal, you design the automation.
+
+### How to create and update flows
+
+1. Write the flow JSON file to the `flows/` directory in the space root (create the directory if needed)
+2. The file must follow the llmflows flow JSON format (see your loaded skills for the schema)
+3. Show the user what you wrote and ask for confirmation before importing
+4. When the user confirms, run: `llmflows flow import flows/<flow-name>.json`
+5. The flow is now loaded and visible in the UI
+
+To iterate on a flow, edit the JSON file in `flows/` and re-import. \
+The import command upserts by name — it will update an existing flow if one with the same name exists.
+
 
 """
 
@@ -1774,7 +1786,7 @@ def _resolve_chat_env() -> dict[str, str]:
 
 
 @app.post("/api/chat")
-async def chat(body: ChatBody, request: Request):
+async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
     import shutil as _shutil
 
@@ -1800,7 +1812,8 @@ async def chat(body: ChatBody, request: Request):
             db_session.close()
 
     if space:
-        space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n\nThe save_flow tool will create flows in this space.\n"
+        flows_dir = Path(space.path) / "flows"
+        space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n- Flows directory: {flows_dir}\n\nWrite flow JSON files to the flows/ directory and import them with `llmflows flow import`.\n"
 
     # Resolve skill paths — prefer space-local, fall back to package-level
     skill_paths: list[Path] = []
@@ -1843,17 +1856,10 @@ async def chat(body: ChatBody, request: Request):
     for skill_path in skill_paths:
         cmd.extend(["--skill", str(skill_path)])
 
-    if SAVE_FLOW_TOOL.is_file() and space:
-        cmd.extend(["--extension", str(SAVE_FLOW_TOOL)])
-
     # Web search extension (if enabled)
     from ..services.executors.pi import WEB_SEARCH_TOOL, _is_web_search_enabled, _resolve_web_search_env
 
     env = _resolve_chat_env()
-    api_base = str(request.base_url).rstrip("/")
-    env["LLMFLOWS_API_BASE"] = api_base
-    if space:
-        env["LLMFLOWS_CHAT_SPACE_ID"] = space.id
 
     if _is_web_search_enabled() and WEB_SEARCH_TOOL.is_file():
         cmd.extend(["--extension", str(WEB_SEARCH_TOOL)])

@@ -94,7 +94,6 @@ export const api = {
   resumeRun: (runId: string, prompt = "") => post<{ ok: boolean }>(`/api/runs/${runId}/resume`, { prompt }),
   completeStep: (stepRunId: string) => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/complete`),
   respondToStep: (stepRunId: string, response = "") => post<{ ok: boolean }>(`/api/step-runs/${stepRunId}/respond`, { response }),
-  retryStep: (runId: string, stepName: string) => post<{ ok: boolean }>(`/api/runs/${runId}/retry-step`, { step_name: stepName }),
   deleteRun: (runId: string) => del<{ ok: boolean }>(`/api/runs/${runId}`),
   getRunSteps: (runId: string) => get<{ steps: StepRunInfo[] }>(`/api/runs/${runId}/steps`),
 

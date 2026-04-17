@@ -1,11 +1,12 @@
-"""Admin CLI commands -- register, space list/delete, db reset."""
+"""Admin CLI commands -- register, space management."""
 
 from pathlib import Path
 
 import click
 
-from ..config import get_repo_root, SYSTEM_DB
-from ..db.database import init_db, get_session, reset_engine
+from ..config import get_repo_root
+from ..db.database import init_db, get_session
+from ..services.flow import FlowService
 from ..services.space import SpaceService
 
 
@@ -33,12 +34,17 @@ def register_cmd(name):
         if git_repo:
             _update_gitignore(space_root)
 
+        flow_svc = FlowService(session)
+        flow_count = flow_svc.sync_from_disk(str(space_root), s.id)
+
         click.echo()
         click.secho("  Space registered", fg="green", bold=True)
         click.echo()
         click.echo(f"  Space:    {click.style(s.name, fg='cyan')}  ({s.id})")
         click.echo(f"  Path:     {click.style(s.path, fg='cyan')}")
         click.echo(f"  Git repo: {click.style('yes', fg='green') if git_repo else click.style('no', fg='yellow')}")
+        if flow_count:
+            click.echo(f"  Flows:    {click.style(str(flow_count), fg='cyan')} loaded from flows/")
         click.echo()
     finally:
         session.close()
@@ -59,101 +65,6 @@ def _update_gitignore(repo_root: Path) -> None:
         content += f"\n{pattern}\n"
         gitignore.write_text(content)
 
-
-@click.group()
-def db():
-    """Database management."""
-    pass
-
-
-@db.group("migrate")
-def db_migrate():
-    """Manage database schema migrations (powered by Alembic)."""
-    pass
-
-
-@db_migrate.command("upgrade")
-def migrate_upgrade():
-    """Apply all pending migrations to bring the DB up to date."""
-    from alembic import command as alembic
-    from ..db.database import init_db, _alembic_cfg
-    from ..config import SYSTEM_DB
-
-    init_db()
-    alembic.upgrade(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), "head")
-    click.secho("Database is up to date.", fg="green")
-
-
-@db_migrate.command("current")
-def migrate_current():
-    """Show the current migration revision."""
-    from alembic import command as alembic
-    from ..db.database import _alembic_cfg
-    from ..config import SYSTEM_DB
-
-    alembic.current(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), verbose=True)
-
-
-@db_migrate.command("history")
-def migrate_history():
-    """Show the full migration history."""
-    from alembic import command as alembic
-    from ..db.database import _alembic_cfg
-    from ..config import SYSTEM_DB
-
-    alembic.history(_alembic_cfg(f"sqlite:///{SYSTEM_DB}"), verbose=True)
-
-
-@db_migrate.command("create")
-@click.argument("message")
-@click.option("--no-autogenerate", is_flag=True, default=False,
-              help="Create an empty migration instead of auto-detecting schema changes")
-def migrate_create(message, no_autogenerate):
-    """Generate a new migration file.
-
-    Compares the current DB against the ORM models and writes the diff.
-
-    Example:
-
-      llmflows db migrate create "add tags column to tasks"
-    """
-    from alembic import command as alembic
-    from ..db.database import init_db, _alembic_cfg
-    from ..config import SYSTEM_DB
-
-    init_db()
-    alembic.revision(
-        _alembic_cfg(f"sqlite:///{SYSTEM_DB}"),
-        message=message,
-        autogenerate=not no_autogenerate,
-    )
-
-
-@db.command("reset")
-@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-def db_reset(yes):
-    """Delete and recreate the llmflows database.
-
-    All spaces will be lost. You will need to run
-    'llmflows register' again in each space.
-    """
-    if not yes:
-        click.confirm(
-            f"This will delete {SYSTEM_DB} and all data. Continue?",
-            abort=True,
-        )
-
-    if SYSTEM_DB.exists():
-        SYSTEM_DB.unlink()
-
-    reset_engine()
-    init_db()
-
-    click.echo()
-    click.secho("  Database reset", fg="green", bold=True)
-    click.echo()
-    click.echo(f"  Run {click.style('llmflows register', fg='yellow')} in your space directories to re-register them.")
-    click.echo()
 
 
 @click.group()

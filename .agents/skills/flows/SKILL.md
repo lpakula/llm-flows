@@ -19,7 +19,7 @@ A flow is an ordered list of steps that `llm-flows` executes sequentially. Each 
 4. The daemon evaluates **gates** — shell commands that must exit 0
 5. If all gates pass, the daemon advances to the next step
 6. If a gate fails, the agent is relaunched with failure context to fix the problem
-7. After the last step, an automatic `__summary__` step runs to produce a run summary
+7. After the last step, an automatic `__summarizer__` step runs to produce a run summary
 8. The run completes
 
 ### Artifacts are the backbone
@@ -183,7 +183,7 @@ Gates are shell commands attached to a step that **must exit 0** before the flow
 
 ### The automatic artifact gate
 
-The daemon **automatically prepends** a gate to every step (except `__summary__`) that checks the step's artifacts directory exists and is non-empty:
+The daemon **automatically prepends** a gate to every step (except `__summarizer__`) that checks the step's artifacts directory exists and is non-empty:
 
 ```bash
 test -d "<artifacts_dir>" && test "$(ls -A "<artifacts_dir>")"
@@ -236,7 +236,7 @@ IFs are shell commands that control whether a step is **entered at all**. They a
 2. **ALL** commands must exit 0 for the step to run
 3. If any IF exits non-zero (or times out/errors), the step is **skipped entirely**
 4. The daemon moves to the next step and evaluates its IFs
-5. If all remaining steps are skipped, the `__summary__` step runs
+5. If all remaining steps are skipped, the `__summarizer__` step runs
 
 ### IF structure
 

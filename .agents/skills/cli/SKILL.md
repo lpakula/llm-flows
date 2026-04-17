@@ -1,6 +1,6 @@
 ---
 name: llmflows-cli
-description: Use the llmflows CLI to manage spaces, tasks, runs, flows, aliases, and the daemon. Use when the user wants to register a space, create or start tasks, manage flows and steps, configure aliases, check run status, or perform any llmflows operation from the terminal.
+description: Use the llmflows CLI to manage spaces, flows, runs, agents, and the daemon. Use when the user wants to register a space, create or schedule runs, manage flows and steps, configure agent aliases, check run status, or perform any llmflows operation from the terminal.
 ---
 
 # llmflows CLI
@@ -30,63 +30,14 @@ llmflows space update --name "New Name"
 llmflows space settings
 llmflows space settings --git-repo false
 
+# Unregister a space
+llmflows space delete
+llmflows space delete --id <space-id>
+
 # Space variables (available as {{space.<KEY>}} in flows)
 llmflows space var set REPOS_PATH /Users/me/repos
 llmflows space var list
 llmflows space var remove REPOS_PATH
-```
-
-## Task Lifecycle
-
-Tasks are the primary unit of work. Each task has a title, description, and type.
-
-### Create a task
-
-```bash
-llmflows task create -t "Title" -d "Description"
-llmflows task create -t "Fix bug" -d "Details" --type fix
-```
-
-Task types: `feature` (default), `fix`, `refactor`, `chore`.
-
-### Start a run (daemon mode)
-
-The daemon must be running. The run is queued and picked up automatically.
-
-```bash
-llmflows task start --id <task-id>
-llmflows task start --id <task-id> --flow default
-llmflows task start --id <task-id> --flow ripper-5 --flow submit-pr --prompt "Ship it"
-
-# Specify model and agent
-llmflows task start --id <task-id> --flow default --model gemini-3-flash
-llmflows task start --id <task-id> --flow default --model sonnet-4.6 --agent claude-code
-
-# Run the entire flow in a single agent prompt
-llmflows task start --id <task-id> --flow default --one-shot
-```
-
-`--one-shot` assembles the whole flow into one agent prompt instead of running one separate agent process per step. Use it when a strong model can handle the whole workflow in one pass and you want fewer restarts, but remember that the default step-per-run mode gives you better isolation between steps.
-
-Options for model/agent:
-- `--model` / `-m` — model name (e.g. `gemini-3-flash`, `sonnet-4.6`, `sonnet-4.6-thinking`)
-- `--agent` / `-a` — agent backend: `cursor`, `claude-code`, `codex`, `qwen` (default: `cursor`)
-
-### Monitor runs
-
-```bash
-llmflows run list
-llmflows run list --task <task-id>
-llmflows run show <run-id>
-llmflows run logs <run-id> --follow
-```
-
-### Update or delete tasks
-
-```bash
-llmflows task update --id <task-id> --title "Better title"
-llmflows task update --id <task-id> --description "Updated"
-llmflows task delete --id <task-id> --yes
 ```
 
 ## Flow Management
@@ -129,23 +80,52 @@ llmflows flow import flows.json
 llmflows flow delete my-flow --yes
 ```
 
-## Aliases
+## Runs
 
-Aliases are space-level presets that bundle agent, model, and flow chain.
+A run is a single execution of a flow. Use `run schedule` to queue a new run.
 
 ```bash
-# List aliases
-llmflows alias list
+# Schedule a run for a flow
+llmflows run schedule --flow <flow-id>
+llmflows run schedule --flow <flow-id> --space <space-id>
 
-# Create/update an alias
-llmflows alias set fast --agent cursor --model gemini-3-flash --flow default
-llmflows alias set thorough --model sonnet-4.6-thinking --flow ripper-5,submit-pr
+# List runs
+llmflows run list
+llmflows run list --all
+llmflows run list --space <space-id> --limit 50
 
-# Show details
-llmflows alias show fast
+# Show run details
+llmflows run show <run-id>
 
-# Delete (cannot delete 'default')
-llmflows alias delete fast --yes
+# Print / follow logs
+llmflows run logs <run-id>
+llmflows run logs <run-id> --follow
+llmflows run logs <run-id> --raw
+```
+
+## Agent Aliases
+
+Aliases are pre-defined tiers (`mini`, `normal`, `max`) that map to an agent backend and model, per type (`pi` for default/hitl steps, `code` for code steps). Managed under `llmflows agent alias`.
+
+```bash
+# List all configured aliases
+llmflows agent alias list
+
+# Update an alias tier
+llmflows agent alias update normal --type pi --agent pi --model anthropic/claude-sonnet-4-5
+llmflows agent alias update max --type code --agent claude-code --model opus
+```
+
+## Active Agents
+
+```bash
+# List running agents for current space
+llmflows agent list
+llmflows agent list --all
+
+# Stream agent logs for a run
+llmflows agent logs <run-id> --follow
+llmflows agent logs <run-id> --raw
 ```
 
 ## Daemon
@@ -161,28 +141,18 @@ llmflows daemon stop
 llmflows daemon start --foreground
 ```
 
-## Active Agents
+## Web UI
 
 ```bash
-# List running agents
-llmflows agent list
-llmflows agent list --all
+# Launch web UI
+llmflows ui
+llmflows ui --port 8080 --host 0.0.0.0
 
-# Stream agent logs
-llmflows agent logs <task-id> --follow
-llmflows agent logs --run <run-id> --follow
+# Dev mode (Vite HMR + FastAPI with auto-reload)
+llmflows ui --dev
 ```
 
-## Database
-
-```bash
-# Reset database (all data lost — must re-register spaces)
-llmflows db reset --yes
-```
-
-## Typical Agent Workflow
-
-When an agent asks you to set up and run a task via llmflows:
+## Typical Workflow
 
 ```bash
 # 1. Register the space (if not already done)
@@ -191,14 +161,11 @@ llmflows register
 # 2. Start the daemon
 llmflows daemon start
 
-# 3. Create a task
-llmflows task create -t "Implement feature X" -d "Detailed description of what to build"
+# 3. Schedule a run
+llmflows run schedule --flow <flow-id>
 
-# 4. Start the run (note the task ID from step 3)
-llmflows task start --id <task-id> --flow default
-
-# 5. Monitor
-llmflows run list --task <task-id>
+# 4. Monitor
+llmflows run list
 llmflows run logs <run-id> --follow
 ```
 
@@ -208,23 +175,24 @@ llmflows run logs <run-id> --follow
 |--------|---------|
 | Register space | `llmflows register` |
 | List spaces | `llmflows space list` |
-| Create task | `llmflows task create -t "..." -d "..."` |
-| List tasks | `llmflows task list` |
-| Start run (daemon) | `llmflows task start --id <id> --flow default` |
-| List runs | `llmflows run list` |
-| Show run details | `llmflows run show <run-id>` |
-| Follow logs | `llmflows run logs <run-id> --follow` |
+| Delete space | `llmflows space delete` |
+| Set variable | `llmflows space var set KEY VALUE` |
+| List variables | `llmflows space var list` |
+| Remove variable | `llmflows space var remove KEY` |
 | List flows | `llmflows flow list` |
 | Show flow | `llmflows flow show <name>` |
 | Create flow | `llmflows flow create <name>` |
 | Add step | `llmflows flow step add --flow <name> --name <step> --content file.md` |
 | Export flows | `llmflows flow export --output flows.json` |
 | Import flows | `llmflows flow import flows.json` |
-| Set variable | `llmflows space var set KEY VALUE` |
-| List variables | `llmflows space var list` |
-| Remove variable | `llmflows space var remove KEY` |
-| List aliases | `llmflows alias list` |
-| Set alias | `llmflows alias set <name> --flow default --model ...` |
+| Schedule run | `llmflows run schedule --flow <flow-id>` |
+| List runs | `llmflows run list` |
+| Show run | `llmflows run show <run-id>` |
+| Follow run logs | `llmflows run logs <run-id> --follow` |
+| List aliases | `llmflows agent alias list` |
+| Update alias | `llmflows agent alias update <tier> --type pi --model ...` |
+| List agents | `llmflows agent list` |
+| Agent logs | `llmflows agent logs <run-id> --follow` |
 | Daemon start | `llmflows daemon start` |
 | Daemon status | `llmflows daemon status` |
-| Agent logs | `llmflows agent logs <task-id> --follow` |
+| Launch UI | `llmflows ui` |

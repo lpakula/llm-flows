@@ -87,7 +87,6 @@ export function FlowDetailView() {
   const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
   const [respondText, setRespondText] = useState("");
-  const [retryModal, setRetryModal] = useState<{ stepName: string } | null>(null);
   const [agentLogExpanded, setAgentLogExpanded] = useState(true);
 
   const { entries: logEntries, streaming } = useLogStream(logUrl, null);
@@ -291,7 +290,7 @@ export function FlowDetailView() {
     );
     if (activeStep?.step_run) {
       setLogUrl(`/api/step-runs/${activeStep.step_run.id}/logs`);
-      setViewingStepName(activeStep.name === "__summary__" ? "summary" : activeStep.name);
+      setViewingStepName(activeStep.name === "__summarizer__" ? "summarizer" : activeStep.name);
       setViewingStepPrompt(activeStep.step_run.prompt || null);
       setViewingStepAgentModel({ agent: activeStep.step_run.agent || "", model: activeStep.step_run.model || "" });
       setViewingStepDuration(activeStep.step_run.duration_seconds ?? null);
@@ -317,17 +316,6 @@ export function FlowDetailView() {
     await api.respondToStep(stepRunId, response);
     setRespondText("");
     loadExpandedRun();
-  };
-
-  const submitRetry = async (stepName: string) => {
-    if (!expandedRunId) return;
-    setLogUrl(null);
-    setViewingStepName(null);
-    setSelectedAttempt(null);
-    setViewingGateFailures([]);
-    await api.retryStep(expandedRunId, stepName);
-    loadExpandedRun();
-    loadRuns();
   };
 
   const hasEmptyVariables = Object.entries(variables).some(([, v]) => !v);
@@ -707,7 +695,7 @@ export function FlowDetailView() {
               <div className="flex items-center overflow-x-auto pb-1">
                 {runSteps.map((step, i) => {
                   const attempts = step.attempts || [];
-                  const stepLabel = step.name === "__summary__" ? "summary" : step.name;
+                  const stepLabel = step.name === "__summarizer__" ? "summarizer" : step.name;
                   const isCancelled = displayStatus(expandedRun) === "cancelled";
                   const resolveStatus = (s: string) =>
                     isCancelled && (s === "failed" || s === "error") ? "skipped" : s;
@@ -716,16 +704,6 @@ export function FlowDetailView() {
                   return (
                     <div key={i} className="flex items-center">
                       {i > 0 && <div className={`w-5 h-0.5 ${stepConnectorClass(resolveStatus(step.status))}`} />}
-                      {expandedRun.completed_at && expandedRun.outcome !== "completed" && step.step_run && step.name !== "__summary__" && (
-                        <button
-                          onClick={() => setRetryModal({ stepName: step.name })}
-                          className={`mr-1 px-1.5 py-1 rounded border text-[10px] whitespace-nowrap cursor-pointer ${
-                            step.status === "completed"
-                              ? "border-gray-700 bg-gray-800/40 text-gray-500 hover:border-green-700 hover:bg-green-900/40 hover:text-green-400"
-                              : "border-green-700 bg-green-900/40 text-green-400 hover:bg-green-800/60"
-                          }`}
-                        >▶</button>
-                      )}
                       <button
                         onClick={() => {
                           if (!attempts[0]) return;
@@ -780,7 +758,7 @@ export function FlowDetailView() {
           {(() => {
             const awaitingStep = runSteps.find((s) => s.status === "awaiting_user" && s.step_run);
             if (!awaitingStep?.step_run) return null;
-            const stepLabel = awaitingStep.name === "__summary__" ? "summary" : awaitingStep.name;
+            const stepLabel = awaitingStep.name === "__summarizer__" ? "summarizer" : awaitingStep.name;
             return (
               <div className="px-5 py-3 border-b border-gray-800 bg-amber-950/10">
                 <div className="flex items-center gap-2 mb-2">
@@ -923,20 +901,6 @@ export function FlowDetailView() {
         />
       )}
 
-      {/* Retry modal */}
-      {retryModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setRetryModal(null)}>
-          <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-sm font-semibold mb-1">Retry step: <span className="text-cyan-400">{retryModal.stepName}</span></h2>
-            <p className="text-xs text-gray-500 mb-4">Previous attempts for this and subsequent steps will be cleared.</p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setRetryModal(null)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200">Cancel</button>
-              <button onClick={() => { submitRetry(retryModal.stepName); setRetryModal(null); }}
-                className="px-4 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-500">Retry</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

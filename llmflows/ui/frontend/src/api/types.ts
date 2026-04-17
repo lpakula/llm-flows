@@ -106,6 +106,7 @@ export interface DaemonConfig {
   poll_interval_seconds: number;
   run_timeout_minutes: number;
   gate_timeout_seconds: number;
+  summarizer_language: string;
 }
 
 export interface GatewayConfig {

@@ -8,7 +8,7 @@ import type { ChatEvent } from "@/api/types";
 type Message = { role: "user" | "assistant"; content: string };
 
 const SUGGESTIONS = [
-  { icon: Rocket, label: "How to start?", question: "How do I get started? Just the essential setup steps — daemon, agents, gateway. Keep it short." },
+  { icon: Rocket, label: "How to start?", question: "How do I get started? Just the essential setup steps. Keep it short." },
   { icon: Workflow, label: "Help me build a flow", question: "Help me build a flow" },
   { icon: HelpCircle, label: "How it works", question: "How does llm-flows work?" },
 ];

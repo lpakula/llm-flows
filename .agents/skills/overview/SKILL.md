@@ -98,15 +98,14 @@ The daemon is the background engine. It:
 
 Start it with `llmflows daemon start` or from the UI. Without the daemon running, queued runs won't execute.
 
-### Agents & Aliases
+### Agent Aliases
 
-Agent aliases map names like `mini`, `normal`, `max` to specific agent + model configurations:
+Agent aliases are pre-defined tiers (`mini`, `normal`, `max`) that map to an agent backend + model. Each tier exists per type:
 
-- **mini** — fast, cheap models for simple tasks
-- **normal** — balanced models for standard work
-- **max** — powerful models for complex reasoning
+- **pi** — used for `agent` and `hitl` steps (the built-in Pi agent)
+- **code** — used for `code` steps (external coding agents like Cursor, Claude Code)
 
-Aliases are configured in Settings > Agents. Each alias has a type (`pi` for default/hitl steps, `code` for code steps) and maps to a provider + model.
+Aliases are configured in the UI (Settings > Agents) or via `llmflows agent alias update`.
 
 ### Inbox
 
@@ -129,13 +128,16 @@ Enable tools in Settings > Tools.
 
 ## Getting Started
 
-1. **Install**: `pip install llmflows` (or from source)
-2. **Register a space**: `llmflows register` in your project directory
+1. **Register a space**: `llmflows register` in your project directory
+2. **Start the daemon**: `llmflows daemon start`
 3. **Configure agents**: Set up API keys and agent aliases in the UI (Settings > Agents)
-4. **Create a flow**: Define steps in the UI flow editor, via CLI (`llmflows flow`), or ask the Chat assistant to build one
-5. **Start the daemon**: `llmflows daemon start`
-6. **Run a flow**: Click "Run" in the UI or use `llmflows run start`
-7. **Monitor**: Watch progress in the UI, check the inbox for hitl items
+4. **Enable tools**: In Settings > Tools, turn on web search and any other tools your flows will need
+5. **Add skills** (optional): In the space's Skills tab, add prompt snippets that give agents domain knowledge for your project
+6. **Create a flow**: Define steps in the UI flow editor, via CLI (`llmflows flow`), or ask the Chat assistant to build one
+7. **Run a flow**: Click "Run" in the UI or use `llmflows run schedule --flow <flow-id>`
+8. **Monitor**: Watch progress in the UI, check the inbox for hitl items
+
+Optional: set up the **Gateway** (Settings > Gateway) to control llm-flows remotely — receive notifications and approve hitl steps from your phone or messaging app.
 
 ---
 

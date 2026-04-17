@@ -35,7 +35,7 @@ def _load_web_search_config() -> dict:
 
 
 def _is_web_search_enabled() -> bool:
-    return _load_web_search_config().get("enabled", True)
+    return _load_web_search_config().get("enabled", False)
 
 
 def _resolve_web_search_env() -> dict[str, str]:
@@ -48,6 +48,14 @@ def _resolve_web_search_env() -> dict[str, str]:
         key = ws.get("brave_api_key", "")
         if key:
             env["BRAVE_API_KEY"] = key
+    elif provider == "perplexity":
+        key = ws.get("perplexity_api_key", "")
+        if key:
+            env["PERPLEXITY_API_KEY"] = key
+    elif provider == "serpapi":
+        key = ws.get("serpapi_api_key", "")
+        if key:
+            env["SERPAPI_API_KEY"] = key
     return env
 
 

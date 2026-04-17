@@ -14,6 +14,10 @@ This flow run **failed** with outcome `{{ outcome }}` at step `{{ failed_step }}
 
 Read all previous step results above, then write a concise error analysis to `{{ artifacts_dir }}/summary.md`. Then stop.
 
+## LANGUAGE
+
+Write the entire summary in {{ summarizer_language }}.
+
 ## RULES
 
 - Start with a one-line verdict: what failed and why

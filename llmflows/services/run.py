@@ -1,7 +1,6 @@
 """Run service -- manages FlowRun and StepRun lifecycle."""
 
 import json
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -90,46 +89,6 @@ class RunService:
         run.paused_at = None
         if prompt:
             run.resume_prompt = prompt
-        self.session.commit()
-        return run
-
-    def retry_step(self, run_id: str, step_name: str) -> Optional[FlowRun]:
-        """Re-activate an interrupted run and re-launch a step from scratch.
-
-        Deletes all StepRuns at or after the retried step's position, and cleans
-        up the corresponding artifact directories so the daemon starts clean.
-        """
-        run = self.session.query(FlowRun).filter_by(id=run_id).first()
-        if not run:
-            return None
-
-        pivot_step = self.session.query(StepRun).filter_by(
-            flow_run_id=run_id, step_name=step_name,
-        ).order_by(StepRun.step_position).first()
-        pivot_position = pivot_step.step_position if pivot_step else 0
-
-        steps_to_delete = self.session.query(StepRun).filter(
-            StepRun.flow_run_id == run_id,
-            StepRun.step_position >= pivot_position,
-        ).all()
-
-        if steps_to_delete and run.space:
-            from .context import ContextService
-            artifacts_dir = ContextService.get_artifacts_dir(
-                Path(run.space.path), run_id, run.flow_name or "",
-            )
-            for sr in steps_to_delete:
-                step_artifact_dir = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name)
-                if step_artifact_dir.exists():
-                    shutil.rmtree(step_artifact_dir, ignore_errors=True)
-
-        for sr in steps_to_delete:
-            self.session.delete(sr)
-
-        run.completed_at = None
-        run.outcome = None
-        run.current_step = step_name
-        run.resume_prompt = ""
         self.session.commit()
         return run
 

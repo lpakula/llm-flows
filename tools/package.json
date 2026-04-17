@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "description": "Dependencies for llmflows Pi extension tools (browser automation).",
+  "dependencies": {
+    "playwright": "^1.52.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  },
+  "scripts": {
+    "setup-browser": "npx playwright install chromium"
+  }
+}

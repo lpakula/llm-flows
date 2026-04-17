@@ -4,17 +4,23 @@
  * Providers:
  *   - DuckDuckGo (default, no API key)
  *   - Brave Search (requires BRAVE_API_KEY)
+ *   - Perplexity Search (requires PERPLEXITY_API_KEY)
+ *   - SerpAPI / Google (requires SERPAPI_API_KEY)
  *
  * The active provider and API key are passed via environment variables
  * set by the llmflows daemon:
- *   LLMFLOWS_WEB_SEARCH_PROVIDER  – "duckduckgo" | "brave"
+ *   LLMFLOWS_WEB_SEARCH_PROVIDER  – "duckduckgo" | "brave" | "perplexity" | "serpapi"
  *   BRAVE_API_KEY                 – required when provider is "brave"
+ *   PERPLEXITY_API_KEY            – required when provider is "perplexity"
+ *   SERPAPI_API_KEY               – required when provider is "serpapi"
  */
 
 import { Type } from "@sinclair/typebox";
 
 const PROVIDER = (process.env.LLMFLOWS_WEB_SEARCH_PROVIDER || "duckduckgo").toLowerCase();
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY || "";
+const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || "";
+const SERPAPI_API_KEY = process.env.SERPAPI_API_KEY || "";
 
 // ── Concurrency limiter to avoid rate-limit bans ──────────────────────
 
@@ -131,6 +137,70 @@ async function searchBrave(query: string, count: number): Promise<string> {
     .join("\n\n");
 }
 
+// ── Perplexity Search ─────────────────────────────────────────────────
+
+async function searchPerplexity(query: string, count: number): Promise<string> {
+  if (!PERPLEXITY_API_KEY) return "Error: PERPLEXITY_API_KEY is not configured.";
+
+  const res = await fetchWithRetry("https://api.perplexity.ai/search", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      max_results: count,
+    }),
+  });
+
+  if (!res.ok) return `Perplexity Search error: ${res.status} ${res.statusText}`;
+  const data = (await res.json()) as {
+    results?: { title: string; url: string; snippet: string; date?: string }[];
+  };
+
+  const results = data.results || [];
+  if (results.length === 0) return "No results found.";
+  return results
+    .map(
+      (r, i) =>
+        `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`,
+    )
+    .join("\n\n");
+}
+
+// ── SerpAPI (Google Search) ───────────────────────────────────────────
+
+async function searchSerpApi(query: string, count: number): Promise<string> {
+  if (!SERPAPI_API_KEY) return "Error: SERPAPI_API_KEY is not configured.";
+
+  const params = new URLSearchParams({
+    q: query,
+    api_key: SERPAPI_API_KEY,
+    engine: "google",
+    num: String(count),
+  });
+
+  const res = await fetchWithRetry(`https://serpapi.com/search.json?${params}`, {
+    headers: { Accept: "application/json" },
+  });
+
+  if (!res.ok) return `SerpAPI error: ${res.status} ${res.statusText}`;
+  const data = (await res.json()) as {
+    organic_results?: { title: string; link: string; snippet: string }[];
+  };
+
+  const results = data.organic_results || [];
+  if (results.length === 0) return "No results found.";
+  return results
+    .slice(0, count)
+    .map(
+      (r, i) =>
+        `${i + 1}. **${r.title}**\n   ${r.link}\n   ${r.snippet}`,
+    )
+    .join("\n\n");
+}
+
 // ── web_fetch ─────────────────────────────────────────────────────────
 
 async function fetchUrl(
@@ -212,6 +282,12 @@ export default function activate(api: any) {
     ) {
       const count = Math.min(Math.max(params.count ?? 5, 1), 10);
       const text = await withThrottle(async () => {
+        if (PROVIDER === "perplexity") {
+          return searchPerplexity(params.query, count);
+        }
+        if (PROVIDER === "serpapi") {
+          return searchSerpApi(params.query, count);
+        }
         if (PROVIDER === "brave") {
           return searchBrave(params.query, count);
         }

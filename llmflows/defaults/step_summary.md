@@ -2,6 +2,10 @@
 
 Read all previous step results above as a whole. Write a single, concise markdown summary to `{{ artifacts_dir }}/summary.md`. Do not summarize each step separately. Then stop.
 
+## LANGUAGE
+
+Write the entire summary in {{ summarizer_language }}.
+
 ## RULES
 
 - Write in markdown format with headers, lists, and emphasis as appropriate

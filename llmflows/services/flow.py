@@ -364,6 +364,34 @@ class FlowService:
         self.session.commit()
         return count
 
+    def sync_from_disk(self, space_path: str, space_id: str) -> int:
+        """Discover flow JSON files in <space>/flows/ and import them.
+
+        Each .json file should follow the standard export format (with a
+        top-level ``flows`` array) or be a single-flow shorthand (a dict
+        with ``name`` and ``steps`` at the top level).
+
+        Returns the number of flows synced.
+        """
+        flows_dir = Path(space_path) / "flows"
+        if not flows_dir.is_dir():
+            return 0
+
+        count = 0
+        for flow_file in sorted(flows_dir.glob("*.json")):
+            try:
+                data = json.loads(flow_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            if "flows" in data:
+                count += self._import_flows_data(data, space_id=space_id, skip_existing=True)
+            elif "name" in data and "steps" in data:
+                wrapped = {"version": 1, "flows": [data]}
+                count += self._import_flows_data(wrapped, space_id=space_id, skip_existing=True)
+
+        return count
+
     def validate_flow(self, flow_id: str, space_id: Optional[str] = None) -> list[dict]:
         """Validate a flow's configuration. Returns a list of warning dicts."""
         from ..config import AGENT_REGISTRY, load_system_config

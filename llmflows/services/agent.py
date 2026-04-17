@@ -75,7 +75,7 @@ class AgentService:
 
         previous_artifacts = context_svc.collect_artifacts(artifacts_dir)
 
-        is_summary = step_name == "__summary__"
+        is_summary = step_name == "__summarizer__"
         step_output_dir = artifacts_dir / ContextService.step_dir_name(step_position, step_name) if not is_summary else None
 
         spc_vars = space_variables or {}

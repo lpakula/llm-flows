@@ -290,11 +290,6 @@ class Daemon:
                             run.current_step, pos, run.flow_name or "",
                             run_svc, flow_svc,
                         )
-                    else:
-                        self._relaunch_current_step(
-                            run, working_path,
-                            run_svc, flow_svc,
-                        )
 
         active_by_flow: dict[str, int] = {}
         for r in active_runs:
@@ -309,23 +304,6 @@ class Daemon:
             if current < max_concurrent:
                 active_by_flow[fid] = current + 1
                 self._start_run(pending, run_svc, flow_svc, space)
-
-    def _relaunch_current_step(
-        self, run, working_path: Path,
-        run_svc: RunService, flow_svc: FlowService,
-    ) -> None:
-        """Re-launch a step that has no active step_run (e.g. after retry_step)."""
-        step_name = run.current_step
-        flow_name = run.flow_name or ""
-        position = 0
-        steps = self._get_snapshot_steps(run) or flow_svc.get_flow_steps(flow_name, space_id=run.space_id)
-        if step_name in steps:
-            position = steps.index(step_name)
-        self._launch_step(
-            run, working_path,
-            step_name, position, flow_name,
-            run_svc, flow_svc,
-        )
 
     def _process_active_step(
         self, run, space, step_run,
@@ -515,7 +493,7 @@ class Daemon:
 
         gates = list(snap_step.get("gates", []) if snap_step else (step_obj.get_gates() if step_obj else []))
 
-        if step_run.step_name != "__summary__":
+        if step_run.step_name != "__summarizer__":
             gates.insert(0, {
                 "command": f'test -d "{step_artifact_dir}" && test "$(ls -A "{step_artifact_dir}")"',
                 "message": f"Step '{step_run.step_name}' must produce output artifacts in {step_artifact_dir}",
@@ -619,7 +597,7 @@ class Daemon:
             "flow_dir": str(flow_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
-        if current_step_name == "__summary__":
+        if current_step_name == "__summarizer__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
             outcome = run.outcome or "completed"
@@ -951,15 +929,18 @@ class Daemon:
         space_root = Path(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = ContextService(working_path / ".llmflows")
+        summarizer_language = load_system_config().get("daemon", {}).get("summarizer_language", "English")
 
         if error_context:
             summary_content = ctx.render_error_summary_step({
                 "artifacts_dir": str(artifacts_dir),
+                "summarizer_language": summarizer_language,
                 **error_context,
             })
         else:
             summary_content = ctx.render_summary_step({
                 "artifacts_dir": str(artifacts_dir),
+                "summarizer_language": summarizer_language,
             })
 
         try:
@@ -970,21 +951,21 @@ class Daemon:
         flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(
             run_id=run.id,
-            step_name="__summary__",
+            step_name="__summarizer__",
             step_position=step_position,
             flow_name=flow_label,
             agent=summary_agent,
             model=resolved_model,
         )
 
-        run_svc.update_run_step(run.id, "__summary__", flow_label)
+        run_svc.update_run_step(run.id, "__summarizer__", flow_label)
 
         space_dir = Path(space.path) / ".llmflows"
         agent_svc = AgentService(space_dir, working_path)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
-            step_name="__summary__",
+            step_name="__summarizer__",
             step_position=step_position,
             step_content=summary_content,
             flow_name=flow_label,

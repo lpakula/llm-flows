@@ -163,13 +163,13 @@ export function Sidebar() {
             <Bot size={14} className="flex-shrink-0" />
             Agents
           </NavLink>
-          <NavLink to="/gateway" className={navClass}>
-            <Radio size={14} className="flex-shrink-0" />
-            Gateway
-          </NavLink>
           <NavLink to="/tools" className={navClass}>
             <Wrench size={14} className="flex-shrink-0" />
             Tools
+          </NavLink>
+          <NavLink to="/gateway" className={navClass}>
+            <Radio size={14} className="flex-shrink-0" />
+            Gateways
           </NavLink>
           <NavLink to="/settings" className={navClass}>
             <SlidersHorizontal size={14} className="flex-shrink-0" />
