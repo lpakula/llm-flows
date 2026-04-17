@@ -187,6 +187,7 @@ export interface InboxItem {
   space_id: string;
   space_name: string;
   run_id: string;
+  flow_id: string;
   flow_name: string;
   prompt: string;
   user_message: string;
@@ -199,6 +200,7 @@ export interface CompletedRunItem {
   run_id: string;
   space_id: string;
   space_name: string;
+  flow_id: string;
   flow_name: string;
   outcome: string;
   summary: string;

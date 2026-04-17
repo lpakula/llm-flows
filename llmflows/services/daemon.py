@@ -79,7 +79,11 @@ class Daemon:
         """Cleanup run-scoped resources (browser, etc.)."""
         self.browser_service.cleanup(run_id)
 
-    def _check_max_spend(self, run, space, step_run, run_svc: RunService) -> bool:
+    def _check_max_spend(
+        self, run, space, step_run,
+        working_path: Path,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> bool:
         """Check if the run's cumulative cost exceeds the flow's max_spend_usd. Returns True if cancelled."""
         flow = run.flow
         if not flow or not flow.max_spend_usd:
@@ -95,7 +99,18 @@ class Daemon:
         AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
         run_svc.mark_step_completed(step_run.id, outcome="max_spend")
         self._finalize_run(run.id)
-        run_svc.mark_completed(run.id, outcome="max_spend")
+        run.outcome = "max_spend"
+        run_svc.session.commit()
+        self._launch_summary_step(
+            run, working_path,
+            step_run.step_position + 1, run_svc, flow_svc,
+            error_context={
+                "outcome": "max_spend",
+                "failed_step": step_run.step_name,
+                "error_details": f"Run exceeded the spending limit: ${total_cost:.4f} spent vs ${flow.max_spend_usd:.2f} allowed.",
+                "log_path": step_run.log_path or "",
+            },
+        )
         self.notifications.notify("run.max_spend", {
             "flow_name": run.flow_name or run.id,
             "run_id": run.id,
@@ -334,7 +349,7 @@ class Daemon:
                     step_run.token_count = t or None
                     run_svc.session.commit()
 
-            if self._check_max_spend(run, space, step_run, run_svc):
+            if self._check_max_spend(run, space, step_run, working_path, run_svc, flow_svc):
                 return
 
             if self.run_timeout_minutes and step_run.started_at:
@@ -348,19 +363,31 @@ class Daemon:
                 current_step_time = (datetime.now(timezone.utc) - step_started).total_seconds()
                 elapsed = completed_time + current_step_time
                 if elapsed > self.run_timeout_minutes * 60:
+                    elapsed_mins = int(elapsed / 60)
                     logger.warning(
                         "Run %s timed out after %dm (step '%s')",
-                        run.id, int(elapsed / 60), step_run.step_name,
+                        run.id, elapsed_mins, step_run.step_name,
                     )
                     AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     self._finalize_run(run.id)
-                    run_svc.mark_completed(run.id, outcome="timeout")
+                    run.outcome = "timeout"
+                    run_svc.session.commit()
+                    self._launch_summary_step(
+                        run, working_path,
+                        step_run.step_position + 1, run_svc, flow_svc,
+                        error_context={
+                            "outcome": "timeout",
+                            "failed_step": step_run.step_name,
+                            "error_details": f"Run timed out after {elapsed_mins}m (limit: {self.run_timeout_minutes}m).",
+                            "log_path": step_run.log_path or "",
+                        },
+                    )
                     self.notifications.notify("run.timeout", {
                         "flow_name": run.flow_name or run.id,
                         "run_id": run.id,
                         "space_name": space.name,
-                        "timeout_minutes": int(elapsed / 60),
+                        "timeout_minutes": elapsed_mins,
                     })
             return
 
@@ -535,7 +562,18 @@ class Daemon:
                         run.id, step_run.step_name, retry_count,
                     )
                     self._finalize_run(run.id)
-                    run_svc.mark_completed(run.id, outcome="interrupted")
+                    run.outcome = "interrupted"
+                    run_svc.session.commit()
+                    self._launch_summary_step(
+                        run, working_path,
+                        step_run.step_position + 1, run_svc, flow_svc,
+                        error_context={
+                            "outcome": "interrupted",
+                            "failed_step": step_run.step_name,
+                            "error_details": f"Step '{step_run.step_name}' failed gate checks after {retry_count} retries.",
+                            "log_path": step_run.log_path or "",
+                        },
+                    )
                     self.notifications.notify("run.completed", {
                         "flow_name": run.flow_name or run.id,
                         "run_id": run.id,
@@ -568,9 +606,10 @@ class Daemon:
         if current_step_name == "__summary__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
-            logger.info("Run %s completed", run.id)
+            outcome = run.outcome or "completed"
+            logger.info("Run %s completed (outcome=%s)", run.id, outcome)
             self._finalize_run(run.id)
-            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
             return
 
@@ -869,20 +908,43 @@ class Daemon:
             )
             run_svc.mark_step_completed(step_run.id, outcome="error")
             self._finalize_run(run.id)
-            run_svc.mark_completed(run.id, outcome="error")
+            run.outcome = "error"
+            run_svc.session.commit()
+            self._launch_summary_step(
+                run, working_path,
+                step_run.step_position + 1, run_svc, flow_svc,
+                error_context={
+                    "outcome": "error",
+                    "failed_step": step_name,
+                    "error_details": f"Failed to launch agent for step '{step_name}'.",
+                    "log_path": step_run.log_path or "",
+                },
+            )
 
     def _launch_summary_step(
         self, run, working_path: Path,
         step_position: int, run_svc: RunService, flow_svc: FlowService,
+        error_context: dict | None = None,
     ) -> None:
-        """Launch the auto-appended summary step."""
+        """Launch the auto-appended summary step.
+
+        When *error_context* is provided the error summary template is used
+        instead of the normal one, giving the AI context about the failure.
+        """
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = ContextService(working_path / ".llmflows")
-        summary_content = ctx.render_summary_step({
-            "artifacts_dir": str(artifacts_dir),
-        })
+
+        if error_context:
+            summary_content = ctx.render_error_summary_step({
+                "artifacts_dir": str(artifacts_dir),
+                **error_context,
+            })
+        else:
+            summary_content = ctx.render_summary_step({
+                "artifacts_dir": str(artifacts_dir),
+            })
 
         try:
             summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
@@ -927,7 +989,8 @@ class Daemon:
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
             self._finalize_run(run.id)
-            run_svc.mark_completed(run.id, outcome="completed", summary=summary)
+            outcome = run.outcome or "completed"
+            run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
             self._maybe_create_completed_inbox(run, run_svc)
 
     def _maybe_create_completed_inbox(self, run, run_svc: RunService) -> None:

@@ -52,6 +52,18 @@ class ContextService:
         except TemplateError:
             return ""
 
+    def render_error_summary_step(self, context: dict) -> str:
+        """Render step_error_summary.md for failed runs. Falls back to the normal summary template."""
+        template_file = DEFAULTS_DIR / "step_error_summary.md"
+        if not template_file.exists():
+            return self.render_summary_step(context)
+        try:
+            env = Environment(autoescape=False)
+            template = env.from_string(template_file.read_text())
+            return template.render(context)
+        except TemplateError:
+            return self.render_summary_step(context)
+
     @staticmethod
     def collect_artifacts(artifacts_dir: Path) -> list[dict]:
         """Collect artifacts from completed steps.
