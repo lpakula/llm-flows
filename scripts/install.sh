@@ -57,7 +57,9 @@ log_muted() {
 }
 
 STAGE_CURRENT=0
-STAGE_TOTAL=5
+STAGE_TOTAL=6
+
+MIN_NODE_MAJOR=18
 
 log_stage() {
     STAGE_CURRENT=$((STAGE_CURRENT + 1))
@@ -499,13 +501,35 @@ check_pipx() {
 # Node.js detection & installation (needed for browser tools / Playwright)
 # ---------------------------------------------------------------------------
 NODE_CMD=""
+NODE_MAJOR=""
 
 find_node() {
     NODE_CMD="$(command -v node 2>/dev/null || true)"
-    if [[ -n "$NODE_CMD" ]]; then
+    if [[ -z "$NODE_CMD" ]]; then
+        return 1
+    fi
+    NODE_MAJOR="$("$NODE_CMD" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+    if [[ "$NODE_MAJOR" -ge "$MIN_NODE_MAJOR" ]]; then
         return 0
     fi
     return 1
+}
+
+install_node_linux_nodesource() {
+    require_sudo
+    local setup_script
+    setup_script="$(mktempfile)"
+    if ! download_file "https://deb.nodesource.com/setup_22.x" "$setup_script"; then
+        return 1
+    fi
+    if is_root; then
+        run_quiet_step "Adding NodeSource repository" bash "$setup_script"
+        run_quiet_step "Installing Node.js 22" apt-get install -y -qq nodejs
+    else
+        run_quiet_step "Adding NodeSource repository" sudo bash "$setup_script"
+        run_quiet_step "Installing Node.js 22" sudo apt-get install -y -qq nodejs
+    fi
+    refresh_shell_command_cache
 }
 
 install_node() {
@@ -518,45 +542,44 @@ install_node() {
             refresh_shell_command_cache
         fi
     elif [[ "$OS" == "linux" ]]; then
-        require_sudo
         if command -v apt-get &>/dev/null; then
-            if is_root; then
-                run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs npm
-            else
-                run_quiet_step "Installing Node.js" sudo apt-get install -y -qq nodejs npm
+            install_node_linux_nodesource || true
+        else
+            require_sudo
+            if command -v dnf &>/dev/null; then
+                if is_root; then
+                    run_quiet_step "Installing Node.js" dnf install -y -q nodejs npm
+                else
+                    run_quiet_step "Installing Node.js" sudo dnf install -y -q nodejs npm
+                fi
             fi
-        elif command -v dnf &>/dev/null; then
-            if is_root; then
-                run_quiet_step "Installing Node.js" dnf install -y -q nodejs npm
-            else
-                run_quiet_step "Installing Node.js" sudo dnf install -y -q nodejs npm
-            fi
+            refresh_shell_command_cache
         fi
-        refresh_shell_command_cache
     fi
 }
 
 check_node() {
-    log_info "Checking Node.js..."
+    log_info "Checking Node.js (${MIN_NODE_MAJOR}+)..."
 
     if find_node; then
-        local version=""
-        version="$(node --version 2>/dev/null || true)"
-        log_success "Node.js ${version} found"
+        log_success "Node.js v${NODE_MAJOR} found ($(node --version 2>/dev/null || true))"
         return 0
     fi
 
-    log_info "Node.js not found, attempting install"
+    if [[ -n "$NODE_CMD" && "$NODE_MAJOR" -gt 0 ]]; then
+        log_warning "Node.js v${NODE_MAJOR} is too old (need ${MIN_NODE_MAJOR}+), attempting upgrade"
+    else
+        log_info "Node.js not found, attempting install"
+    fi
+
     install_node
 
     if find_node; then
-        local version=""
-        version="$(node --version 2>/dev/null || true)"
-        log_success "Node.js ${version} installed"
+        log_success "Node.js v${NODE_MAJOR} installed ($(node --version 2>/dev/null || true))"
         return 0
     fi
 
-    log_warning "Node.js not found — browser tools will not be available"
+    log_warning "Node.js ${MIN_NODE_MAJOR}+ not found — browser tools will not be available"
     log_muted "  Install Node.js from https://nodejs.org to enable browser automation"
     return 1
 }
@@ -730,6 +753,75 @@ ensure_local_bin_on_path() {
 }
 
 # ---------------------------------------------------------------------------
+# Pi agent (default executor for flow steps and chat)
+# ---------------------------------------------------------------------------
+PI_URL="git+https://github.com/lpakula/pi"
+
+install_pi_with_uv() {
+    local log
+    log="$(mktempfile)"
+    if "$UV_CMD" tool install --force --from "$PI_URL" pi >"$log" 2>&1; then
+        return 0
+    fi
+    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
+        tail -n 20 "$log" >&2 || true
+    fi
+    return 1
+}
+
+install_pi_with_pipx() {
+    local -a pipx_cmd
+    if [[ "$PIPX_CMD" == *" "* ]]; then
+        IFS=' ' read -ra pipx_cmd <<< "$PIPX_CMD"
+    else
+        pipx_cmd=("$PIPX_CMD")
+    fi
+
+    local log
+    log="$(mktempfile)"
+    if "${pipx_cmd[@]}" install --force --pip-args="--no-cache-dir" "$PI_URL" >"$log" 2>&1; then
+        "${pipx_cmd[@]}" ensurepath >/dev/null 2>&1 || true
+        return 0
+    fi
+    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
+        tail -n 20 "$log" >&2 || true
+    fi
+    return 1
+}
+
+check_pi() {
+    log_info "Checking Pi agent..."
+
+    export PATH="$HOME/.local/bin:$PATH"
+    refresh_shell_command_cache
+
+    if command -v pi &>/dev/null; then
+        local version=""
+        version="$(pi --version 2>/dev/null || true)"
+        log_success "Pi agent found${version:+ ($version)}"
+        return 0
+    fi
+
+    log_info "Pi agent not found, attempting install"
+
+    if [[ -n "$UV_CMD" ]] && install_pi_with_uv; then
+        refresh_shell_command_cache
+        log_success "Pi agent installed via uv"
+        return 0
+    fi
+
+    if [[ -n "$PIPX_CMD" ]] && install_pi_with_pipx; then
+        refresh_shell_command_cache
+        log_success "Pi agent installed via pipx"
+        return 0
+    fi
+
+    log_warning "Pi agent not installed — flow execution and chat will not work"
+    log_muted "  Install manually: uv tool install git+https://github.com/lpakula/pi"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Verification
 # ---------------------------------------------------------------------------
 verify_installation() {
@@ -778,8 +870,19 @@ main() {
         echo ""
         echo "  OS:              $OS"
         echo "  Python:          $(find_python 2>/dev/null && echo "$PYTHON_CMD ($PYTHON_VERSION)" || echo "will install")"
+        echo "  Node.js:         $(find_node 2>/dev/null && echo "v${NODE_MAJOR} found" || echo "will install (${MIN_NODE_MAJOR}+)")"
         echo "  Installer:       uv (preferred) or pipx (fallback)"
         echo "  Package:         git+https://github.com/lpakula/llm-flows"
+        echo "  Pi agent:        $(command -v pi &>/dev/null && echo "found ($(pi --version 2>/dev/null || echo 'unknown'))" || echo "will install")"
+        echo "  Browser tools:   ~/.llmflows/node_modules/ (playwright, tsx)"
+        echo ""
+        echo "  Stages:"
+        echo "    [1/6] Prepare environment (Homebrew on macOS)"
+        echo "    [2/6] Check / install Python 3.11+"
+        echo "    [3/6] Install llmflows (includes telegram + slack)"
+        echo "    [4/6] Install Pi agent"
+        echo "    [5/6] Set up browser tools (Node.js ${MIN_NODE_MAJOR}+, Playwright, Chromium)"
+        echo "    [6/6] Verify installation"
         echo ""
         log_success "Dry run complete (no changes made)"
         return 0
@@ -796,7 +899,10 @@ main() {
             log_success "Homebrew found"
         else
             log_info "Homebrew not found — installing"
-            run_quiet_step "Installing Homebrew" bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            local brew_installer
+            brew_installer="$(mktempfile)"
+            download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" "$brew_installer"
+            run_quiet_step "Installing Homebrew" env NONINTERACTIVE=1 bash "$brew_installer"
             if ! activate_brew_for_session; then
                 log_warning "Homebrew installed but not activated in this shell"
             else
@@ -814,13 +920,17 @@ main() {
     check_uv || true
     install_llmflows
 
-    # Stage 4: Browser tools (Node.js + dependencies)
+    # Stage 4: Pi agent
+    log_stage "Installing Pi agent"
+    check_pi || true
+
+    # Stage 5: Browser tools (Node.js + dependencies)
     log_stage "Setting up browser tools"
     if check_node; then
         install_node_tools || true
     fi
 
-    # Stage 5: Verify
+    # Stage 6: Verify
     log_stage "Verifying"
     verify_installation
 
