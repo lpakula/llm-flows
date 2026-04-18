@@ -70,6 +70,12 @@ export function FlowDetailView() {
   // Step modal
   const [stepModal, setStepModal] = useState<{ mode: "add" | "edit"; step?: FlowStep } | null>(null);
 
+  // Schedule
+  const [schedCron, setSchedCron] = useState("");
+  const [schedTz, setSchedTz] = useState("UTC");
+  const [schedEnabled, setSchedEnabled] = useState(false);
+  const [schedSaving, setSchedSaving] = useState(false);
+
   // Drag reorder
   const [localOrder, setLocalOrder] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
@@ -110,6 +116,9 @@ export function FlowDetailView() {
     setDescValue(f.description || "");
     setMaxSpendValue(f.max_spend_usd != null ? String(f.max_spend_usd) : "");
     setVariables(f.variables || {});
+    setSchedCron(f.schedule_cron || "");
+    setSchedTz(f.schedule_timezone || "UTC");
+    setSchedEnabled(f.schedule_enabled || false);
     setAliases(al);
     setTools(t);
     setLocalOrder([...f.steps].sort((a, b) => a.position - b.position).map((s) => s.id));
@@ -187,6 +196,29 @@ export function FlowDetailView() {
       : [...currentTools, toolId];
     await api.updateFlow(flow.id, { requirements: { tools: newTools } });
     load();
+  };
+
+  // Schedule
+  const saveSchedule = async (cron: string, tz: string, enabled: boolean) => {
+    if (!flow) return;
+    setSchedSaving(true);
+    try {
+      await api.updateFlow(flow.id, {
+        schedule_cron: cron,
+        schedule_timezone: tz,
+        schedule_enabled: enabled,
+      });
+      load();
+    } catch (e: unknown) {
+      alert("Failed to save schedule: " + (e instanceof Error ? e.message : String(e)));
+    }
+    setSchedSaving(false);
+  };
+
+  const toggleScheduleEnabled = async () => {
+    const next = !schedEnabled;
+    setSchedEnabled(next);
+    await saveSchedule(schedCron, schedTz, next);
   };
 
   // Steps
@@ -381,7 +413,6 @@ export function FlowDetailView() {
           )}
         </div>
         <div className="flex items-center gap-3 ml-4 shrink-0">
-          <button onClick={duplicateFlow} className="text-xs text-gray-400 hover:text-gray-200">Duplicate</button>
           <button onClick={deleteFlow} className="text-xs text-red-500 hover:text-red-400">Delete</button>
         </div>
       </div>
@@ -401,111 +432,198 @@ export function FlowDetailView() {
         </div>
       )}
 
-      {/* Variables */}
-      <div className="mb-6">
-        <h3 className="text-sm font-medium text-gray-200 mb-1">Variables</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running.
-        </p>
-        <div className="space-y-2">
-          {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate" title={key}>{key}</span>
-              <input
-                value={value}
-                onChange={(e) => setVariables((v) => ({ ...v, [key]: e.target.value }))}
-                onBlur={() => updateVariable(key, variables[key])}
-                onKeyDown={(e) => e.key === "Enter" && updateVariable(key, variables[key])}
-                className={`flex-1 max-w-md bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                  !value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
-                }`}
-                placeholder={!value ? "required — fill before running" : "value"}
-              />
-              <button onClick={() => removeVariable(key)}
-                className="text-xs text-red-400/60 hover:text-red-400 shrink-0">x</button>
-            </div>
-          ))}
+      {/* Settings: two-column layout */}
+      <div className="grid grid-cols-2 gap-6 mb-6">
+        {/* Left: Variables, Tools, Limits */}
+        <div className="space-y-6">
+          {/* Variables */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-200 mb-1">Variables</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running.
+            </p>
+            <div className="space-y-2">
+              {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate" title={key}>{key}</span>
+                  <input
+                    value={value}
+                    onChange={(e) => setVariables((v) => ({ ...v, [key]: e.target.value }))}
+                    onBlur={() => updateVariable(key, variables[key])}
+                    onKeyDown={(e) => e.key === "Enter" && updateVariable(key, variables[key])}
+                    className={`w-1/2 bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                      !value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
+                    }`}
+                    placeholder={!value ? "required — fill before running" : "value"}
+                  />
+                  <button onClick={() => removeVariable(key)}
+                    className="text-xs text-red-400/60 hover:text-red-400 shrink-0">x</button>
+                </div>
+              ))}
           <div className="flex items-center gap-2">
             <input value={newVarKey} onChange={(e) => setNewVarKey(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addVariable()}
               placeholder="NEW_KEY" className="w-32 bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             <input value={newVarValue} onChange={(e) => setNewVarValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addVariable()}
-              placeholder="value (optional)" className="flex-1 max-w-md bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-            <button onClick={addVariable} disabled={!newVarKey.trim()}
-              className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 shrink-0">+ Add</button>
+              placeholder="value (optional)" className="w-1/2 bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <button onClick={addVariable} disabled={!newVarKey.trim()}
+            className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300">+ Add</button>
+            </div>
+          </div>
+
+          {/* Tools */}
+          {tools.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-200 mb-1">Tools</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Read, write, edit, and shell tools are always available. Select additional tools for this flow:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {tools.map((tool) => {
+                  const selected = flow.requirements?.tools?.includes(tool.id) || false;
+                  const base = "px-3 py-1.5 rounded-lg text-xs border transition cursor-pointer";
+                  const style = selected
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                    : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300";
+                  return (
+                    <button key={tool.id} onClick={() => toggleTool(tool.id)} className={`${base} ${style}`}>
+                      {tool.name}
+                      {!tool.enabled && selected && (
+                        <span className="ml-1 text-[10px] text-amber-400">(off)</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Limits */}
+          <div className="flex gap-8">
+            <div>
+              <h3 className="text-sm font-medium text-gray-200 mb-1">Max Spend per Run</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Runs exceeding this cost will be cancelled. Leave empty for no limit.
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="No limit"
+                  value={maxSpendValue}
+                  onChange={(e) => setMaxSpendValue(e.target.value)}
+                  onBlur={async () => {
+                    const val = parseFloat(maxSpendValue);
+                    await api.updateFlow(flow.id, { max_spend_usd: isNaN(val) || val <= 0 ? 0 : val });
+                    load();
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  className="w-24 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-200 mb-1">Max Concurrent Runs</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                How many runs of this flow can execute in parallel.
+              </p>
+              <input
+                type="number"
+                min={1}
+                value={flow.max_concurrent_runs ?? 1}
+                onChange={async (e) => {
+                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                  await api.updateFlow(flow.id, { max_concurrent_runs: val });
+                  load();
+                }}
+                className="w-20 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Tools */}
-      {tools.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-medium text-gray-200 mb-1">Tools</h3>
-          <p className="text-xs text-gray-500 mb-3">
-            Read, write, edit, and shell tools are always available. Select additional tools for this flow:
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {tools.map((tool) => {
-              const selected = flow.requirements?.tools?.includes(tool.id) || false;
-              const base = "px-3 py-1.5 rounded-lg text-xs border transition cursor-pointer";
-              const style = selected
-                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300";
-              return (
-                <button key={tool.id} onClick={() => toggleTool(tool.id)} className={`${base} ${style}`}>
-                  {tool.name}
-                  {!tool.enabled && selected && (
-                    <span className="ml-1 text-[10px] text-amber-400">(off)</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Limits */}
-      <div className="mb-6 flex gap-8">
+        {/* Right: Schedule */}
         <div>
-          <h3 className="text-sm font-medium text-gray-200 mb-1">Max Spend per Run</h3>
-          <p className="text-xs text-gray-500 mb-3">
-            Runs exceeding this cost will be cancelled. Leave empty for no limit.
-          </p>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">$</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="No limit"
-              value={maxSpendValue}
-              onChange={(e) => setMaxSpendValue(e.target.value)}
-              onBlur={async () => {
-                const val = parseFloat(maxSpendValue);
-                await api.updateFlow(flow.id, { max_spend_usd: isNaN(val) || val <= 0 ? 0 : val });
-                load();
+          <div className="flex items-center gap-3 mb-1">
+            <h3 className="text-sm font-medium text-gray-200">Schedule</h3>
+            <button
+              onClick={() => {
+                const next = !schedEnabled;
+                setSchedEnabled(next);
+                if (!next) saveSchedule(schedCron, schedTz, false);
               }}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              className="w-24 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
-            />
+              disabled={schedSaving}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${
+                schedEnabled ? "bg-blue-500" : "bg-gray-700"
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  schedEnabled ? "translate-x-[18px]" : "translate-x-[3px]"
+                }`}
+              />
+            </button>
+            {schedEnabled && flow.schedule_next_at && (
+              <span className="text-xs text-gray-500">Next run: {shortDateTime(flow.schedule_next_at)}</span>
+            )}
           </div>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-200 mb-1">Max Concurrent Runs</h3>
           <p className="text-xs text-gray-500 mb-3">
-            How many runs of this flow can execute in parallel.
+            Automatically run this flow on a recurring schedule. The daemon will enqueue a run when it's due.
           </p>
-          <input
-            type="number"
-            min={1}
-            value={flow.max_concurrent_runs ?? 1}
-            onChange={async (e) => {
-              const val = Math.max(1, parseInt(e.target.value) || 1);
-              await api.updateFlow(flow.id, { max_concurrent_runs: val });
-              load();
-            }}
-            className="w-20 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
-          />
+          <div className={`flex flex-wrap gap-1.5 mb-3 ${!schedEnabled ? "opacity-40 pointer-events-none" : ""}`}>
+            {[
+              { label: "Every hour", cron: "0 * * * *" },
+              { label: "Every 6h", cron: "0 */6 * * *" },
+              { label: "Daily 9am", cron: "0 9 * * *" },
+              { label: "Daily 2pm", cron: "0 14 * * *" },
+              { label: "Mon-Fri 9am", cron: "0 9 * * 1-5" },
+              { label: "Weekly Mon", cron: "0 9 * * 1" },
+              { label: "Weekend 9am", cron: "0 9 * * 0,6" },
+            ].map((p) => (
+              <button
+                key={p.cron}
+                onClick={() => { setSchedCron(p.cron); saveSchedule(p.cron, schedTz, true); }}
+                className={`px-2 py-1 rounded text-[10px] border transition ${
+                  schedEnabled && schedCron === p.cron
+                    ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                    : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className={`flex items-center gap-3 ${!schedEnabled ? "opacity-40 pointer-events-none" : ""}`}>
+            <input
+              value={schedEnabled ? schedCron : ""}
+              onChange={(e) => setSchedCron(e.target.value)}
+              onBlur={() => { if (schedCron !== (flow.schedule_cron || "")) saveSchedule(schedCron, schedTz, true); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              placeholder="0 14 * * *"
+              disabled={!schedEnabled}
+              className="w-40 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-xs font-mono text-gray-200 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed"
+            />
+            <select
+              value={schedTz}
+              onChange={(e) => { setSchedTz(e.target.value); saveSchedule(schedCron, e.target.value, true); }}
+              disabled={!schedEnabled}
+              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed"
+            >
+              {[
+                "UTC",
+                "US/Eastern", "US/Central", "US/Mountain", "US/Pacific",
+                "Europe/London", "Europe/Berlin", "Europe/Paris", "Europe/Warsaw",
+                "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata",
+                "Australia/Sydney",
+              ].map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+            {schedSaving && <span className="text-[10px] text-gray-500">Saving...</span>}
+          </div>
         </div>
       </div>
 

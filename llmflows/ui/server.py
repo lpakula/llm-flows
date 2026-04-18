@@ -43,6 +43,9 @@ class FlowUpdate(BaseModel):
     max_concurrent_runs: Optional[int] = None
     max_spend_usd: Optional[float] = None
     starred: Optional[bool] = None
+    schedule_cron: Optional[str] = None
+    schedule_timezone: Optional[str] = None
+    schedule_enabled: Optional[bool] = None
 
 
 class StepCreate(BaseModel):
@@ -433,8 +436,84 @@ async def get_space(space_id: str):
         session.close()
 
 
+class SpaceRegister(BaseModel):
+    path: str
+    name: Optional[str] = None
+
+
 class SpaceUpdate(BaseModel):
     name: Optional[str] = None
+
+
+@app.post("/api/spaces")
+async def register_space(body: SpaceRegister):
+    """Register a directory as a new llmflows space."""
+    space_path = Path(body.path).expanduser().resolve()
+    if not space_path.is_dir():
+        raise HTTPException(status_code=400, detail="Path does not exist or is not a directory")
+
+    git_repo = (space_path / ".git").is_dir()
+    space_name = body.name or space_path.name
+
+    session = get_session()
+    try:
+        space_svc = SpaceService(session)
+        existing = space_svc.get_by_path(str(space_path))
+        if existing:
+            return existing.to_dict()
+
+        s = space_svc.register(name=space_name, path=str(space_path), git_repo=git_repo)
+
+        dot_dir = space_path / ".llmflows"
+        dot_dir.mkdir(parents=True, exist_ok=True)
+
+        if git_repo:
+            gitignore = space_path / ".gitignore"
+            pattern = ".worktrees/"
+            content = gitignore.read_text() if gitignore.exists() else ""
+            if pattern not in content:
+                if content and not content.endswith("\n"):
+                    content += "\n"
+                content += f"\n{pattern}\n"
+                gitignore.write_text(content)
+
+        flow_svc = FlowService(session)
+        flow_svc.sync_from_disk(str(space_path), s.id)
+
+        return s.to_dict()
+    finally:
+        session.close()
+
+
+@app.get("/api/browse-dirs")
+async def browse_dirs(path: str = "~"):
+    """List subdirectories of a given path for the folder picker."""
+    target = Path(path).expanduser().resolve()
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="Not a directory")
+
+    dirs: list[dict] = []
+    try:
+        for entry in sorted(target.iterdir()):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                has_git = (entry / ".git").is_dir()
+                has_flows = (entry / "flows").is_dir()
+                dirs.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "has_git": has_git,
+                    "has_flows": has_flows,
+                })
+    except PermissionError:
+        pass
+
+    return {
+        "current": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "dirs": dirs,
+    }
 
 
 @app.patch("/api/spaces/{space_id}")
@@ -1545,12 +1624,56 @@ async def update_flow(flow_id: str, body: FlowUpdate):
             updates["max_spend_usd"] = body.max_spend_usd if body.max_spend_usd > 0 else None
         if body.starred is not None:
             updates["starred"] = body.starred
+        if body.schedule_cron is not None:
+            cron_expr = body.schedule_cron.strip() if body.schedule_cron else ""
+            if cron_expr:
+                from croniter import croniter
+                if not croniter.is_valid(cron_expr):
+                    raise HTTPException(status_code=400, detail=f"Invalid cron expression: {cron_expr}")
+            updates["schedule_cron"] = cron_expr or None
+            if not cron_expr:
+                updates["schedule_next_at"] = None
+                updates["schedule_enabled"] = False
+        if body.schedule_timezone is not None:
+            updates["schedule_timezone"] = body.schedule_timezone or "UTC"
+        if body.schedule_enabled is not None:
+            updates["schedule_enabled"] = body.schedule_enabled
+            if body.schedule_enabled:
+                existing = flow_svc.get(flow_id)
+                cron_expr = updates.get("schedule_cron", existing.schedule_cron if existing else None)
+                tz_str = updates.get("schedule_timezone", existing.schedule_timezone if existing else None) or "UTC"
+                if cron_expr:
+                    updates["schedule_next_at"] = _compute_next_run(cron_expr, tz_str)
+                else:
+                    updates["schedule_enabled"] = False
+            else:
+                updates["schedule_next_at"] = None
+        elif body.schedule_cron is not None and updates.get("schedule_cron"):
+            existing = flow_svc.get(flow_id)
+            if existing and existing.schedule_enabled:
+                tz_str = updates.get("schedule_timezone", existing.schedule_timezone) or "UTC"
+                updates["schedule_next_at"] = _compute_next_run(updates["schedule_cron"], tz_str)
         flow = flow_svc.update(flow_id, **updates)
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
         return flow.to_dict()
     finally:
         session.close()
+
+
+def _compute_next_run(cron_expr: str, tz_str: str = "UTC"):
+    """Compute the next UTC datetime for a cron expression in the given timezone."""
+    from datetime import datetime, timezone as _tz
+    from croniter import croniter
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+    tz = ZoneInfo(tz_str) if tz_str != "UTC" else _tz.utc
+    now_local = datetime.now(tz)
+    cron = croniter(cron_expr, now_local)
+    next_local = cron.get_next(datetime)
+    return next_local.astimezone(_tz.utc).replace(tzinfo=None)
 
 
 @app.delete("/api/flows/{flow_id}")

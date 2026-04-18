@@ -69,6 +69,10 @@ export interface Flow {
   max_concurrent_runs: number;
   max_spend_usd: number | null;
   starred?: boolean;
+  schedule_cron: string | null;
+  schedule_timezone: string;
+  schedule_next_at: string | null;
+  schedule_enabled: boolean;
   run_count?: number;
   total_cost_usd?: number;
   total_duration_seconds?: number | null;

@@ -219,10 +219,66 @@ class Daemon:
             run_svc = RunService(session)
             flow_svc = FlowService(session)
 
+            self._check_schedules(flow_svc, run_svc, session)
+
             for space in space_svc.list_all():
                 self._process_space(space, run_svc, flow_svc)
         finally:
             session.close()
+
+    def _check_schedules(
+        self, flow_svc: FlowService, run_svc: RunService, session,
+    ) -> None:
+        """Enqueue runs for flows whose schedule_next_at has passed."""
+        from ..db.models import Flow as FlowModel
+        now = datetime.now(timezone.utc)
+        due_flows = (
+            session.query(FlowModel)
+            .filter(
+                FlowModel.schedule_enabled == True,  # noqa: E712
+                FlowModel.schedule_cron.isnot(None),
+                FlowModel.schedule_next_at.isnot(None),
+                FlowModel.schedule_next_at <= now,
+            )
+            .all()
+        )
+        for flow in due_flows:
+            try:
+                warnings = flow_svc.validate_flow(flow.id, space_id=flow.space_id)
+                blockers = [w for w in warnings if w["warning_type"] in ("missing_alias", "missing_variable")]
+                if blockers:
+                    logger.warning(
+                        "Skipping scheduled run for flow %s (%s): %s",
+                        flow.name, flow.id,
+                        "; ".join(w["message"] for w in blockers),
+                    )
+                else:
+                    run = run_svc.enqueue(flow.space_id, flow.id)
+                    logger.info(
+                        "Scheduled run %s for flow %s (%s)",
+                        run.id, flow.name, flow.id,
+                    )
+            except Exception:
+                logger.exception("Failed to enqueue scheduled run for flow %s", flow.id)
+            try:
+                tz_str = flow.schedule_timezone or "UTC"
+                flow.schedule_next_at = self._compute_next_schedule(flow.schedule_cron, tz_str)
+                session.commit()
+            except Exception:
+                logger.exception("Failed to compute next schedule for flow %s", flow.id)
+
+    @staticmethod
+    def _compute_next_schedule(cron_expr: str, tz_str: str = "UTC"):
+        from croniter import croniter
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            from backports.zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_str) if tz_str != "UTC" else timezone.utc
+        now_local = datetime.now(tz)
+        cron = croniter(cron_expr, now_local)
+        next_local = cron.get_next(datetime)
+        return next_local.astimezone(timezone.utc).replace(tzinfo=None)
 
     @staticmethod
     def _get_snapshot(run) -> Optional[dict]:

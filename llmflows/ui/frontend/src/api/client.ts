@@ -70,6 +70,12 @@ export const api = {
   getDashboard: () => get<DashboardEntry[]>("/api/dashboard"),
 
   // Spaces
+  registerSpace: (path: string, name?: string) =>
+    post<Space>("/api/spaces", { path, name: name || undefined }),
+  browseDirs: (path?: string) =>
+    get<{ current: string; parent: string | null; dirs: { name: string; path: string; has_git: boolean; has_flows: boolean }[] }>(
+      `/api/browse-dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`
+    ),
   listSpaces: () => get<Space[]>("/api/spaces"),
   getSpace: (id: string) => get<Space>(`/api/spaces/${id}`),
   updateSpace: (id: string, body: Partial<{ name: string }>) =>
@@ -117,7 +123,7 @@ export const api = {
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
   createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
     post<Flow>(`/api/spaces/${spaceId}/flows`, body),
-  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { tools: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean }>) =>
+  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { tools: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean; schedule_cron: string; schedule_timezone: string; schedule_enabled: boolean }>) =>
     patch<Flow>(`/api/flows/${id}`, body),
   validateFlow: (id: string) => get<{ warnings: FlowWarning[] }>(`/api/flows/${id}/validate`),
   deleteFlow: (id: string) => del<{ ok: boolean }>(`/api/flows/${id}`),

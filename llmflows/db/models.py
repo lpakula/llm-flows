@@ -117,6 +117,10 @@ class Flow(Base):
     max_concurrent_runs: int = Column(Integer, default=1)
     max_spend_usd: float = Column(Float, nullable=True)
     starred: bool = Column(Boolean, default=False)
+    schedule_cron: str = Column(String(100), nullable=True)
+    schedule_timezone: str = Column(String(64), nullable=True)
+    schedule_next_at: datetime = Column(DateTime, nullable=True)
+    schedule_enabled: bool = Column(Boolean, default=False)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -153,6 +157,10 @@ class Flow(Base):
             "max_concurrent_runs": self.max_concurrent_runs if self.max_concurrent_runs is not None else 1,
             "max_spend_usd": self.max_spend_usd,
             "starred": bool(self.starred),
+            "schedule_cron": self.schedule_cron,
+            "schedule_timezone": self.schedule_timezone or "UTC",
+            "schedule_next_at": self.schedule_next_at.isoformat() if self.schedule_next_at else None,
+            "schedule_enabled": bool(self.schedule_enabled),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "steps": [s.to_dict() for s in self.steps],

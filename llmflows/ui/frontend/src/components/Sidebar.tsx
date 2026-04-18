@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle } from "lucide-react";
+import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle, FolderPlus, Folder, FolderGit2, ChevronUp, Loader2 } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -12,10 +12,160 @@ function navClass({ isActive }: { isActive: boolean }) {
   }`;
 }
 
+interface DirEntry {
+  name: string;
+  path: string;
+  has_git: boolean;
+  has_flows: boolean;
+}
+
+function RegisterSpaceModal({ onClose, onRegistered }: { onClose: () => void; onRegistered: (id: string) => void }) {
+  const [currentPath, setCurrentPath] = useState("~");
+  const [parentPath, setParentPath] = useState<string | null>(null);
+  const [dirs, setDirs] = useState<DirEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [spaceName, setSpaceName] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const browse = useCallback(async (path: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.browseDirs(path);
+      setCurrentPath(data.current);
+      setParentPath(data.parent);
+      setDirs(data.dirs);
+    } catch {
+      setError("Cannot access this directory");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { browse("~"); }, [browse]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const handleSelect = (dir: DirEntry) => {
+    setSelectedPath(dir.path);
+    setSpaceName(dir.name);
+  };
+
+  const handleRegister = async () => {
+    const pathToRegister = selectedPath || currentPath;
+    if (!pathToRegister) return;
+    setRegistering(true);
+    setError(null);
+    try {
+      const space = await api.registerSpace(pathToRegister, spaceName || undefined);
+      onRegistered(space.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Registration failed");
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const resolvedName = spaceName || (selectedPath ? selectedPath.split("/").pop() : currentPath.split("/").pop()) || "";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={modalRef} className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-white">Register Space</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-gray-800 flex items-center gap-2 text-xs text-gray-400 bg-gray-800/40">
+          {parentPath && (
+            <button onClick={() => browse(parentPath)} className="p-1 hover:bg-gray-700 rounded transition" title="Go up">
+              <ChevronUp size={14} />
+            </button>
+          )}
+          <span className="truncate font-mono">{currentPath}</span>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-8 text-gray-500">
+              <Loader2 size={18} className="animate-spin" />
+            </div>
+          ) : dirs.length === 0 ? (
+            <div className="py-8 text-center text-gray-500 text-sm">No subdirectories</div>
+          ) : (
+            <ul className="divide-y divide-gray-800/60">
+              {dirs.map((d) => (
+                <li key={d.path}>
+                  <div className="flex items-center">
+                    <button
+                      onClick={() => handleSelect(d)}
+                      className={`flex-1 text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors ${
+                        selectedPath === d.path ? "bg-blue-600/20 text-white" : "text-gray-300 hover:bg-gray-800"
+                      }`}
+                    >
+                      {d.has_git ? <FolderGit2 size={14} className="text-orange-400 shrink-0" /> : <Folder size={14} className="text-gray-500 shrink-0" />}
+                      <span className="truncate">{d.name}</span>
+                      {d.has_flows && <span className="ml-auto text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded">flows</span>}
+                    </button>
+                    <button
+                      onClick={() => browse(d.path)}
+                      className="px-3 py-2 text-gray-500 hover:text-gray-200 hover:bg-gray-800 text-xs transition"
+                      title="Browse into"
+                    >
+                      &rsaquo;
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-800 space-y-3">
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500 shrink-0 w-12">Name</label>
+            <input
+              type="text"
+              value={spaceName}
+              onChange={(e) => setSpaceName(e.target.value)}
+              placeholder={resolvedName}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500 shrink-0 w-12">Path</label>
+            <span className="flex-1 text-xs text-gray-400 font-mono truncate">{selectedPath || currentPath}</span>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white transition">Cancel</button>
+            <button
+              onClick={handleRegister}
+              disabled={registering}
+              className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition flex items-center gap-2"
+            >
+              {registering && <Loader2 size={14} className="animate-spin" />}
+              Register
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Sidebar() {
-  const { spaces, selectedSpaceId, setSelectedSpaceId } = useApp();
+  const { spaces, selectedSpaceId, setSelectedSpaceId, reload } = useApp();
   const navigate = useNavigate();
   const [spaceMenuOpen, setSpaceMenuOpen] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
   const spacePickerRef = useRef<HTMLDivElement>(null);
   const [inboxCount, setInboxCount] = useState(0);
 
@@ -51,8 +201,16 @@ export function Sidebar() {
     }
   };
 
+  const handleRegistered = async (spaceId: string) => {
+    setShowRegister(false);
+    await reload();
+    pickSpace(spaceId);
+  };
+
   return (
     <aside className="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col h-full min-h-0">
+      {showRegister && <RegisterSpaceModal onClose={() => setShowRegister(false)} onRegistered={handleRegistered} />}
+
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800 flex-shrink-0 flex items-center justify-center">
         <NavLink to="/" className="text-lg font-semibold tracking-tight hover:text-blue-400 transition">
@@ -130,6 +288,16 @@ export function Sidebar() {
                   </button>
                 </li>
               ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => { setSpaceMenuOpen(false); setShowRegister(true); }}
+                  className="w-full text-left px-2.5 py-2 text-sm flex items-center gap-2 text-blue-400 hover:bg-gray-700 transition-colors duration-100"
+                >
+                  <FolderPlus size={12} className="shrink-0" />
+                  <span>Register space...</span>
+                </button>
+              </li>
             </ul>
           )}
         </div>
