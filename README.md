@@ -87,9 +87,13 @@ Some automations need a human touch. HITL steps pause the flow and ask for your 
 
 The **Inbox** is your central hub. Completed runs show up here with summaries and any attachments (screenshots, reports, files). HITL steps also appear in the inbox, waiting for your response.
 
-### 📱 Gateway — Telegram and Slack channels
+### 📱 Gateway
 
-Connect Telegram or Slack to receive notifications on your phone, respond to HITL steps from anywhere, and even start flows directly from a chat message. Set this up in **Settings > Gateway**.
+Connect external channels to receive notifications, respond to HITL steps from anywhere, and start flows directly from a chat message. Set this up in **Settings > Gateway**.
+
+Available channels:
+- **Telegram** — get notified and respond to flows from your phone
+- **Slack** — receive updates and approve HITL steps in your workspace
 
 ### ⏰ Schedules
 
