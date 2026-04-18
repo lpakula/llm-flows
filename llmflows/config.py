@@ -200,20 +200,42 @@ def load_system_config() -> dict[str, Any]:
     return defaults
 
 
+def _format_toml_value(val: Any) -> str:
+    """Format a Python value as a TOML literal."""
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, str):
+        return f'"{val}"'
+    if isinstance(val, list):
+        items = ", ".join(_format_toml_value(v) for v in val)
+        return f"[{items}]"
+    return str(val)
+
+
 def _write_config(config: dict[str, Any]) -> Path:
     """Write config dict to ~/.llmflows/config.toml."""
-    lines = []
+    lines: list[str] = []
+
+    def _write_section(prefix: str, values: dict[str, Any]) -> None:
+        flat: list[tuple[str, Any]] = []
+        nested: list[tuple[str, dict]] = []
+        for k, v in values.items():
+            if isinstance(v, dict):
+                nested.append((k, v))
+            else:
+                flat.append((k, v))
+        if flat:
+            lines.append(f"[{prefix}]")
+            for k, v in flat:
+                lines.append(f"{k} = {_format_toml_value(v)}")
+            lines.append("")
+        for k, v in nested:
+            _write_section(f"{prefix}.{k}", v)
+
     for section, values in config.items():
         if isinstance(values, dict):
-            lines.append(f"[{section}]")
-            for key, val in values.items():
-                if isinstance(val, bool):
-                    lines.append(f"{key} = {str(val).lower()}")
-                elif isinstance(val, str):
-                    lines.append(f'{key} = "{val}"')
-                else:
-                    lines.append(f"{key} = {val}")
-            lines.append("")
+            _write_section(section, values)
+
     SYSTEM_CONFIG.write_text("\n".join(lines))
     return SYSTEM_CONFIG
 

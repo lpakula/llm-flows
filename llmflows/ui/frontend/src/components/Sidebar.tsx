@@ -169,7 +169,7 @@ export function Sidebar() {
           </NavLink>
           <NavLink to="/gateway" className={navClass}>
             <Radio size={14} className="flex-shrink-0" />
-            Gateways
+            Gateway
           </NavLink>
           <NavLink to="/settings" className={navClass}>
             <SlidersHorizontal size={14} className="flex-shrink-0" />

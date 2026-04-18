@@ -94,6 +94,10 @@ class GatewayConfigBody(BaseModel):
     telegram_enabled: Optional[bool] = None
     telegram_bot_token: Optional[str] = None
     telegram_allowed_chat_ids: Optional[list[int]] = None
+    slack_enabled: Optional[bool] = None
+    slack_bot_token: Optional[str] = None
+    slack_app_token: Optional[str] = None
+    slack_allowed_channel_ids: Optional[list[str]] = None
 
 
 class ToolConfigBody(BaseModel):
@@ -174,32 +178,74 @@ async def update_daemon_config(body: DaemonConfigBody):
 @app.get("/api/config/gateway")
 async def get_gateway_config():
     config = load_system_config()
-    tg = config.get("telegram", {})
+    channels = config.get("channels", {})
+    tg = channels.get("telegram", {})
+    sl = channels.get("slack", {})
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
         "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+        "slack_enabled": sl.get("enabled", False),
+        "slack_bot_token": sl.get("bot_token", ""),
+        "slack_app_token": sl.get("app_token", ""),
+        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
     }
 
 
 @app.patch("/api/config/gateway")
 async def update_gateway_config(body: GatewayConfigBody):
     config = load_system_config()
-    if "telegram" not in config:
-        config["telegram"] = {}
+    if "channels" not in config:
+        config["channels"] = {}
+    if "telegram" not in config["channels"]:
+        config["channels"]["telegram"] = {}
+    if "slack" not in config["channels"]:
+        config["channels"]["slack"] = {}
+
+    tg = config["channels"]["telegram"]
     if body.telegram_enabled is not None:
-        config["telegram"]["enabled"] = body.telegram_enabled
+        tg["enabled"] = body.telegram_enabled
     if body.telegram_bot_token is not None:
-        config["telegram"]["bot_token"] = body.telegram_bot_token
+        tg["bot_token"] = body.telegram_bot_token
     if body.telegram_allowed_chat_ids is not None:
-        config["telegram"]["allowed_chat_ids"] = body.telegram_allowed_chat_ids
+        tg["allowed_chat_ids"] = body.telegram_allowed_chat_ids
+
+    sl = config["channels"]["slack"]
+    if body.slack_enabled is not None:
+        sl["enabled"] = body.slack_enabled
+    if body.slack_bot_token is not None:
+        sl["bot_token"] = body.slack_bot_token
+    if body.slack_app_token is not None:
+        sl["app_token"] = body.slack_app_token
+    if body.slack_allowed_channel_ids is not None:
+        sl["allowed_channel_ids"] = body.slack_allowed_channel_ids
+
     save_system_config(config)
-    tg = config["telegram"]
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
         "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+        "slack_enabled": sl.get("enabled", False),
+        "slack_bot_token": sl.get("bot_token", ""),
+        "slack_app_token": sl.get("app_token", ""),
+        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
     }
+
+
+@app.post("/api/gateway/restart")
+async def restart_gateway():
+    """Signal the daemon to restart all gateway channels."""
+    from ..services.daemon import read_pid_file
+    import signal as sig
+    pid = read_pid_file()
+    if pid is None:
+        raise HTTPException(status_code=400, detail="Daemon is not running")
+    try:
+        import os
+        os.kill(pid, sig.SIGUSR1)
+        return {"ok": True, "message": "Gateway restart signal sent"}
+    except ProcessLookupError:
+        raise HTTPException(status_code=400, detail="Daemon process not found")
 
 
 TOOL_REGISTRY: list[dict] = [

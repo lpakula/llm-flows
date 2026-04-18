@@ -96,15 +96,16 @@ def _format_elapsed(start, now) -> str:
 
 
 class TelegramBot:
-    """Telegram bot for notifications and human-step responses."""
+    """Telegram channel — notifications and human-step responses."""
 
+    name = "telegram"
     subscribed_events = [
         "run.completed",
         "run.timeout",
         "step.awaiting_user",
     ]
 
-    def __init__(self, config: dict[str, Any], session_factory, notification_service=None):
+    def __init__(self, config: dict[str, Any], session_factory):
         self.config = config
         self.session_factory = session_factory
         self.bot_token = config["bot_token"]
@@ -116,10 +117,7 @@ class TelegramBot:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
 
-        if notification_service:
-            notification_service.register(self)
-
-    def start_background(self) -> None:
+    def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="telegram-bot")
         self._thread.start()
         logger.info("Telegram bot started in background thread")
@@ -147,7 +145,7 @@ class TelegramBot:
         from telegram.request import HTTPXRequest
         request = HTTPXRequest(
             connect_timeout=10,
-            read_timeout=10,
+            read_timeout=35,
             connection_pool_size=4,
         )
         app = (
@@ -160,6 +158,7 @@ class TelegramBot:
         from telegram.ext import CommandHandler
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
+        app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -172,8 +171,8 @@ class TelegramBot:
             self._loop.run_until_complete(
                 app.updater.start_polling(
                     drop_pending_updates=True,
-                    poll_interval=1.0,
-                    timeout=10,
+                    poll_interval=0.0,
+                    timeout=30,
                 )
             )
             self._loop.run_forever()
@@ -187,6 +186,7 @@ class TelegramBot:
         await self._app.bot.set_my_commands([
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
+            BotCommand("help", "Show commands & chat ID"),
         ])
         logger.info("Telegram bot commands registered")
 
@@ -266,6 +266,21 @@ class TelegramBot:
             )
         finally:
             session.close()
+
+    # ── /help — show commands and chat ID ───────────────────────────────────
+
+    async def _handle_help_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        self._active_chats.add(chat_id)
+        await update.message.reply_text(
+            f"<b>llmflows bot</b>\n\n"
+            f"Chat ID: <code>{chat_id}</code>\n\n"
+            f"<b>Commands:</b>\n"
+            f"/run — Start a flow\n"
+            f"/active — List active &amp; queued runs\n"
+            f"/help — Show this message",
+            parse_mode="HTML",
+        )
 
     # ── Message handler (prompt responses) ───────────────────────────────────
 

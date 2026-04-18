@@ -163,6 +163,7 @@ export const api = {
   // Gateway
   getGatewayConfig: () => get<GatewayConfig>("/api/config/gateway"),
   updateGatewayConfig: (body: Partial<GatewayConfig>) => patch<GatewayConfig>("/api/config/gateway", body),
+  restartGateway: () => post<{ ok: boolean; message: string }>("/api/gateway/restart", {}),
 
   // Tools
   getToolsConfig: () => get<ToolConfig[]>("/api/config/tools"),

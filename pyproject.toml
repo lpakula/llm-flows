@@ -48,6 +48,9 @@ Issues = "https://github.com/lpakula/llm-flows/issues"
 telegram = [
     "python-telegram-bot>=20.0",
 ]
+slack = [
+    "slack-bolt>=1.18",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",

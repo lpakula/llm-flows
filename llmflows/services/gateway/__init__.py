@@ -1,7 +1,8 @@
-"""Gateway services — notifications and external integrations (Telegram, etc.)."""
+"""Gateway services — channel integrations (Telegram, Slack, etc.)."""
 
-from .notifications import NotificationService
+from .channel import Channel, ChannelManager
 
 __all__ = [
-    "NotificationService",
+    "Channel",
+    "ChannelManager",
 ]

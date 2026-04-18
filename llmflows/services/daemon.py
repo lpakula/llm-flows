@@ -74,10 +74,9 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
-        from .gateway.notifications import NotificationService
-        self.notifications = NotificationService()
+        from .gateway.channel import ChannelManager
+        self.notifications = ChannelManager()
         self.browser_service = BrowserService()
-        self._telegram = None
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
@@ -148,24 +147,34 @@ class Daemon:
         except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
             return False
 
-    def _maybe_start_telegram(self) -> None:
-        """Start the Telegram bot if configured."""
-        tg_config = self.config.get("telegram", {})
-        if not tg_config.get("enabled") or not tg_config.get("bot_token"):
-            return
-        try:
-            from .gateway.telegram import TelegramBot
-            from ..db.database import get_session
+    def _build_channels(self) -> list:
+        """Build channel instances from config (lazy import, only if enabled)."""
+        channels_config = self.config.get("channels", {})
+        result = []
 
-            self._telegram = TelegramBot(
-                config=tg_config,
-                session_factory=get_session,
-                notification_service=self.notifications,
-            )
-            self._telegram.start_background()
-            logger.info("Telegram bot started")
-        except Exception:
-            logger.exception("Failed to start Telegram bot")
+        tg_config = channels_config.get("telegram", {})
+        if tg_config.get("enabled") and tg_config.get("bot_token"):
+            try:
+                from .gateway.telegram import TelegramBot
+                result.append(TelegramBot(config=tg_config, session_factory=get_session))
+            except Exception:
+                logger.exception("Failed to create Telegram channel")
+
+        slack_config = channels_config.get("slack", {})
+        if slack_config.get("enabled") and slack_config.get("bot_token") and slack_config.get("app_token"):
+            try:
+                from .gateway.slack import SlackChannel
+                result.append(SlackChannel(config=slack_config, session_factory=get_session))
+            except Exception:
+                logger.exception("Failed to create Slack channel")
+
+        return result
+
+    def restart_channels(self) -> None:
+        """Rebuild and restart all channels from current config."""
+        self.config = load_system_config()
+        new_channels = self._build_channels()
+        self.notifications.restart_all(new_channels)
 
     def start(self) -> None:
         """Start the daemon loop."""
@@ -173,7 +182,11 @@ class Daemon:
         self._stop_event.clear()
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
-        self._maybe_start_telegram()
+        signal.signal(signal.SIGUSR1, self._handle_gateway_restart)
+
+        for ch in self._build_channels():
+            self.notifications.register(ch)
+        self.notifications.start_all()
 
         logger.info("Daemon started (poll every %ds)", self.poll_interval)
 
@@ -185,14 +198,17 @@ class Daemon:
             self._stop_event.wait(self.poll_interval)
 
         self.browser_service.cleanup_all()
-        if self._telegram:
-            self._telegram.stop()
+        self.notifications.stop_all()
         logger.info("Daemon stopped")
 
     def _handle_signal(self, signum, frame):
         logger.info("Received signal %d, stopping", signum)
         self.running = False
         self._stop_event.set()
+
+    def _handle_gateway_restart(self, signum, frame):
+        logger.info("Received SIGUSR1, restarting gateway channels")
+        self.restart_channels()
 
     def _tick(self) -> None:
         """Single daemon tick -- check all spaces for actionable transitions."""

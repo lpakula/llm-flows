@@ -12,7 +12,12 @@ provider = "duckduckgo"
 [browser]
 enabled = false
 headless = true
-[telegram]
+[channels.telegram]
 enabled = false
 bot_token = ""
 allowed_chat_ids = []
+[channels.slack]
+enabled = false
+bot_token = ""
+app_token = ""
+allowed_channel_ids = []
