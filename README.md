@@ -1,210 +1,154 @@
 <p align="center">
   <h1 align="center">llm-flows</h1>
-  <p align="center">CI for coding agents.</p>
-  <p align="center">Turn one long autonomous coding run into a reliable step-by-step workflow.</p>
+  <p align="center">AI automations that run in the background.</p>
+  <p align="center">Build, schedule, and monitor workflows powered by AI agents — no coding required.</p>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <img src="https://img.shields.io/badge/interface-CLI%20%2B%20UI-purple" alt="CLI + UI">
+  <img src="https://img.shields.io/badge/interface-UI%20%2B%20CLI-purple" alt="UI + CLI">
 </p>
 
 ## What is llm-flows?
 
-`llm-flows` is a local workflow runner for **background coding agents**.
+`llm-flows` is a local platform for building and running AI automations. You describe what you want to automate, and `llm-flows` takes care of the rest — breaking the work into steps, running each one with an AI agent, and delivering the results to you.
 
-Instead of asking an agent to do everything in one long run, `llm-flows` breaks the job into explicit stages such as:
+Everything runs on your machine. No cloud lock-in, no per-run fees beyond your LLM API costs.
 
-- `research`
-- `execute`
-- `test`
-- `create-pr`
+**Example: "Summarize today's top AI news"**
 
-Between stages, it runs checks called **gates**. The workflow only moves forward after each gate passes.
+A flow like this runs in the background and delivers a digest straight to your inbox:
 
-This makes coding agents:
+1. **Fetch** — the agent searches the web for the latest AI news articles
+2. **Summarize** — the agent reads all articles and writes a concise summary of the top 5 stories
+3. **Done** — the summary lands in your inbox (and optionally Telegram or Slack)
 
-- more reliable
-- cheaper to run
-- easier to inspect
-- safer to automate
+Set it to run daily at 9am, and you'll never miss an important story again.
 
-It brings a cloud-agent style workflow to your own VM, so you can run repeatable coding jobs locally with more control and lower cost.
+## Get started in 3 steps
 
-`llm-flows` works with agent CLIs such as Cursor CLI, Claude Code, Codex, and Qwen Code.
-
-You can:
-
-- integrate with systems such as GitHub for orchestration and feedback
-- use it together with autonomous assistants like [OpenClaw](https://openclaw.ai/)
-- route some steps to local models through tools such as Ollama or LM Studio
-
-## Why use it?
-
-One-shot autonomous runs are convenient, but they are hard to trust. When they fail, they often fail late: after making the wrong changes, skipping tests, or drifting away from the original task.
-
-`llm-flows` adds structure around the agent run:
-
-- each step runs separately
-- each step can use a different model
-- artifacts from earlier steps carry into later ones
-- gates block bad output before the workflow advances
-
-This lets cheap or local models handle routine work while stronger models handle the hard parts.
-
-## Example workflow
-
-A typical flow might look like this:
-
-- `research` with a cheap or local model
-- `execute` with a frontier model
-- `test` with a cheap or local model
-- `create-pr` with a cheap model
-
-The goal is to replace one expensive autonomous run with a structured workflow that uses the right model for each part of the job.
-
-
-## How it works
-
-`llm-flows` turns one long autonomous coding run into a step-by-step workflow.
-
-A flow is an ordered list of steps:
-
-- each step contains a markdown instruction block
-- each step runs separately
-- each step can use a different model
-- each step can define gates
-
-Artifacts from earlier steps are preserved and passed into later steps.
-
-Between steps, `llm-flows` runs **gates**: commands that must succeed before the workflow can continue. If a gate fails, the same step is repeated with a clear explanation of what failed and what needs to be fixed.
-
-This is what keeps the workflow reliable: cheaper models can help with some steps, but they cannot silently break the flow and move on.
-
-Flows can be written as JSON and imported directly into `llm-flows`.
-
-Example flow:
-
-```json
-{
-  "name": "default",
-  "steps": [
-    {
-      "name": "research",
-      "position": 0,
-      "content": "# RESEARCH\n\nUnderstand the requirements, research the codebase, and create clear tasks to execute."
-    },
-    {
-      "name": "execute",
-      "position": 1,
-      "content": "# EXECUTE\n\nComplete the tasks from the research step and make the required changes."
-    },
-    {
-      "name": "test",
-      "position": 2,
-      "content": "# TEST\n\nRun the test suite and fix any failures before moving on.",
-      "gates": [
-        {
-          "command": "pnpm test:e2e",
-          "message": "End-to-end tests must pass before advancing."
-        }
-      ]
-    },
-    {
-      "name": "create-pr",
-      "position": 3,
-      "content": "# CREATE PR\n\nCommit the finished work, open a pull request, then make sure there are no uncommitted changes left behind.",
-      "gates": [
-        {
-          "command": "test -z \"$(git status --porcelain)\"",
-          "message": "Working tree must be clean after the PR step finishes."
-        }
-      ]
-    }
-  ]
-}
-```
-
-## Interfaces
-
-`llm-flows` provides two simple interfaces:
-
-- a CLI for creating tasks, starting runs, checking logs, and managing flows
-- a local Web UI for monitoring runs and working with flows visually
-
-## Supported agent backends
-
-`llm-flows` works with coding agents that can be launched from the command line.
-
-Built-in backends include:
-
-- [Cursor CLI](https://cursor.com/cli)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- [Codex CLI](https://github.com/openai/codex)
-- Qwen Code
-
-## Quick start
-
-### 1. Install
+### 1. Install and register your LLM API key
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lpakula/llm-flows/main/scripts/install.sh | bash
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install git+https://github.com/lpakula/llm-flows
-```
-
-### 2. Register your space
-
-```bash
-cd your-project
-llmflows register
-```
-
-### 3. Start the daemon
-
-```bash
-llmflows daemon start
-```
-
-### 4. Create and run a task
-
-```bash
-llmflows task create -t "Fix login bug" -d "Safari shows blank page on form submit"
-llmflows task start --id <task-id> --flow default
-llmflows agent logs <task-id> -f
-```
-
-Or use the UI to manage everything through a visual interface:
+Launch the UI and follow the welcome screen to enter your API key (Anthropic, OpenAI, or another provider):
 
 ```bash
 llmflows ui
 ```
 
-## Key terms
+### 2. Ask the Chat assistant to build your flow
 
-- **Task** - a unit of work with a title and description
-- **Run** - one execution of a task
-- **Flow** - an ordered sequence of steps
-- **Gate** - a command that must pass before the workflow can continue
+Open **Chat** in the sidebar and describe what you want to automate. The assistant will design the flow for you — just confirm and it's ready.
+
+> **You:** "I want a daily summary of the top 5 crypto news stories from CoinDesk"
+>
+> **Assistant:** *designs a 2-step flow, explains each step, and imports it for you*
+
+You don't need to know anything about steps, gates, or flow structure. The assistant handles all the technical details.
+
+### 3. Run it — manually or on a schedule
+
+Click **Run** in the UI to execute the flow immediately, or set a schedule (daily, hourly, weekdays only, etc.) and let it run automatically.
+
+Monitor progress in the UI, and find your results in the **Inbox** when each run completes.
+
+## What can you automate?
+
+`llm-flows` is a general-purpose automation platform. Here are some examples:
+
+- **News & research** — fetch, filter, and summarize articles from any source on the web
+- **Content monitoring** — track competitor websites, changelogs, or social feeds for changes
+- **Data collection** — scrape and structure data from websites on a schedule
+- **Report generation** — gather data and produce formatted reports
+- **Browser automation** — fill forms, navigate multi-step processes, extract data from web apps
+- **Code tasks** — research, implement features, run tests, and create pull requests across your codebase
+
+## Key features
+
+### Built-in web search and browser automation
+
+Agents can search the web, fetch pages, and control a real Chromium browser — navigating pages, clicking buttons, filling forms, and taking screenshots.
+
+The browser runs in **headless** mode by default (no visible window), but you can switch to **headed** mode to watch the agent work in real time.
+
+### Human-in-the-loop (HITL)
+
+Some automations need a human touch. HITL steps pause the flow and ask for your input before continuing. Use this for:
+
+- **MFA / login bypass** — the agent logs into a website, hits the MFA prompt, and asks you for the code. You respond, and the agent continues with the authenticated session.
+- **Approvals** — review a plan or proposed changes before the agent executes them.
+- **Decision points** — the agent presents options and you pick the direction.
+
+### Inbox and notifications
+
+The **Inbox** is your central hub. Completed runs show up here with summaries and any attachments (screenshots, reports, files). HITL steps also appear in the inbox, waiting for your response.
+
+### Gateway — Telegram and Slack channels
+
+Connect Telegram or Slack to receive notifications on your phone, respond to HITL steps from anywhere, and even start flows directly from a chat message. Set this up in **Settings > Gateway**.
+
+### Schedules
+
+Every flow can have a cron schedule — hourly, daily, weekdays at 9am, or any custom interval. The daemon picks up scheduled flows automatically.
+
+### Chat assistant
+
+The built-in Chat helps you get started without reading any documentation. It can:
+
+- Explain how `llm-flows` works
+- Design and build flows based on your description
+- Answer questions about your existing flows and runs
+
+## Integrations
+
+### For developers — API and coding agents
+
+`llm-flows` has a full REST API and integrates with coding agents for source-code tasks:
+
+- **Cursor CLI** and **Claude Code** — use `code` step type to run deep code editing tasks with your preferred coding agent
+- **REST API** — every UI action is available as an API endpoint, so you can trigger runs, read results, and manage flows programmatically
+- **Flow JSON** — flows are portable JSON files that can be version-controlled and shared
+
+### Supported agent backends
+
+| Type | Backends |
+|------|----------|
+| **Built-in agent (Pi)** | Research, analysis, content, web, browser automation |
+| **Coding agents** | [Cursor CLI](https://cursor.com/cli), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), Qwen Code |
+
+### Smart model routing
+
+Every flow is split into steps, and each step can run on a different agent tier — **mini**, **normal**, or **max**. This means a single flow can use a fast, cheap model for straightforward tasks (fetching data, formatting output) and a powerful model only for the steps that need complex reasoning.
+
+You can also route steps to **local models** via Ollama or LM Studio — run simple steps entirely on your machine with zero API cost.
+
+You control the cost without sacrificing quality where it matters.
+
+### Cost monitoring
+
+Every run tracks token usage and cost across all steps. You can see exactly how much each run costs, which steps are expensive, and set a **max spend** per flow to prevent runaway costs. All of this is visible in the UI on the run detail page.
+
+## How it works
+
+A **flow** is an ordered list of **steps**. Each step runs as a separate AI agent process:
+
+1. The **daemon** picks up a queued run and starts the first step
+2. The agent executes the step's instructions and produces output
+3. Optional **gates** (automated checks) verify the output — if a check fails, the agent retries with feedback on what went wrong
+4. Output from completed steps is automatically passed as context to the next step
+5. After the last step, a summary is generated and delivered to your inbox
+
+This step-by-step approach makes automations more reliable than a single long AI run — each step is focused, verifiable, and recoverable.
 
 ## Requirements
 
 - Python 3.11+
 - Git
-- a working directory for your flows
-- at least one supported agent CLI installed on the VM
-
-> [!WARNING]
-> Agent CLIs can read, write, and execute commands on the host. Run them only on infrastructure you trust, ideally an isolated VM.
-
-## Current status
-
-`llm-flows` is still early, but the core idea is stable: make coding agents more reliable with step-by-step workflows, gates, and flexible model routing.
+- An LLM API key (Anthropic, OpenAI, or another supported provider)
 
 ## Documentation
 

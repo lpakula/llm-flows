@@ -5,14 +5,14 @@ import path from "path";
 
 const apiPort = process.env.LLMFLOWS_API_PORT || "4301";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
     },
   },
-  base: "/static/",
+  base: command === "build" ? "/static/" : "/",
   build: {
     outDir: "../static",
     emptyOutDir: true,
@@ -26,4 +26,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

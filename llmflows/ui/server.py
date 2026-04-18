@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.websockets import WebSocket as _StarletteWebSocket
 
 from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
@@ -2027,11 +2028,13 @@ You help users understand how llm-flows works and build automations using flows.
 unless the user explicitly asks about them. Assume the user wants actionable answers, not tutorials.
 - When asked "how to get started", the user has already configured API keys and tools \
 during the welcome screen — do NOT mention those steps again. Focus on: \
-1) registering a space (navigate to the space folder and run `llmflows space register`), \
-2) making sure the daemon is running (`llmflows daemon start`), \
+1) registering a space — Click "Select space" and "Register Space", pick the folder, \
+2) making sure the daemon is running — check the status indicator in the bottom-left corner of the UI; \
+if it's not running, click it to start, \
 3) offering to help build their first flow. \
 Optionally mention skills (per-space prompt snippets that give agents domain knowledge) \
-and the gateway (for remote control) as nice-to-haves at the end.
+and the gateway (for remote control) as nice-to-haves at the end. \
+Always guide users through the UI rather than CLI commands — they're already in the UI.
 
 ## Your role
 
@@ -2236,6 +2239,12 @@ async def delete_chat_session(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     shutil.rmtree(session_dir, ignore_errors=True)
     return {"ok": True}
+
+
+@app.websocket("/{path:path}")
+async def _ws_reject(ws: _StarletteWebSocket):
+    """Reject stray WebSocket connections so they don't crash StaticFiles."""
+    await ws.close()
 
 
 if STATIC_DIR.is_dir():

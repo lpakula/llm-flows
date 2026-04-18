@@ -128,14 +128,15 @@ Enable tools in Settings > Tools.
 
 ## Getting Started
 
-1. **Register a space**: `llmflows register` in your project directory
-2. **Start the daemon**: `llmflows daemon start`
-3. **Configure agents**: Set up API keys and agent aliases in the UI (Settings > Agents)
-4. **Enable tools**: In Settings > Tools, turn on web search and any other tools your flows will need
-5. **Add skills** (optional): In the space's Skills tab, add prompt snippets that give agents domain knowledge for your project
-6. **Create a flow**: Define steps in the UI flow editor, via CLI (`llmflows flow`), or ask the Chat assistant to build one
-7. **Run a flow**: Click "Run" in the UI or use `llmflows run schedule --flow <flow-id>`
-8. **Monitor**: Watch progress in the UI, check the inbox for hitl items
+1. **Launch the UI**: `llmflows ui` — opens the web dashboard
+2. **Register a space**: On the Dashboard, click "Add Space" and select your project folder
+3. **Start the daemon**: Check the status indicator in the bottom-left of the UI; click it to start if needed
+4. **Configure agents**: Settings > Agents — set up API keys and agent aliases
+5. **Enable tools**: Settings > Tools — turn on web search and any other tools your flows will need
+6. **Add skills** (optional): In the space's Skills tab, add prompt snippets that give agents domain knowledge for your project
+7. **Create a flow**: Use the UI flow editor or ask the Chat assistant to build one
+8. **Run a flow**: Click "Run" in the UI
+9. **Monitor**: Watch progress in the UI, check the inbox for hitl items
 
 Optional: set up the **Gateway** (Settings > Gateway) to control llm-flows remotely — receive notifications and approve hitl steps from your phone or messaging app.
 
