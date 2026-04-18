@@ -6,7 +6,6 @@ export interface Space {
 }
 
 export interface SpaceSettings {
-  is_git_repo: boolean;
   max_concurrent_tasks: number;
 }
 

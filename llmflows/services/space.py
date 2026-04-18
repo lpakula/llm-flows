@@ -11,13 +11,13 @@ class SpaceService:
     def __init__(self, session: Session):
         self.session = session
 
-    def register(self, name: str, path: str, git_repo: bool = True) -> Space:
+    def register(self, name: str, path: str) -> Space:
         """Register a space in the central database."""
         existing = self.session.query(Space).filter_by(path=path).first()
         if existing:
             return existing
 
-        space = Space(name=name, path=path, is_git_repo=git_repo)
+        space = Space(name=name, path=path)
         self.session.add(space)
         self.session.commit()
 

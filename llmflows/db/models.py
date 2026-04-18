@@ -95,7 +95,6 @@ class Space(Base):
             "id": self.id,
             "name": self.name,
             "path": self.path,
-            "is_git_repo": self.is_git_repo if self.is_git_repo is not None else True,
             "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
             "variables": self.get_variables(),
             "created_at": self.created_at.isoformat() if self.created_at else None,

@@ -14,9 +14,7 @@ from ..services.space import SpaceService
 @click.option("--name", "-n", default=None, help="Space name (defaults to directory name)")
 def register_cmd(name):
     """Register current directory as a llmflows space."""
-    repo_root = get_repo_root()
-    space_root = repo_root or Path.cwd()
-    git_repo = repo_root is not None
+    space_root = get_repo_root() or Path.cwd()
 
     init_db()
     session = get_session()
@@ -25,14 +23,10 @@ def register_cmd(name):
         s = space_svc.register(
             name=name or space_root.name,
             path=str(space_root),
-            git_repo=git_repo,
         )
 
         space_dir = space_root / ".llmflows"
         space_dir.mkdir(parents=True, exist_ok=True)
-
-        if git_repo:
-            _update_gitignore(space_root)
 
         flow_svc = FlowService(session)
         flow_count = flow_svc.sync_from_disk(str(space_root), s.id)
@@ -42,28 +36,11 @@ def register_cmd(name):
         click.echo()
         click.echo(f"  Space:    {click.style(s.name, fg='cyan')}  ({s.id})")
         click.echo(f"  Path:     {click.style(s.path, fg='cyan')}")
-        click.echo(f"  Git repo: {click.style('yes', fg='green') if git_repo else click.style('no', fg='yellow')}")
         if flow_count:
             click.echo(f"  Flows:    {click.style(str(flow_count), fg='cyan')} loaded from flows/")
         click.echo()
     finally:
         session.close()
-
-
-def _update_gitignore(repo_root: Path) -> None:
-    """Add .worktrees/ to .gitignore if not already present."""
-    gitignore = repo_root / ".gitignore"
-    pattern = ".worktrees/"
-
-    content = ""
-    if gitignore.exists():
-        content = gitignore.read_text()
-
-    if pattern not in content:
-        if content and not content.endswith("\n"):
-            content += "\n"
-        content += f"\n{pattern}\n"
-        gitignore.write_text(content)
 
 
 
@@ -281,18 +258,10 @@ def var_remove(key, space_id):
 
 @space.command("settings")
 @click.option("--id", "space_id", default=None, help="Space ID (defaults to current directory)")
-@click.option("--git-repo", default=None, type=click.Choice(["true", "false"]),
-              help="Mark whether this space is a git repository")
-def space_settings(space_id, git_repo):
-    """View or update space settings.
+def space_settings(space_id):
+    """View space settings.
 
-    Run with no flags to print current settings.
-
-    Examples:
-
-    \b
-      llmflows space settings
-      llmflows space settings --git-repo false
+    Example: llmflows space settings
     """
     session = get_session()
     try:
@@ -310,19 +279,9 @@ def space_settings(space_id, git_repo):
             click.echo(f"Space {space_id} not found.")
             raise SystemExit(1)
 
-        if git_repo is not None:
-            space_svc.update(space_id, is_git_repo=(git_repo == "true"))
-            session.refresh(s)
-
-        is_git = s.is_git_repo if s.is_git_repo is not None else True
-
         click.echo()
-        click.echo(f"  Space:     {click.style(s.name, fg='cyan')}  ({s.id})")
-        click.echo(f"  Git repo:  {click.style('yes', fg='green') if is_git else click.style('no', fg='yellow')}")
+        click.echo(f"  Space:  {click.style(s.name, fg='cyan')}  ({s.id})")
+        click.echo(f"  Path:   {click.style(s.path, fg='bright_black')}")
         click.echo()
-
-        if git_repo is not None:
-            click.secho("  Settings saved.", fg="green")
-            click.echo()
     finally:
         session.close()

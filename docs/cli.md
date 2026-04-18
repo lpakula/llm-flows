@@ -31,95 +31,33 @@ llmflows space update --id <space-id> --name "New Name"
 llmflows space delete
 llmflows space delete --id <space-id>
 
-# View/update space settings
+# View space settings
 llmflows space settings
-llmflows space settings --id <space-id>
-llmflows space settings --git-repo false
 ```
 
-## Tasks
+### Space Variables
+
+Variables are available as `{{space.<KEY>}}` in flow step content, gates, and IFs. They are also injected as environment variables into shell steps.
 
 ```bash
-# List tasks
-llmflows task list
-llmflows task list --all
-llmflows task list --space <space-id>
+# Set a variable
+llmflows space var set API_KEY sk-abc123
+llmflows space var set REPOS_PATH /Users/me/repos
 
-# Show one task with run history
-llmflows task show --id <task-id>
+# List all variables
+llmflows space var list
 
-# Create a task
-llmflows task create -t "Fix login bug" -d "Safari shows blank page on submit"
-llmflows task create -t "Add pagination" -d "Add cursor-based pagination" --type feature
-llmflows task create -t "Fix crash" -d "..." --type fix
-
-# Update a task
-llmflows task update --id <task-id> --title "Better title"
-llmflows task update --id <task-id> --description "Updated description"
-
-# Delete a task
-llmflows task delete --id <task-id>
-llmflows task delete --id <task-id> --yes
-```
-
-Task types:
-
-- `feature` (default)
-- `fix`
-- `refactor`
-- `chore`
-
-## Start Runs
-
-Use `task start` to enqueue a run for the daemon.
-
-```bash
-# Start with the default flow
-llmflows task start --id <task-id>
-
-# Pick a flow
-llmflows task start --id <task-id> --flow default
-
-# Add a user prompt for this run
-llmflows task start --id <task-id> --flow default --prompt "Focus on the mobile layout"
-
-# Pick agent and model
-llmflows task start --id <task-id> --flow default --model gemini-3-flash
-llmflows task start --id <task-id> --flow default --model sonnet-4.6 --agent claude-code
-
-# Chain multiple flows
-llmflows task start --id <task-id> --flow research --flow submit-pr
-
-# Run all steps in one prompt
-llmflows task start --id <task-id> --flow default --one-shot
-```
-
-`--one-shot` assembles the whole flow into a single agent prompt instead of running one separate agent process per step. This can be useful for strong models when you want fewer agent restarts, but it gives up some of the isolation and step-by-step control of the default mode.
-
-## Runs
-
-```bash
-# List runs
-llmflows run list
-llmflows run list --task <task-id>
-llmflows run list --all
-llmflows run list --space <space-id>
-llmflows run list --limit 50
-
-# Show one run
-llmflows run show <run-id>
-
-# Print logs for a run
-llmflows run logs <run-id>
-llmflows run logs <run-id> --follow
-llmflows run logs <run-id> --raw
+# Remove a variable
+llmflows space var remove API_KEY
 ```
 
 ## Flows
 
 ```bash
-# List/show flows
+# List all flows
 llmflows flow list
+
+# Show a flow and its steps
 llmflows flow show <name>
 
 # Create or duplicate a flow
@@ -131,91 +69,85 @@ llmflows flow create <name> --copy-from default
 llmflows flow delete <name>
 llmflows flow delete <name> --yes
 
-# Export/import flows as JSON
+# Export all flows to JSON
 llmflows flow export
 llmflows flow export --output flows.json
+
+# Import flows from JSON (upserts by name)
 llmflows flow import flows.json
 ```
 
 ### Flow Steps
 
 ```bash
-# List steps
+# List steps in a flow
 llmflows flow step list --flow <name>
 
-# Add a step from file or stdin
+# Add a step from a file (or pipe via stdin)
 llmflows flow step add --flow <name> --name <step-name> --content step.md
 cat step.md | llmflows flow step add --flow <name> --name <step-name>
 
 # Add at a specific position
 llmflows flow step add --flow <name> --name <step-name> --content step.md --position 2
 
-# Edit a step from file
-llmflows flow step edit --flow <name> --name <step-name> --content step.md
+# Edit a step's content
+llmflows flow step edit --flow <name> --name <step-name> --content updated.md
 
 # Remove a step
 llmflows flow step remove --flow <name> --name <step-name>
 ```
 
-Step content is markdown. See [Flow Authoring](flows.md).
-
-## Aliases
-
-Aliases are space-level presets for agent, model, flow chain, and optional per-step overrides.
+## Runs
 
 ```bash
-# List/show aliases
-llmflows alias list
-llmflows alias list --space <space-id>
-llmflows alias show <name>
-llmflows alias show <name> --space <space-id>
+# Schedule a new run for a flow
+llmflows run schedule --flow <flow-id>
+llmflows run schedule --flow <flow-id> --space <space-id>
 
-# Create or update aliases
-llmflows alias set fast --agent cursor --model sonnet-4.6 --flow default
-llmflows alias set thorough --model sonnet-4.6-thinking --flow react-js,submit-pr
-llmflows alias set default --model sonnet-4.6-thinking
+# List runs
+llmflows run list
+llmflows run list --all
+llmflows run list --space <space-id> --limit 50
 
-# Per-step overrides
-llmflows alias set default -s "default/research:claude-code:sonnet"
-llmflows alias set default -s "default/test:qwen:qwen3-coder"
+# Show run details
+llmflows run show <run-id>
 
-# Clear all step overrides
-llmflows alias set default --clear-overrides
-
-# Delete an alias
-llmflows alias delete <name>
-llmflows alias delete <name> --yes
+# Print / follow logs
+llmflows run logs <run-id>
+llmflows run logs <run-id> --follow
+llmflows run logs <run-id> --raw
 ```
-
-`alias set` options:
-
-- `--agent` / `-a` - agent name (`cursor`, `claude-code`, `codex`, `qwen`)
-- `--model` / `-m` - model name
-- `--flow` / `-f` - comma-separated flow chain, for example `default,submit-pr`
-- `--step-override` / `-s` - `flow/step:agent:model`
-- `--clear-overrides` - remove all step overrides
 
 ## Agents
 
-View active agents and stream their logs.
-
 ```bash
+# List active agents for the current space
 llmflows agent list
 llmflows agent list --all
 
-# Stream logs for a task (active or latest run)
-llmflows agent logs <task-id>
-llmflows agent logs <task-id> --follow
-llmflows agent logs <task-id> --raw
+# Stream agent logs for a run
+llmflows agent logs <run-id>
+llmflows agent logs <run-id> --follow
+llmflows agent logs <run-id> --raw
+```
 
-# Stream logs for a specific run
-llmflows agent logs --run <run-id>
-llmflows agent logs --run <run-id> --follow
+### Agent Aliases
+
+Aliases are pre-defined tiers (`mini`, `normal`, `max`) that map to an agent backend and model. Each tier exists per type: `pi` (for agent/hitl steps) and `code` (for code steps).
+
+```bash
+# List all configured aliases
+llmflows agent alias list
+llmflows agent alias list --type pi
+
+# Update an alias
+llmflows agent alias update normal --type pi --agent pi --model anthropic/claude-sonnet-4-5
+llmflows agent alias update max --type code --agent claude-code --model opus
 ```
 
 ## Daemon
 
-The daemon picks up queued runs and executes them.
+The daemon runs in the background, picks up queued runs, and executes them.
 
 ```bash
 llmflows daemon start
@@ -231,32 +163,23 @@ llmflows ui
 llmflows ui --port 9000
 llmflows ui --host 0.0.0.0
 llmflows ui --reload
-```
 
-## Database
-
-```bash
-llmflows db reset
-llmflows db reset --yes
+# Dev mode (Vite HMR + FastAPI with auto-reload)
+llmflows ui --dev
 ```
 
 ---
 
 ## Common Workflows
 
-### Create a task, then start a run
+### Register a space and run a flow
 
 ```bash
-llmflows task create -t "Add dark mode" -d "Add dark mode toggle to settings"
-llmflows task start --id <task-id> --flow default
-llmflows run list --task <task-id>
+llmflows register
+llmflows daemon start
+llmflows run schedule --flow <flow-id>
+llmflows run list
 llmflows run logs <run-id> --follow
-```
-
-### Chain flows
-
-```bash
-llmflows task start --id <task-id> --flow research --flow submit-pr --prompt "Ship it"
 ```
 
 ### Build a custom flow from scratch
@@ -265,9 +188,8 @@ llmflows task start --id <task-id> --flow research --flow submit-pr --prompt "Sh
 llmflows flow create my-flow --description "Custom workflow"
 llmflows flow step add --flow my-flow --name research --content steps/research.md --position 0
 llmflows flow step add --flow my-flow --name execute --content steps/execute.md --position 1
-llmflows flow step add --flow my-flow --name test --content steps/test.md --position 2
 llmflows flow show my-flow
-llmflows task start --id <task-id> --flow my-flow
+llmflows run schedule --flow <flow-id>
 ```
 
 ### Duplicate and customize a flow
@@ -283,3 +205,42 @@ llmflows flow step add --flow my-variant --name lint --content steps/lint.md --p
 llmflows flow export --output my-flows.json
 llmflows flow import my-flows.json
 ```
+
+### Set space variables for a flow
+
+```bash
+llmflows space var set TARGET_URL https://example.com
+llmflows space var set USERNAME admin
+llmflows space var set PASSWORD secret123
+llmflows space var list
+```
+
+## Quick Reference
+
+| Action | Command |
+|--------|---------|
+| Register space | `llmflows register` |
+| List spaces | `llmflows space list` |
+| Rename space | `llmflows space update --name "New Name"` |
+| Delete space | `llmflows space delete` |
+| Set variable | `llmflows space var set KEY VALUE` |
+| List variables | `llmflows space var list` |
+| Remove variable | `llmflows space var remove KEY` |
+| List flows | `llmflows flow list` |
+| Show flow | `llmflows flow show <name>` |
+| Create flow | `llmflows flow create <name>` |
+| Delete flow | `llmflows flow delete <name> --yes` |
+| Add step | `llmflows flow step add --flow <name> --name <step> --content file.md` |
+| Export flows | `llmflows flow export --output flows.json` |
+| Import flows | `llmflows flow import flows.json` |
+| Schedule run | `llmflows run schedule --flow <flow-id>` |
+| List runs | `llmflows run list` |
+| Show run | `llmflows run show <run-id>` |
+| Follow run logs | `llmflows run logs <run-id> --follow` |
+| List aliases | `llmflows agent alias list` |
+| Update alias | `llmflows agent alias update <tier> --type pi --model ...` |
+| List agents | `llmflows agent list` |
+| Agent logs | `llmflows agent logs <run-id> --follow` |
+| Daemon start | `llmflows daemon start` |
+| Daemon status | `llmflows daemon status` |
+| Launch UI | `llmflows ui` |

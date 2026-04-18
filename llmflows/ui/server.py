@@ -110,7 +110,6 @@ class ToolConfigBody(BaseModel):
 
 
 class SpaceSettingsUpdate(BaseModel):
-    is_git_repo: Optional[bool] = None
     max_concurrent_tasks: Optional[int] = None
 
 
@@ -453,7 +452,6 @@ async def register_space(body: SpaceRegister):
     if not space_path.is_dir():
         raise HTTPException(status_code=400, detail="Path does not exist or is not a directory")
 
-    git_repo = (space_path / ".git").is_dir()
     space_name = body.name or space_path.name
 
     session = get_session()
@@ -463,20 +461,10 @@ async def register_space(body: SpaceRegister):
         if existing:
             return existing.to_dict()
 
-        s = space_svc.register(name=space_name, path=str(space_path), git_repo=git_repo)
+        s = space_svc.register(name=space_name, path=str(space_path))
 
         dot_dir = space_path / ".llmflows"
         dot_dir.mkdir(parents=True, exist_ok=True)
-
-        if git_repo:
-            gitignore = space_path / ".gitignore"
-            pattern = ".worktrees/"
-            content = gitignore.read_text() if gitignore.exists() else ""
-            if pattern not in content:
-                if content and not content.endswith("\n"):
-                    content += "\n"
-                content += f"\n{pattern}\n"
-                gitignore.write_text(content)
 
         flow_svc = FlowService(session)
         flow_svc.sync_from_disk(str(space_path), s.id)
@@ -553,7 +541,6 @@ async def get_space_settings(space_id: str):
         if not space:
             raise HTTPException(status_code=404, detail="Space not found")
         return {
-            "is_git_repo": space.is_git_repo if space.is_git_repo is not None else True,
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
         }
     finally:
@@ -569,8 +556,6 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
             raise HTTPException(status_code=404, detail="Space not found")
 
         updates = {}
-        if body.is_git_repo is not None:
-            updates["is_git_repo"] = body.is_git_repo
         if body.max_concurrent_tasks is not None:
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
         if updates:
@@ -578,7 +563,6 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
             session.refresh(space)
 
         return {
-            "is_git_repo": space.is_git_repo if space.is_git_repo is not None else True,
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
         }
     finally:
