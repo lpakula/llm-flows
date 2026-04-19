@@ -57,7 +57,7 @@ log_muted() {
 }
 
 STAGE_CURRENT=0
-STAGE_TOTAL=6
+STAGE_TOTAL=7
 
 MIN_NODE_MAJOR=18
 
@@ -755,44 +755,11 @@ ensure_local_bin_on_path() {
 # ---------------------------------------------------------------------------
 # Pi agent (default executor for flow steps and chat)
 # ---------------------------------------------------------------------------
-PI_URL="git+https://github.com/lpakula/pi"
-
-install_pi_with_uv() {
-    local log
-    log="$(mktempfile)"
-    if "$UV_CMD" tool install --force --from "$PI_URL" pi >"$log" 2>&1; then
-        return 0
-    fi
-    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
-        tail -n 20 "$log" >&2 || true
-    fi
-    return 1
-}
-
-install_pi_with_pipx() {
-    local -a pipx_cmd
-    if [[ "$PIPX_CMD" == *" "* ]]; then
-        IFS=' ' read -ra pipx_cmd <<< "$PIPX_CMD"
-    else
-        pipx_cmd=("$PIPX_CMD")
-    fi
-
-    local log
-    log="$(mktempfile)"
-    if "${pipx_cmd[@]}" install --force --pip-args="--no-cache-dir" "$PI_URL" >"$log" 2>&1; then
-        "${pipx_cmd[@]}" ensurepath >/dev/null 2>&1 || true
-        return 0
-    fi
-    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
-        tail -n 20 "$log" >&2 || true
-    fi
-    return 1
-}
+PI_NPM_PACKAGE="@mariozechner/pi-coding-agent"
 
 check_pi() {
     log_info "Checking Pi agent..."
 
-    export PATH="$HOME/.local/bin:$PATH"
     refresh_shell_command_cache
 
     if command -v pi &>/dev/null; then
@@ -802,22 +769,26 @@ check_pi() {
         return 0
     fi
 
-    log_info "Pi agent not found, attempting install"
-
-    if [[ -n "$UV_CMD" ]] && install_pi_with_uv; then
-        refresh_shell_command_cache
-        log_success "Pi agent installed via uv"
-        return 0
+    if ! command -v npm &>/dev/null; then
+        log_warning "Pi agent not installed — npm not available"
+        log_muted "  Install Node.js first, then run: npm install -g ${PI_NPM_PACKAGE}"
+        return 1
     fi
 
-    if [[ -n "$PIPX_CMD" ]] && install_pi_with_pipx; then
+    log_info "Pi agent not found, installing via npm..."
+
+    if run_quiet_step "Installing Pi agent" npm install -g "$PI_NPM_PACKAGE"; then
         refresh_shell_command_cache
-        log_success "Pi agent installed via pipx"
-        return 0
+        if command -v pi &>/dev/null; then
+            local version=""
+            version="$(pi --version 2>/dev/null || true)"
+            log_success "Pi agent installed${version:+ ($version)}"
+            return 0
+        fi
     fi
 
     log_warning "Pi agent not installed — flow execution and chat will not work"
-    log_muted "  Install manually: uv tool install git+https://github.com/lpakula/pi"
+    log_muted "  Install manually: npm install -g ${PI_NPM_PACKAGE}"
     return 1
 }
 
@@ -873,16 +844,17 @@ main() {
         echo "  Node.js:         $(find_node 2>/dev/null && echo "v${NODE_MAJOR} found" || echo "will install (${MIN_NODE_MAJOR}+)")"
         echo "  Installer:       uv (preferred) or pipx (fallback)"
         echo "  Package:         git+https://github.com/lpakula/llm-flows"
-        echo "  Pi agent:        $(command -v pi &>/dev/null && echo "found ($(pi --version 2>/dev/null || echo 'unknown'))" || echo "will install")"
+        echo "  Pi agent:        $(command -v pi &>/dev/null && echo "found ($(pi --version 2>/dev/null || echo 'unknown'))" || echo "will install via npm")"
         echo "  Browser tools:   ~/.llmflows/node_modules/ (playwright, tsx)"
         echo ""
         echo "  Stages:"
-        echo "    [1/6] Prepare environment (Homebrew on macOS)"
-        echo "    [2/6] Check / install Python 3.11+"
-        echo "    [3/6] Install llmflows (includes telegram + slack)"
-        echo "    [4/6] Install Pi agent"
-        echo "    [5/6] Set up browser tools (Node.js ${MIN_NODE_MAJOR}+, Playwright, Chromium)"
-        echo "    [6/6] Verify installation"
+        echo "    [1/7] Prepare environment (Homebrew on macOS)"
+        echo "    [2/7] Check / install Python 3.11+"
+        echo "    [3/7] Install llmflows (includes telegram + slack)"
+        echo "    [4/7] Check / install Node.js ${MIN_NODE_MAJOR}+"
+        echo "    [5/7] Install Pi agent (npm: ${PI_NPM_PACKAGE})"
+        echo "    [6/7] Set up browser tools (Playwright, Chromium)"
+        echo "    [7/7] Verify installation"
         echo ""
         log_success "Dry run complete (no changes made)"
         return 0
@@ -920,17 +892,26 @@ main() {
     check_uv || true
     install_llmflows
 
-    # Stage 4: Pi agent
+    # Stage 4: Node.js (needed for Pi agent and browser tools)
+    log_stage "Checking Node.js"
+    local node_ok=false
+    if check_node; then
+        node_ok=true
+    fi
+
+    # Stage 5: Pi agent (requires npm)
     log_stage "Installing Pi agent"
     check_pi || true
 
-    # Stage 5: Browser tools (Node.js + dependencies)
+    # Stage 6: Browser tools (Node dependencies)
     log_stage "Setting up browser tools"
-    if check_node; then
+    if [[ "$node_ok" == "true" ]]; then
         install_node_tools || true
+    else
+        log_warning "Skipping browser tools — Node.js not available"
     fi
 
-    # Stage 6: Verify
+    # Stage 7: Verify
     log_stage "Verifying"
     verify_installation
 
