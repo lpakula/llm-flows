@@ -628,19 +628,8 @@ install_with_uv() {
     local log
     log="$(mktempfile)"
 
-    if "$UV_CMD" tool install --force --from "$REPO_URL" llmflows >"$log" 2>&1; then
+    if "$UV_CMD" tool install --force --reinstall --no-cache --from "$REPO_URL" llmflows >"$log" 2>&1; then
         log_success "llmflows installed via uv"
-        return 0
-    fi
-
-    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
-        log_warning "uv install attempt failed:"
-        tail -n 40 "$log" >&2 || true
-    fi
-
-    log_info "Retrying uv install with --reinstall..."
-    if "$UV_CMD" tool install --force --reinstall --from "$REPO_URL" llmflows >"$log" 2>&1; then
-        log_success "llmflows installed via uv (retry)"
         return 0
     fi
 
@@ -666,21 +655,9 @@ install_with_pipx() {
         pipx_cmd=("$PIPX_CMD")
     fi
 
-    if "${pipx_cmd[@]}" install --force --pip-args="--no-cache-dir" "$REPO_URL" >"$log" 2>&1; then
+    if "${pipx_cmd[@]}" install --force --pip-args="--no-cache-dir --force-reinstall" "$REPO_URL" >"$log" 2>&1; then
         "${pipx_cmd[@]}" ensurepath >/dev/null 2>&1 || true
         log_success "llmflows installed via pipx"
-        return 0
-    fi
-
-    if [[ "$VERBOSE" == "1" && -s "$log" ]]; then
-        log_warning "pipx install attempt failed:"
-        tail -n 40 "$log" >&2 || true
-    fi
-
-    log_info "Retrying pipx install..."
-    if "${pipx_cmd[@]}" install --force --pip-args="--no-cache-dir" "$REPO_URL" >"$log" 2>&1; then
-        "${pipx_cmd[@]}" ensurepath >/dev/null 2>&1 || true
-        log_success "llmflows installed via pipx (retry)"
         return 0
     fi
 
