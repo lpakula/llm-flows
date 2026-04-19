@@ -19,16 +19,6 @@
 
 Everything runs on your machine. No cloud lock-in, no per-run fees beyond your LLM API costs.
 
-> **Example: "Summarize today's top AI news"**
->
-> A flow like this runs in the background and delivers a digest straight to your inbox:
->
-> 1. 🔍 **Fetch** — the agent searches the web for the latest AI news articles
-> 2. 📝 **Summarize** — the agent reads all articles and writes a concise summary of the top 5 stories
-> 3. 📬 **Done** — the summary lands in your inbox (and optionally Telegram or Slack)
->
-> Set it to run daily at 9am, and you'll never miss an important story again.
-
 ---
 
 ## ⚡ Get started in 3 steps
@@ -65,27 +55,17 @@ Monitor progress in the UI, and find your results in the **Inbox** when each run
 
 ## ✨ Key features
 
-### 🔍 Built-in web search
+### 💬 Chat assistant
 
-Agents can search the web and fetch page content out of the box — no external tools or API keys required. Use it for research, news monitoring, data gathering, or any step that needs live information from the internet.
-
-### 🌐 Browser automation
-
-Agents can control a real Chromium browser — navigating pages, clicking buttons, filling forms, and taking screenshots. The browser session persists across all steps in a flow, so login state and cookies carry over.
-
-Runs in **headless** mode by default (no visible window), or switch to **headed** mode to watch the agent work in real time.
-
-### 🙋 Human-in-the-loop (HITL)
-
-Some automations need a human touch. HITL steps pause the flow and ask for your input before continuing. Use this for:
-
-- **🔐 MFA / login bypass** — the agent logs into a website, hits the MFA prompt, and asks you for the code. You respond, and the agent continues with the authenticated session.
-- **✅ Approvals** — review a plan or proposed changes before the agent executes them.
-- **🔀 Decision points** — the agent presents options and you pick the direction.
+Not sure where to start? The built-in Chat assistant will guide you. Describe what you want to automate and it will design and build the flow for you. It can also explain how everything works and answer questions about your existing flows and runs — no docs required.
 
 ### 📬 Inbox and notifications
 
-The **Inbox** is your central hub. Completed runs show up here with summaries and any attachments (screenshots, reports, files). HITL steps also appear in the inbox, waiting for your response.
+The **Inbox** is your central hub for everything that needs your attention — completed results, errors that need a look, and HITL steps waiting for your response. Each entry includes summaries and any attachments (screenshots, reports, files).
+
+### ⏰ Schedules
+
+Every flow can have a cron schedule — hourly, daily, weekdays at 9am, or any custom interval. The daemon picks up scheduled flows automatically.
 
 ### 📱 Gateway
 
@@ -95,45 +75,29 @@ Available channels:
 - **Telegram** — get notified and respond to flows from your phone
 - **Slack** — receive updates and approve HITL steps in your workspace
 
-### ⏰ Schedules
+### 🛠️ Built-in agent tools
 
-Every flow can have a cron schedule — hourly, daily, weekdays at 9am, or any custom interval. The daemon picks up scheduled flows automatically.
+Every agent step has access to a set of tools out of the box:
 
-### 💬 Chat assistant
+- **Read / Write / Edit** — read, create, and edit files
+- **Shell** — run any shell command
+- **Web search** — search the web and fetch page content, no extra API keys needed
+- **Browser** — control a real Chromium browser: navigate, click, fill forms, take screenshots. The session persists across steps so login state carries over
 
-The built-in Chat helps you get started without reading any documentation. It can:
+### 🧩 Customisable flows
 
-- Explain how `llm-flows` works
-- Design and build flows based on your description
-- Answer questions about your existing flows and runs
+A flow is a sequence of steps. Each step can use a different type and model, so you can mix and match within a single flow:
 
----
+- **Agent** — AI agent with access to tools (file read/write, shell, web search, browser) for research, analysis, content generation, and automation
+- **Code** — delegates to a coding agent (Cursor, Claude Code) for steps that require writing or editing code
+- **Shell** — run a command directly, no AI involved — builds, deploys, scripts
+- **Human-in-the-loop** — pauses the flow and waits for your input before continuing
 
-### 🎯 Smart model routing
-
-Every flow is split into steps, and each step can run on a different agent tier — **mini**, **normal**, or **max**. This means a single flow can use a fast, cheap model for straightforward tasks (fetching data, formatting output) and a powerful model only for the steps that need complex reasoning.
-
-You can also route steps to **local models** via Ollama or LM Studio — run simple steps entirely on your machine with zero API cost.
-
-You control the cost without sacrificing quality where it matters.
+Each step can also run on a different model tier — **mini**, **normal**, or **max** — so you use a fast, cheap model for straightforward tasks and a powerful one only where it matters. You can also route steps to **local models** via Ollama or LM Studio for zero API cost.
 
 ### 💰 Cost monitoring
 
 Every run tracks token usage and cost across all steps. You can see exactly how much each run costs, which steps are expensive, and set a **max spend** per flow to prevent runaway costs. All of this is visible in the UI on the run detail page.
-
----
-
-## 🏗️ How it works
-
-A **flow** is an ordered list of **steps**. Each step runs as a separate AI agent process:
-
-1. The **daemon** picks up a queued run and starts the first step
-2. The agent executes the step's instructions and produces output
-3. Optional **gates** (automated checks) verify the output — if a check fails, the agent retries with feedback on what went wrong
-4. Output from completed steps is automatically passed as context to the next step
-5. After the last step, a summary is generated and delivered to your inbox
-
-This step-by-step approach makes automations more reliable than a single long AI run — each step is focused, verifiable, and recoverable.
 
 ---
 
