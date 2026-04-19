@@ -1987,7 +1987,7 @@ async def list_models(agent: Optional[str] = None):
 # --- Chat endpoints ---
 
 CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
-_SKILLS_FALLBACK_DIR = Path(__file__).resolve().parent.parent.parent / ".agents" / "skills"
+_BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
 _NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
 CHAT_SKILLS = ["flows", "overview"]
 
@@ -2110,17 +2110,11 @@ async def chat(body: ChatBody):
         flows_dir = Path(space.path) / "flows"
         space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n- Flows directory: {flows_dir}\n\nWrite flow JSON files to the flows/ directory and import them with `llmflows flow import`.\n"
 
-    # Resolve skill paths — prefer space-local, fall back to package-level
     skill_paths: list[Path] = []
     for skill_name in CHAT_SKILLS:
-        if space:
-            candidate = Path(space.path) / ".agents" / "skills" / skill_name
-            if candidate.is_dir():
-                skill_paths.append(candidate)
-                continue
-        fallback = _SKILLS_FALLBACK_DIR / skill_name
-        if fallback.is_dir():
-            skill_paths.append(fallback)
+        candidate = _BUNDLED_SKILLS_DIR / skill_name
+        if candidate.is_dir():
+            skill_paths.append(candidate)
 
     system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context)
 
