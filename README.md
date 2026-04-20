@@ -94,7 +94,6 @@ A flow is a sequence of steps. Each step can use a different type and model, so 
 
 - **Agent** — AI agent with access to tools (file read/write, shell, web search, browser) for research, analysis, content generation, and automation
 - **Code** — delegates to a coding agent (Cursor, Claude Code) for steps that require writing or editing code
-- **Shell** — run a command directly, no AI involved — builds, deploys, scripts
 - **Human-in-the-loop** — pauses the flow and waits for your input before continuing
 
 Each step can also run on a different model tier — **mini**, **normal**, or **max** — so you use a fast, cheap model for straightforward tasks and a powerful one only where it matters. You can also route steps to **local models** via Ollama or LM Studio for zero API cost.
