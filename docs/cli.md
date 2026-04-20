@@ -77,6 +77,53 @@ llmflows flow export --output flows.json
 llmflows flow import flows.json
 ```
 
+### Flow Settings
+
+```bash
+# Update description, spend limits, concurrency, or rename
+llmflows flow update <name> --description "New description"
+llmflows flow update <name> --max-spend 5.0
+llmflows flow update <name> --max-concurrent-runs 2
+llmflows flow update <name> --rename new-name
+```
+
+### Flow Schedule
+
+```bash
+# View current schedule
+llmflows flow schedule <name>
+
+# Set and enable a schedule
+llmflows flow schedule <name> --cron "0 9 * * 1-5" --timezone US/Eastern --enable
+
+# Disable without removing
+llmflows flow schedule <name> --disable
+
+# Remove schedule entirely
+llmflows flow schedule <name> --clear
+```
+
+### Flow Tools
+
+```bash
+# List tools enabled for a flow
+llmflows flow tools list <name>
+
+# Enable/disable a tool for a flow (available: web_search, browser)
+llmflows flow tools add <name> web_search
+llmflows flow tools remove <name> browser
+```
+
+### Flow Variables
+
+Variables are available as `{{flow.<KEY>}}` in step content, gates, and IFs.
+
+```bash
+llmflows flow var set <name> KEY VALUE
+llmflows flow var list <name>
+llmflows flow var remove <name> KEY
+```
+
 ### Flow Steps
 
 ```bash
@@ -143,6 +190,19 @@ llmflows agent alias list --type pi
 # Update an alias
 llmflows agent alias update normal --type pi --agent pi --model anthropic/claude-sonnet-4-5
 llmflows agent alias update max --type code --agent claude-code --model opus
+```
+
+## Tools
+
+Manage globally available tools (shared across all flows).
+
+```bash
+# List all tools and their status
+llmflows tools list
+
+# Enable/disable a tool globally
+llmflows tools enable web_search
+llmflows tools disable browser
 ```
 
 ## Daemon
@@ -215,6 +275,15 @@ llmflows space var set PASSWORD secret123
 llmflows space var list
 ```
 
+### Configure a flow with schedule and tools
+
+```bash
+llmflows flow tools add my-flow web_search
+llmflows flow update my-flow --max-spend 3.0
+llmflows flow schedule my-flow --cron "0 9 * * 1-5" --timezone US/Eastern --enable
+llmflows flow var set my-flow TARGET_REPO myorg/myrepo
+```
+
 ## Quick Reference
 
 | Action | Command |
@@ -233,6 +302,13 @@ llmflows space var list
 | Add step | `llmflows flow step add --flow <name> --name <step> --content file.md` |
 | Export flows | `llmflows flow export --output flows.json` |
 | Import flows | `llmflows flow import flows.json` |
+| Update flow | `llmflows flow update <name> --max-spend 5.0` |
+| Set schedule | `llmflows flow schedule <name> --cron "0 9 * * *" --enable` |
+| Disable schedule | `llmflows flow schedule <name> --disable` |
+| Add flow tool | `llmflows flow tools add <name> web_search` |
+| Set flow variable | `llmflows flow var set <name> KEY VALUE` |
+| List tools | `llmflows tools list` |
+| Enable tool | `llmflows tools enable web_search` |
 | Schedule run | `llmflows run schedule --flow <flow-id>` |
 | List runs | `llmflows run list` |
 | Show run | `llmflows run show <run-id>` |

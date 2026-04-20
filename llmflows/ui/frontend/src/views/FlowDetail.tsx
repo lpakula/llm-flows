@@ -17,8 +17,9 @@ import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle } from "lucide-react";
 import { marked } from "marked";
+import { FlowChatWindow } from "@/views/Chat";
 
 function shortDateTime(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -94,6 +95,9 @@ export function FlowDetailView() {
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
   const [respondText, setRespondText] = useState("");
   const [agentLogExpanded, setAgentLogExpanded] = useState(true);
+
+  // Floating chat window
+  const [chatOpen, setChatOpen] = useState(false);
 
   const { entries: logEntries, streaming } = useLogStream(logUrl, null);
 
@@ -1015,6 +1019,30 @@ export function FlowDetailView() {
           skills={spaceSkills}
           onSave={saveStep}
           onClose={() => setStepModal(null)}
+        />
+      )}
+
+      {/* Floating chat toggle */}
+      <button
+        onClick={() => setChatOpen((v) => !v)}
+        className={`fixed bottom-6 right-6 z-40 rounded-full p-3 shadow-lg transition-all duration-200 ${
+          chatOpen
+            ? "bg-gray-700 hover:bg-gray-600 text-gray-300"
+            : "bg-blue-600 hover:bg-blue-500 text-white"
+        }`}
+        title={chatOpen ? "Close AI assistant" : "Ask AI about this flow"}
+      >
+        <MessageCircle size={18} />
+      </button>
+
+      {/* Floating chat window */}
+      {spaceId && (
+        <FlowChatWindow
+          spaceId={spaceId}
+          flowId={flow.id}
+          flowName={flow.name}
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
         />
       )}
 

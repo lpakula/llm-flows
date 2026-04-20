@@ -232,6 +232,7 @@ export interface AgentInfo {
   command: string;
   api_key_env: string;
   configured: boolean;
+  auth?: { method: string; email: string } | null;
 }
 
 export interface ProviderInfo {
@@ -268,4 +269,5 @@ export interface LogEntry {
 export type ChatEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking" }
+  | { type: "thinking_delta"; text: string }
   | { type: "done"; session_id: string; cost_usd?: number };

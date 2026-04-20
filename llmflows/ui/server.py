@@ -1052,14 +1052,18 @@ async def stream_run_logs(run_id: str):
         run = run_svc.get(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
-        if not run.log_path:
-            raise HTTPException(status_code=404, detail="No log path set for this run")
-        log_path = Path(run.log_path)
+
+        log_path = Path(run.log_path) if run.log_path else None
+
+        if not log_path or not log_path.exists():
+            step_runs = run_svc.list_step_runs(run_id)
+            step_logs = [Path(sr.log_path) for sr in step_runs if sr.log_path and Path(sr.log_path).exists()]
+            log_path = step_logs[0] if step_logs else None
     finally:
         session.close()
 
-    if not log_path.exists():
-        raise HTTPException(status_code=404, detail="Log file not found on disk")
+    if not log_path or not log_path.exists():
+        raise HTTPException(status_code=404, detail="No log found for this run")
 
     async def tail_log():
         pos = 0
@@ -1208,6 +1212,11 @@ async def setup_status():
             if cfg and cfg.value:
                 has_any_key = True
                 break
+        if not has_any_key:
+            for _, cached in _cli_auth_cache.values():
+                if cached is not None:
+                    has_any_key = True
+                    break
 
         has_configured_alias = False
         for alias in session.query(AgentAlias).all():
@@ -1792,6 +1801,43 @@ async def list_agents():
     return [name for name in KNOWN_AGENTS if shutil.which(AGENT_REGISTRY[name]["binary"])]
 
 
+_cli_auth_cache: dict[str, tuple[float, dict | None]] = {}
+_CLI_AUTH_TTL = 120  # seconds
+
+
+def _check_cli_auth(binary: str) -> dict | None:
+    """Check if a CLI agent has OAuth/login auth configured. Returns auth info or None.
+
+    Only claude CLI supports this (via `claude auth status` → JSON).
+    Cursor agent stores auth in the IDE keychain, not accessible from subprocesses.
+    """
+    import subprocess as _sp
+    import time
+
+    now = time.monotonic()
+    cached = _cli_auth_cache.get(binary)
+    if cached and (now - cached[0]) < _CLI_AUTH_TTL:
+        return cached[1]
+
+    result = None
+    try:
+        proc = _sp.run(
+            [binary, "auth", "status"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout)
+            if data.get("loggedIn"):
+                result = {
+                    "method": data.get("authMethod", "oauth"),
+                    "email": data.get("email", ""),
+                }
+    except Exception:
+        pass
+    _cli_auth_cache[binary] = (now, result)
+    return result
+
+
 @app.get("/api/agents/status")
 async def agents_status():
     """Return availability status for all known agents (CLI agents only)."""
@@ -1812,6 +1858,9 @@ async def agents_status():
                 if not has_key:
                     cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
                     has_key = bool(cfg and cfg.value)
+            auth_info = None
+            if binary_path and not has_key:
+                auth_info = _check_cli_auth(reg["binary"])
             result[name] = {
                 "label": reg["label"],
                 "available": binary_path is not None,
@@ -1819,7 +1868,8 @@ async def agents_status():
                 "binary_path": binary_path,
                 "command": reg["command"],
                 "api_key_env": api_key_env,
-                "configured": has_key,
+                "configured": has_key or (auth_info is not None),
+                "auth": auth_info,
             }
         return result
     finally:
@@ -1989,7 +2039,7 @@ async def list_models(agent: Optional[str] = None):
 CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
 _BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
 _NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
-CHAT_SKILLS = ["flows", "overview"]
+CHAT_SKILLS = ["flows", "overview", "cli", "skills"]
 
 
 class ChatBody(BaseModel):
@@ -1997,6 +2047,7 @@ class ChatBody(BaseModel):
     space_id: Optional[str] = None
     session_id: Optional[str] = None
     tier: Optional[str] = None
+    flow_name: Optional[str] = None
 
 
 _CHAT_SYSTEM_PROMPT = """\
@@ -2012,13 +2063,19 @@ You help users understand how llm-flows works and build automations using flows.
 - Do NOT explain flow concepts, step types, gates, artifacts, or flow-building details \
 unless the user explicitly asks about them. Assume the user wants actionable answers, not tutorials.
 - When asked "how to get started", the user has already configured API keys and tools \
-during the welcome screen — do NOT mention those steps again. Focus on: \
-1) registering a space — Click "Select space" and "Register Space", pick the folder, \
-2) making sure the daemon is running — check the status indicator in the bottom-left corner of the UI; \
-if it's not running, click it to start, \
-3) offering to help build their first flow. \
-Optionally mention skills (per-space prompt snippets that give agents domain knowledge) \
-and the gateway (for remote control) as nice-to-haves at the end. \
+during the welcome screen — do NOT mention those steps again. Start with the setup steps: \
+1) **Register a space** — click "Select space" → "Register Space", pick the project folder. \
+2) **Start the daemon** — check the status indicator in the bottom-left corner; if it's not running, click it to start. \
+3) **Create your first flow** — offer to help build one together. \
+Then offer to explain the key concepts if they want to learn more. Say something like: \
+"Want me to explain how flows, steps, gates, and skills work?" \
+If they say yes, explain concisely: \
+- **Flows & steps** — a flow is a sequence of steps; each step has a markdown prompt that tells the AI agent what to do. \
+- **Gates** — quality checks after a step; if the output isn't good enough, the step retries. \
+- **IFs** — conditional branches that skip or include steps based on conditions. \
+- **Tools** — agents can use web_search and browser; enable per-flow in flow settings. \
+- **Skills** — reusable prompt snippets that give agents domain knowledge; attach them to steps. \
+Keep it concise — short bullets, not paragraphs. \
 Always guide users through the UI rather than CLI commands — they're already in the UI.
 
 ## Your role
@@ -2026,6 +2083,8 @@ Always guide users through the UI rather than CLI commands — they're already i
 - Explain llm-flows concepts clearly and concisely — only when asked
 - Help users design and plan automation workflows
 - Build flows by writing flow JSON files and importing them via the CLI
+- Review and improve existing flows when asked
+- Help users create skills for their projects
 - Follow best practices from your loaded skills when creating flows
 
 ## Building flows
@@ -2058,8 +2117,83 @@ You are the expert — figure those out yourself. The user describes the goal, y
 To iterate on a flow, edit the JSON file in `flows/` and re-import. \
 The import command upserts by name — it will update an existing flow if one with the same name exists.
 
+### How to review and improve existing flows
+
+You can inspect any flow the user has. To review a flow:
+1. Run `llmflows flow export` to get all flows, or export a specific flow
+2. Analyze the steps, gates, IFs, and overall structure
+3. Suggest improvements — better gates, missing IFs, step content improvements, \
+agent alias optimization, or structural changes
+
+When the user is on a flow page and asks for help, the flow name is provided in the context below. \
+Export that specific flow, review it, and suggest concrete improvements.
+
 
 """
+
+
+def _build_flow_context(flow_name: str, space_id: str) -> str:
+    """Build rich flow context for the chat system prompt."""
+    import json as _json
+    from ..services.flow import FlowService
+    from ..db.database import get_session as _gs
+
+    db = _gs()
+    try:
+        flow_svc = FlowService(db)
+        flow = flow_svc.get_by_name(flow_name, space_id=space_id)
+        if not flow:
+            return f"\n## Active flow\n\nThe user is viewing flow **{flow_name}** but it was not found.\n"
+
+        parts = [f"\n## Active flow: {flow_name}\n"]
+        parts.append("The user is chatting from this flow's page. They want help with this specific flow.\n")
+
+        # Flow definition
+        snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=space_id)
+        if snapshot:
+            parts.append("### Flow definition\n```json\n" + _json.dumps(snapshot, indent=2) + "\n```\n")
+
+        # Warnings
+        warnings = flow_svc.validate_flow(flow.id, space_id=space_id)
+        if warnings:
+            parts.append("### Configuration warnings\n")
+            for w in warnings:
+                prefix = f"**{w['step_name']}**: " if w.get("step_name") else ""
+                parts.append(f"- {prefix}{w['message']}")
+            parts.append("")
+
+        # Recent runs
+        from ..db.models import FlowRun
+        runs = (
+            db.query(FlowRun)
+            .filter_by(flow_id=flow.id)
+            .order_by(FlowRun.created_at.desc())
+            .limit(3)
+            .all()
+        )
+        if runs:
+            parts.append("### Recent runs\n")
+            for run in runs:
+                status = "completed" if run.completed_at else ("running" if run.started_at else "queued")
+                if run.outcome:
+                    status = run.outcome
+                line = f"- **{run.id}** — {status}"
+                if run.duration_seconds is not None:
+                    line += f", {run.duration_seconds:.0f}s"
+                if run.cost_usd:
+                    line += f", ${run.cost_usd:.4f}"
+                if run.summary:
+                    summary_preview = run.summary[:300].replace("\n", " ")
+                    line += f"\n  > {summary_preview}"
+                parts.append(line)
+            parts.append("")
+            parts.append("For deeper investigation, use `llmflows run logs <run-id>` or `llmflows run show <run-id>`.\n")
+
+        return "\n".join(parts)
+    except Exception:
+        return f"\n## Active flow: {flow_name}\n\nCould not load flow details.\n"
+    finally:
+        db.close()
 
 
 def _resolve_chat_env() -> dict[str, str]:
@@ -2111,13 +2245,18 @@ async def chat(body: ChatBody):
         flows_dir = Path(space.path) / "flows"
         space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n- Flows directory: {flows_dir}\n\nWrite flow JSON files to the flows/ directory and import them with `llmflows flow import`.\n"
 
+    # Build flow context when the user is chatting from a flow page
+    flow_context = ""
+    if body.flow_name and space:
+        flow_context = _build_flow_context(body.flow_name, space.id)
+
     skill_paths: list[Path] = []
     for skill_name in CHAT_SKILLS:
         candidate = _BUNDLED_SKILLS_DIR / skill_name
         if candidate.is_dir():
             skill_paths.append(candidate)
 
-    system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context)
+    system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context + flow_context)
 
     # Resolve the pi alias for model selection (tier defaults to "max")
     from ..config import resolve_alias, KNOWN_LLM_PROVIDERS
@@ -2197,6 +2336,10 @@ async def chat(body: ChatBody):
                                 yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
                         elif ame_type == "thinking_start":
                             yield f"data: {json.dumps({'type': 'thinking'})}\n\n"
+                        elif ame_type == "thinking_delta":
+                            delta = ame.get("delta", "")
+                            if delta:
+                                yield f"data: {json.dumps({'type': 'thinking_delta', 'text': delta})}\n\n"
                     elif ev_type == "message_end":
                         msg = ev.get("message", {})
                         usage = msg.get("usage", {})

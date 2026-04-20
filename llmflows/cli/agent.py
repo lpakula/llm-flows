@@ -67,19 +67,34 @@ def stream_run_logs(run_id: str, follow: bool = True, raw: bool = False) -> None
         run_svc = RunService(session)
         run = run_svc.get(run_id)
 
-        if not run or not run.log_path:
-            click.echo(f"No log found for run {run_id}.")
+        if not run:
+            click.echo(f"Run {run_id} not found.")
             raise SystemExit(1)
 
-        log_path = Path(run.log_path)
+        run_log = Path(run.log_path) if run.log_path else None
+
+        step_runs = run_svc.list_step_runs(run_id)
+        step_logs = [(sr.step_name, Path(sr.log_path)) for sr in step_runs if sr.log_path and Path(sr.log_path).exists()]
     finally:
         session.close()
 
-    if not log_path.exists():
-        click.echo(f"Log file not found: {log_path}")
+    if run_log and run_log.exists():
+        tail_log(run_log, follow=follow, raw=raw)
+        return
+
+    if not step_logs:
+        click.echo(f"No log found for run {run_id}.")
         raise SystemExit(1)
 
-    tail_log(log_path, follow=follow, raw=raw)
+    for step_name, lp in step_logs:
+        click.echo()
+        click.secho(f"── {step_name} ", fg="cyan", bold=True, nl=False)
+        click.secho(f"({lp.name})", fg="bright_black")
+        tail_log(lp, follow=False, raw=raw)
+
+    if follow and step_logs:
+        _, last_log = step_logs[-1]
+        tail_log(last_log, follow=True, raw=raw)
 
 
 def tail_log(log_path, follow: bool = True, raw: bool = False,

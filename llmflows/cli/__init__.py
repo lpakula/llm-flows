@@ -8,6 +8,7 @@ from .agent import agent
 from .daemon import daemon
 from .flow import flow
 from .run import run
+from .tools import tools
 from .ui import ui
 
 
@@ -24,4 +25,5 @@ cli.add_command(agent)
 cli.add_command(daemon)
 cli.add_command(flow)
 cli.add_command(run)
+cli.add_command(tools)
 cli.add_command(ui)

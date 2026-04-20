@@ -232,6 +232,58 @@ function ApiKeyInput({
   );
 }
 
+function AgentAuthCell({
+  agent,
+  configs,
+  onAdd,
+  onDelete,
+}: {
+  agent: AgentInfo & { key: string };
+  configs: AgentConfigEntry[];
+  onAdd: (agent: string, key: string, value: string) => Promise<void>;
+  onDelete: (agent: string, configId: string) => Promise<void>;
+}) {
+  const hasApiKey = configs.some((c) => c.key === agent.api_key_env && c.value);
+  const defaultMode = hasApiKey ? "api_key" : agent.auth ? "login" : "api_key";
+  const [mode, setMode] = useState<"api_key" | "login">(defaultMode);
+
+  const authLabel = agent.auth
+    ? agent.auth.method === "claude.ai" ? "Claude.ai" : "Logged in"
+    : "Not detected";
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as "api_key" | "login")}
+          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-gray-600 w-[5.5rem] shrink-0"
+        >
+          <option value="api_key">API Key</option>
+          <option value="login">Login</option>
+        </select>
+        {mode === "api_key" ? (
+          <ApiKeyInput
+            agentKey={agent.key}
+            envVar={agent.api_key_env}
+            configs={configs}
+            onAdd={onAdd}
+            onDelete={onDelete}
+          />
+        ) : (
+          <span className={`inline-flex items-center gap-1.5 text-xs ${agent.auth ? "text-green-400" : "text-gray-500"}`}>
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${agent.auth ? "bg-green-400" : "bg-gray-600"}`} />
+            {authLabel}
+            {agent.auth?.email && (
+              <span className="text-gray-500">{agent.auth.email}</span>
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EnvConfigInline({
   agentKey,
   configs,
@@ -497,7 +549,7 @@ export function AgentsView() {
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide w-8"></th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Binary</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">API Key</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Auth</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Env Variables</th>
                 </tr>
               </thead>
@@ -521,9 +573,8 @@ export function AgentsView() {
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      <ApiKeyInput
-                        agentKey={agent.key}
-                        envVar={agent.api_key_env}
+                      <AgentAuthCell
+                        agent={agent}
                         configs={agentConfigs[agent.key] || []}
                         onAdd={addConfig}
                         onDelete={deleteConfig}

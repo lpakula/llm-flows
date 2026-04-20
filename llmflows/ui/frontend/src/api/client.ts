@@ -177,7 +177,7 @@ export const api = {
     patch<ToolConfig>(`/api/config/tools/${toolId}`, body),
 
   // Chat
-  sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string) =>
+  sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string, flowName?: string | null) =>
     fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -186,6 +186,7 @@ export const api = {
         space_id: spaceId || undefined,
         session_id: sessionId || undefined,
         tier: tier || undefined,
+        flow_name: flowName || undefined,
       }),
     }),
   deleteChatSession: (sessionId: string) => del<{ ok: boolean }>(`/api/chat/sessions/${sessionId}`),
