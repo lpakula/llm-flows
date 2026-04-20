@@ -693,10 +693,7 @@ class Daemon:
             next_step_name = flow_svc.get_next_step(current_flow, current_step_name, space_id=run.space_id)
 
         if not next_step_name:
-            self._launch_summary_step(
-                run, working_path,
-                next_position, run_svc, flow_svc,
-            )
+            self._complete_run(run, run_svc)
             return
 
         while next_step_name:
@@ -724,10 +721,7 @@ class Daemon:
             next_step_name = nxt
 
         if not next_step_name:
-            self._launch_summary_step(
-                run, working_path,
-                next_position, run_svc, flow_svc,
-            )
+            self._complete_run(run, run_svc)
             return
 
         self._launch_step(
@@ -791,10 +785,7 @@ class Daemon:
             first_step = nxt
 
         if not first_step:
-            self._launch_summary_step(
-                run, working_path,
-                position, run_svc, flow_svc,
-            )
+            self._complete_run(run, run_svc)
             return
 
         self._launch_step(
@@ -1004,12 +995,25 @@ class Daemon:
                 },
             )
 
+    def _complete_run(
+        self, run, run_svc: RunService,
+    ) -> None:
+        """Finalize a successful run using the last step's _result.md as the summary."""
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
+        summary = ContextService.read_last_step_result(artifacts_dir)
+        outcome = run.outcome or "completed"
+        logger.info("Run %s completed (outcome=%s)", run.id, outcome)
+        self._finalize_run(run.id)
+        run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
+        self._maybe_create_completed_inbox(run, run_svc)
+
     def _launch_summary_step(
         self, run, working_path: Path,
         step_position: int, run_svc: RunService, flow_svc: FlowService,
         error_context: dict | None = None,
     ) -> None:
-        """Launch the auto-appended summary step.
+        """Launch the auto-appended summary step for error runs.
 
         When *error_context* is provided the error summary template is used
         instead of the normal one, giving the AI context about the failure.

@@ -154,6 +154,28 @@ class ContextService:
             return ""
 
     @staticmethod
+    def read_last_step_result(artifacts_dir: Path) -> str:
+        """Read _result.md from the last (highest-numbered) step directory."""
+        if not artifacts_dir.exists():
+            return ""
+        try:
+            step_dirs = sorted(
+                (d for d in artifacts_dir.iterdir()
+                 if d.is_dir() and d.name[0:2].isdigit()),
+                key=lambda d: d.name,
+            )
+        except (PermissionError, OSError):
+            return ""
+        for step_dir in reversed(step_dirs):
+            result_path = step_dir / RESULT_FILE
+            if result_path.exists():
+                try:
+                    return result_path.read_text(errors="replace").strip()
+                except (PermissionError, OSError):
+                    continue
+        return ""
+
+    @staticmethod
     def _safe_flow_dir(flow_name: str) -> str:
         """Return a filesystem-safe directory name for a flow."""
         import re
