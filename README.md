@@ -90,7 +90,7 @@ Steps can load **skills** — reusable instruction sets that give the agent doma
 
 ### 🧩 Customisable flows
 
-A flow is a sequence of steps. Each step can use a different type and model, so you can mix and match within a single flow:
+A flow is a sequence of steps. Each step can use a different type, so you can mix and match within a single flow:
 
 - **Agent** — AI agent with access to tools (file read/write, shell, web search, browser) for research, analysis, content generation, and automation
 - **Code** — delegates to a coding agent (Cursor, Claude Code) for steps that require writing or editing code
