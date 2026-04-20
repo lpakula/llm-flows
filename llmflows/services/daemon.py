@@ -1034,6 +1034,10 @@ class Daemon:
 
         try:
             summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
+            if summary_agent in KNOWN_LLM_PROVIDERS:
+                if "/" not in resolved_model:
+                    resolved_model = f"{summary_agent}/{resolved_model}"
+                summary_agent = "pi"
         except ValueError:
             logger.warning("No 'mini' alias configured — skipping summary step for run %s", run.id)
             outcome = run.outcome or "completed"
