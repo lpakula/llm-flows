@@ -8,12 +8,14 @@ function ModelCombobox({
   options,
   placeholder = "Select or type a model...",
   bg = "bg-gray-900",
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: string[];
   placeholder?: string;
   bg?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value);
@@ -44,11 +46,12 @@ function ModelCombobox({
       <input
         value={query}
         onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => !disabled && setOpen(true)}
+        disabled={disabled}
         placeholder={placeholder}
-        className={`${bg} border border-gray-700 rounded px-2 py-1 text-sm w-full focus:outline-none focus:border-gray-500`}
+        className={`${bg} border border-gray-700 rounded px-2 py-1 text-sm w-full focus:outline-none focus:border-gray-500 disabled:opacity-40`}
       />
-      {open && filtered.length > 0 && (
+      {open && !disabled && filtered.length > 0 && (
         <ul className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-gray-800 border border-gray-700 rounded shadow-lg">
           {filtered.map((m) => (
             <li
@@ -154,6 +157,7 @@ function InlineAliasTier({
             options={modelOptions[agent] || []}
             placeholder={hasOptions ? "model" : "—"}
             bg="bg-gray-800"
+            disabled={!hasOptions}
           />
         </div>
       )}

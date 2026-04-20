@@ -76,8 +76,8 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-950">
-      <div className="w-full max-w-lg mx-auto px-6 pb-16">
+    <div className="min-h-screen flex items-center justify-center bg-gray-950 py-12">
+      <div className="w-full max-w-lg mx-auto px-6">
         <div className="text-center mb-10">
           <h1 className="text-3xl font-bold tracking-tight mb-2">llm flows</h1>
           <p className="text-gray-500 text-sm">Set up your environment to get started.</p>

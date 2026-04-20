@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/api/client";
 import type { GatewayConfig } from "@/api/types";
+import { ChevronRight } from "lucide-react";
 
 type ChannelDef = {
   id: string;
@@ -54,12 +55,14 @@ function ChannelCard({
   const [saved, setSaved] = useState<string | null>(null);
   const [newTag, setNewTag] = useState("");
   const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const enabled = gateway[channel.enabledKey] as boolean;
 
   const toggleEnabled = async () => {
     setTogglingEnabled(true);
     await onSave(channel.enabledKey, !enabled);
+    if (!enabled) setExpanded(true);
     setTogglingEnabled(false);
   };
 
@@ -78,13 +81,21 @@ function ChannelCard({
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
-      <div className="flex items-center justify-between p-4">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-white">{channel.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">{channel.description}</p>
+      <div
+        className="flex items-center justify-between p-4 cursor-pointer"
+        onClick={() => enabled && setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {enabled && (
+            <ChevronRight size={14} className={`text-gray-500 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`} />
+          )}
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-white">{channel.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{channel.description}</p>
+          </div>
         </div>
         <button
-          onClick={toggleEnabled}
+          onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
           disabled={togglingEnabled}
           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
             enabled ? "bg-blue-500" : "bg-gray-700"
@@ -98,7 +109,7 @@ function ChannelCard({
         </button>
       </div>
 
-      {enabled && (
+      {enabled && expanded && (
         <div className="border-t border-gray-800 p-4 space-y-4">
           {channel.fields.map((field) => (
             <div key={field.key}>

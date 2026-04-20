@@ -226,12 +226,14 @@ export function InboxView() {
   const handleRespond = async (stepRunId: string, response: string) => {
     await api.respondToStep(stepRunId, response);
     await refresh();
+    window.dispatchEvent(new Event("inbox-updated"));
   };
 
   const handleArchive = async (inboxId: string) => {
     try {
       await api.archiveInboxItem(inboxId);
       await refresh();
+      window.dispatchEvent(new Event("inbox-updated"));
     } catch (e) {
       console.error("Archive error:", e);
     }

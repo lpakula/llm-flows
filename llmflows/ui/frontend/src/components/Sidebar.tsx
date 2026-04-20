@@ -181,6 +181,12 @@ export function Sidebar() {
   useInterval(refreshInbox, 10000);
 
   useEffect(() => {
+    const onInboxChanged = () => { refreshInbox(); };
+    window.addEventListener("inbox-updated", onInboxChanged);
+    return () => window.removeEventListener("inbox-updated", onInboxChanged);
+  }, [refreshInbox]);
+
+  useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
       if (spacePickerRef.current && !spacePickerRef.current.contains(e.target as Node)) {
         setSpaceMenuOpen(false);

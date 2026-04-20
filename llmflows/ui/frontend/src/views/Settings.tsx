@@ -94,7 +94,7 @@ function SelectDropdown({ value, options, onSelect }: {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:border-gray-500 cursor-pointer flex items-center gap-1.5"
+        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:border-gray-500 cursor-pointer flex items-center justify-between w-28"
       >
         {selected?.label || value}
         <span className="text-[9px] text-gray-500">▼</span>
@@ -199,19 +199,8 @@ export function SettingsView() {
                         <SelectDropdown
                           value={val as string}
                           options={row.options!}
-                          onSelect={async (next) => {
+                          onSelect={(next) => {
                             setEditing((prev) => ({ ...prev, [row.key]: next }));
-                            setSavingKey(row.key);
-                            try {
-                              const updated = await api.updateDaemonConfig({ [row.key]: next } as Partial<DaemonConfig>);
-                              setConfig(updated);
-                              setEditing((prev) => { const n = { ...prev }; delete n[row.key]; return n; });
-                              setSavedKey(row.key);
-                              setTimeout(() => setSavedKey((k) => (k === row.key ? null : k)), 2000);
-                            } catch (e2) {
-                              console.error(e2);
-                            }
-                            setSavingKey(null);
                           }}
                         />
                       ) : row.type === "bool" ? (
@@ -253,7 +242,7 @@ export function SettingsView() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {row.type !== "bool" && row.type !== "select" && (
+                      {row.type !== "bool" && (
                         saved ? (
                           <span className="text-xs text-green-400">Saved</span>
                         ) : (
@@ -266,7 +255,7 @@ export function SettingsView() {
                           </button>
                         )
                       )}
-                      {(row.type === "bool" || row.type === "select") && saved && (
+                      {row.type === "bool" && saved && (
                         <span className="text-xs text-green-400">Saved</span>
                       )}
                     </td>

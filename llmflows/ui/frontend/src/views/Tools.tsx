@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { api } from "@/api/client";
 import type { ToolConfig, ToolConfigField } from "@/api/types";
+import { ChevronRight } from "lucide-react";
 
 function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConfig) => void }) {
   const [localConfig, setLocalConfig] = useState<Record<string, string>>(tool.config);
   const [savingField, setSavingField] = useState<string | null>(null);
   const [savedField, setSavedField] = useState<string | null>(null);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     setLocalConfig(tool.config);
@@ -17,6 +19,7 @@ function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConf
     try {
       const updated = await api.updateToolConfig(tool.id, { enabled: !tool.enabled });
       onUpdate(updated);
+      if (!tool.enabled) setExpanded(true);
     } catch (e) {
       console.error("Failed to toggle tool:", e);
     }
@@ -73,13 +76,21 @@ function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConf
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
-      <div className="flex items-center justify-between p-4">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-white">{tool.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
+      <div
+        className="flex items-center justify-between p-4 cursor-pointer"
+        onClick={() => tool.enabled && tool.config_fields.length > 0 && setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {tool.enabled && tool.config_fields.length > 0 && (
+            <ChevronRight size={14} className={`text-gray-500 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`} />
+          )}
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-white">{tool.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
+          </div>
         </div>
         <button
-          onClick={toggleEnabled}
+          onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
           disabled={togglingEnabled}
           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
             tool.enabled ? "bg-blue-500" : "bg-gray-700"
@@ -93,7 +104,7 @@ function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConf
         </button>
       </div>
 
-      {tool.enabled && tool.config_fields.length > 0 && (
+      {tool.enabled && expanded && tool.config_fields.length > 0 && (
         <div className="border-t border-gray-800 p-4 space-y-4">
           {tool.config_fields.filter(isTopLevel).map((field) => (
             <div key={field.key}>
