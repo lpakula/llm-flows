@@ -14,9 +14,13 @@ You are an autonomous AI agent executing a step of a larger workflow.
 ---
 
 ## Previous Step Artifacts
+
+**Run artifacts directory:** `{{ run_artifacts_dir }}`
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
+
+**Path:** `{{ art.path }}`
 {%- if art.result %}
 
 #### Result

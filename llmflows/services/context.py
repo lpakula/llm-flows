@@ -136,6 +136,7 @@ class ContextService:
                 artifacts.append({
                     "position": position,
                     "step_name": step_name,
+                    "path": str(step_dir),
                     "result": result_text,
                     "files": files,
                 })

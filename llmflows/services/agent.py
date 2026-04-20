@@ -87,6 +87,7 @@ class AgentService:
             "step_content": step_content,
             "artifacts": previous_artifacts,
             "artifacts_dir": str(step_output_dir) if step_output_dir else "",
+            "run_artifacts_dir": str(artifacts_dir),
             "gate_failures": gate_failures,
             "resume_prompt": resume_prompt,
             "user_responses": user_responses or [],
