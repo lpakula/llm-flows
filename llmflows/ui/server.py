@@ -1319,7 +1319,7 @@ async def get_inbox():
                         for s in snap.get("steps", []):
                             if s["name"] == sr.step_name:
                                 raw = s.get("step_type", "")
-                                step_type = raw if raw in ("agent", "code", "shell", "hitl") else "agent"
+                                step_type = raw if raw in ("agent", "code", "hitl") else "agent"
                                 break
                     except (ValueError, KeyError, TypeError):
                         pass

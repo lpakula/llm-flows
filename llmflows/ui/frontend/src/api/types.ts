@@ -9,7 +9,7 @@ export interface SpaceSettings {
   max_concurrent_tasks: number;
 }
 
-export type StepType = "agent" | "code" | "shell" | "hitl";
+export type StepType = "agent" | "code" | "hitl";
 
 export interface AgentAlias {
   id: string;

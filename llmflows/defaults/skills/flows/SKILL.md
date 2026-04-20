@@ -71,7 +71,7 @@ To publish files (screenshots, images, reports) in the run summary UI, save them
 
 Each step has a `step_type` that controls how the daemon handles execution.
 
-Valid step types: `"agent"`, `"code"`, `"shell"`, `"hitl"`
+Valid step types: `"agent"`, `"code"`, `"hitl"`
 
 Any unrecognized value (including `null`, empty string, or `"default"`) is normalized to `"agent"`.
 
@@ -94,31 +94,6 @@ Runs via an **external code agent** (Cursor, Claude Code, etc.) — a CLI-based 
 - Agent alias maps to a `"code"` alias type (configured in Settings > Agents)
 
 **When to use:** Steps that require deep code editing in a project — implementing features, refactoring, fixing bugs. The external agent has full access to the project workspace.
-
-### `"shell"`
-
-Runs the step's `content` field directly as a **shell command** (not as an agent prompt). No LLM is involved. The command runs in the space's working directory with a 600-second timeout. stdout/stderr and exit code are captured and written to `_result.md` automatically.
-
-- **Synchronous**: the daemon blocks until the command finishes
-- Space variables are injected as **environment variables** in the shell
-- Template variables (`{{run.id}}`, `{{artifacts_dir}}`, etc.) are interpolated in the content before execution
-- Gates are evaluated after the command completes
-
-**When to use:** Deterministic automation steps — running builds, deployments, API calls, data processing scripts. Any step where an LLM would add no value.
-
-**Example:**
-
-```json
-{
-  "name": "build",
-  "position": 2,
-  "step_type": "shell",
-  "content": "cd {{space.PROJECT_PATH}} && npm run build 2>&1",
-  "gates": [
-    {"command": "test -f {{space.PROJECT_PATH}}/dist/index.js", "message": "Build output not found."}
-  ]
-}
-```
 
 ### `"hitl"` (human-in-the-loop)
 
@@ -314,8 +289,6 @@ IFs are evaluated **before** the step launches, so `{{artifacts_dir}}` and `{{st
 
 Space variables are key-value pairs configured by the user (in Settings or via CLI) and available to all flows in the space. Reference them as `{{space.KEY_NAME}}` in step content, gate commands, and gate messages.
 
-For `shell` steps, space variables are also injected as **environment variables**, so `$PROJECT_PATH` works directly in shell commands.
-
 ### What the agent automatically receives
 
 The agent's prompt is built by the system and automatically includes (flow authors do not need to set these up):
@@ -366,8 +339,8 @@ Use this to declare dependencies on configuration that the user must provide.
 |-------|------|---------|---------|
 | `name` | string | **required** | Step identifier. Used in artifact directory names and template variables. |
 | `position` | integer | **required** | Sequential index starting at 0. Must be sequential. |
-| `content` | string | `""` | Markdown prompt (for agent steps) or shell command (for `shell` steps). |
-| `step_type` | string | `"agent"` | One of: `"agent"`, `"code"`, `"shell"`, `"hitl"`. Omit for agent. |
+| `content` | string | `""` | Markdown prompt for the step. |
+| `step_type` | string | `"agent"` | One of: `"agent"`, `"code"`, `"hitl"`. Omit for agent. |
 | `agent_alias` | string | `"normal"` | Which agent tier to use. Common values: `"mini"`, `"normal"`, `"max"`. |
 | `allow_max` | boolean | `false` | On the last gate retry, escalate to the `"max"` agent alias. |
 | `max_gate_retries` | integer | `5` | Max retry attempts on gate failure. `0` = unlimited. |
@@ -388,7 +361,6 @@ Agent aliases map to agent configurations (model + provider) in Settings > Agent
 The alias type is determined by step_type:
 - `"agent"` and `"hitl"` → `"pi"` alias type
 - `"code"` → `"code"` alias type
-- `"shell"` → no alias (no LLM involved)
 
 ---
 
@@ -504,7 +476,7 @@ The agent then uses ref numbers to interact: `browser_fill(ref=1, value="user@ex
 }
 ```
 
-The `"browser"` tool must be enabled in Settings > Tools. Space variables are available in step content via `{{space.USERNAME}}` and as environment variables in shell steps.
+The `"browser"` tool must be enabled in Settings > Tools. Space variables are available in step content via `{{space.USERNAME}}`.
 
 ---
 
@@ -634,8 +606,8 @@ When a step consumes output from a previous step, describe the format explicitly
     {
       "name": "lint-python",
       "position": 0,
-      "step_type": "shell",
-      "content": "cd {{space.PROJECT_PATH}} && python -m ruff check . 2>&1",
+      "agent_alias": "mini",
+      "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && python -m ruff check .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
       "ifs": [
         {"command": "test -f {{space.PROJECT_PATH}}/pyproject.toml", "message": "Python project exists"}
       ]
@@ -643,8 +615,8 @@ When a step consumes output from a previous step, describe the format explicitly
     {
       "name": "lint-js",
       "position": 1,
-      "step_type": "shell",
-      "content": "cd {{space.PROJECT_PATH}} && npx eslint . 2>&1",
+      "agent_alias": "mini",
+      "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && npx eslint .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
       "ifs": [
         {"command": "test -f {{space.PROJECT_PATH}}/package.json", "message": "Node project exists"},
         {"command": "grep -q eslint {{space.PROJECT_PATH}}/package.json", "message": "ESLint configured"}

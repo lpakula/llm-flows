@@ -84,6 +84,10 @@ Every agent step has access to a set of tools out of the box:
 - **Web search** — search the web and fetch page content, no extra API keys needed
 - **Browser** — control a real Chromium browser: navigate, click, fill forms, take screenshots. The session persists across steps so login state carries over
 
+### 🧠 Skills
+
+Steps can load **skills** — reusable instruction sets that give the agent domain-specific knowledge or workflows. Drop a `SKILL.md` file into `.agents/skills/<name>/` and reference it by name in any step. Skills are injected into the agent's prompt at runtime.
+
 ### 🧩 Customisable flows
 
 A flow is a sequence of steps. Each step can use a different type and model, so you can mix and match within a single flow:

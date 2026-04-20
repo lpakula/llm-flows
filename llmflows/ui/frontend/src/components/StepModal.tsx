@@ -4,7 +4,6 @@ import type { Gate, AgentAlias, SkillInfo, StepType } from "@/api/types";
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
   { value: "agent", label: "Agent", desc: "Pi-powered LLM with read/write/shell tools" },
   { value: "code", label: "Code", desc: "Coding agent (Cursor, Claude Code, etc.)" },
-  { value: "shell", label: "Shell", desc: "Run a shell command" },
   { value: "hitl", label: "HITL (human in the loop)", desc: "LLM + human approval" },
 ];
 
@@ -203,8 +202,6 @@ export function StepModal({
   const st = form.step_type as StepType;
   const aliasType = st === "code" ? "code" : "pi";
   const filteredAliases = aliases.filter((a) => a.type === aliasType);
-  const showAlias = st !== "shell";
-  const showSkills = st !== "shell";
   const hasGates = form.gates.length > 0;
 
   return (
@@ -237,13 +234,11 @@ export function StepModal({
 
           {/* Content */}
           <div>
-            <label className="text-[11px] text-gray-400 font-medium block mb-1">
-              {st === "shell" ? "Command" : "Content (Markdown)"}
-            </label>
+            <label className="text-[11px] text-gray-400 font-medium block mb-1">Content (Markdown)</label>
             <textarea
               value={form.content}
               onChange={(e) => onChange({ content: e.target.value })}
-              rows={st === "shell" ? 4 : 10}
+              rows={10}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 resize-y"
             />
           </div>
@@ -265,37 +260,31 @@ export function StepModal({
                   ))}
                 </select>
               </div>
-              {showAlias && (
-                <div>
-                  <label className="text-[11px] text-gray-400 font-medium block mb-1">Alias</label>
-                  <select
-                    value={form.agent_alias}
-                    onChange={(e) => onChange({ agent_alias: e.target.value })}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                  >
-                    {filteredAliases.length > 0 ? (
-                      filteredAliases.map((a) => (
-                        <option key={a.id} value={a.name}>
-                          {a.name} ({a.agent}/{a.model})
-                        </option>
-                      ))
-                    ) : (
-                      <option value="normal">normal (not configured)</option>
-                    )}
-                  </select>
-                </div>
-              )}
+              <div>
+                <label className="text-[11px] text-gray-400 font-medium block mb-1">Alias</label>
+                <select
+                  value={form.agent_alias}
+                  onChange={(e) => onChange({ agent_alias: e.target.value })}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                >
+                  {filteredAliases.length > 0 ? (
+                    filteredAliases.map((a) => (
+                      <option key={a.id} value={a.name}>
+                        {a.name} ({a.agent}/{a.model})
+                      </option>
+                    ))
+                  ) : (
+                    <option value="normal">normal (not configured)</option>
+                  )}
+                </select>
+              </div>
             </div>
             <p className="text-[10px] text-gray-600 mt-1">{STEP_TYPES.find((t) => t.value === st)?.desc}</p>
           </div>
 
           {/* Skills */}
-          {showSkills && (
-            <>
-              <div className="border-t border-gray-800" />
-              <StepSkillPicker skills={skills} selected={form.skills} onChange={(s) => onChange({ skills: s })} />
-            </>
-          )}
+          <div className="border-t border-gray-800" />
+          <StepSkillPicker skills={skills} selected={form.skills} onChange={(s) => onChange({ skills: s })} />
 
           {/* Divider */}
           <div className="border-t border-gray-800" />
@@ -343,12 +332,8 @@ export function StepModal({
           )}
 
           {/* Variables reference */}
-          {st !== "shell" && (
-            <>
-              <div className="border-t border-gray-800" />
-              <VariablesRef />
-            </>
-          )}
+          <div className="border-t border-gray-800" />
+          <VariablesRef />
         </div>
 
         {/* Footer */}

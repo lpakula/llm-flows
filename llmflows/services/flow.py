@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep
 
-VALID_STEP_TYPES = ("agent", "code", "shell", "hitl")
+VALID_STEP_TYPES = ("agent", "code", "hitl")
 
 
 def _normalize_step_type(value: str | None) -> str:
@@ -429,9 +429,6 @@ class FlowService:
         for step in flow.steps:
             st = _normalize_step_type(step.step_type)
             alias_name = step.agent_alias or "normal"
-
-            if st == "shell":
-                continue
 
             alias_type = "code" if st == "code" else "pi"
             alias = self.session.query(AgentAlias).filter_by(

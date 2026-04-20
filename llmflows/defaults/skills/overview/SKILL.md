@@ -37,7 +37,7 @@ llm-flows is a local workflow orchestrator for AI agents — think "CI for codin
 A space is a registered project directory. It is the top-level organizational unit — all flows and runs belong to a space. Spaces have:
 
 - A name and filesystem path (your repo or project folder)
-- Space variables — key-value pairs available as `{{space.KEY}}` in step content and as environment variables in shell steps
+- Space variables — key-value pairs available as `{{space.KEY}}` in step content
 - Concurrency limits — how many runs can execute simultaneously
 - Their own flows, runs, and settings
 

@@ -31,7 +31,6 @@ const StepSchema = Type.Object({
     description:
       '"agent" for AI-powered steps (research, analysis, writing, automation), ' +
       '"code" for steps that edit source code in a software project, ' +
-      '"shell" for running a command with no AI, ' +
       '"hitl" for human-in-the-loop review.',
   }),
   agent_alias: Type.Optional(
@@ -55,7 +54,7 @@ export default function activate(api: any) {
     promptSnippet:
       "save_flow: Create a flow in llm-flows. " +
       "Params: name, description, " +
-      "steps (array of {name, position, content, step_type ('agent'|'code'|'shell'|'hitl'), " +
+      "steps (array of {name, position, content, step_type ('agent'|'code'|'hitl'), " +
       "agent_alias?, gates?, ifs?, allow_max?, max_gate_retries?, skills?}), " +
       "requirements? ({tools?, variables?}).",
     parameters: Type.Object({

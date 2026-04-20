@@ -13,9 +13,6 @@ def get_executor(step_type: str) -> StepExecutor:
     if step_type == "code":
         from .code import CodeExecutor
         executor = CodeExecutor()
-    elif step_type == "shell":
-        from .shell import ShellExecutor
-        executor = ShellExecutor()
     else:
         from .pi import PiExecutor
         executor = PiExecutor()

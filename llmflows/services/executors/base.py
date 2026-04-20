@@ -50,10 +50,10 @@ class LaunchResult:
 class StepExecutor(ABC):
     """Base class for step executors.
 
-    Executors handle different step_type values: code, llm, shell, manual.
+    Executors handle different step_type values: code, agent/hitl.
     Async executors (code) launch a subprocess and return; the daemon polls
-    is_running(). Sync executors (llm, shell) complete within launch() and
-    set is_sync=True on the result.
+    is_running(). Sync executors complete within launch() and set
+    is_sync=True on the result.
     """
 
     @abstractmethod

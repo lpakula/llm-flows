@@ -33,12 +33,6 @@ Runs via an **external coding agent** (Cursor CLI, Claude Code, etc.). The agent
 
 **When to use:** Implementing features, refactoring, fixing bugs — tasks that require deep code editing.
 
-### `"shell"`
-
-Runs the step's `content` as a **shell command** directly. No AI involved. stdout/stderr are captured and saved as the step's output.
-
-**When to use:** Deterministic tasks — builds, deploys, API calls, scripts.
-
 ### `"hitl"` (human-in-the-loop)
 
 Same as `"agent"`, but after the agent finishes, the flow **pauses** and creates an inbox item. The user sees the agent's output and responds. The flow then continues with the user's response available to all subsequent steps.
@@ -70,7 +64,7 @@ Gates are shell commands attached to a step that **must exit 0** before the flow
 
 ### Automatic artifact gate
 
-Every step automatically gets a gate that checks the artifacts directory is non-empty. If the agent produces no output files, this gate fails and the agent retries.
+Every step must produce a result artifact (`_result.md`) for the flow to continue — subsequent steps depend on it for context. A built-in gate enforces this: if the step finishes without producing artifacts, the gate fails and the agent retries automatically.
 
 ### `allow_max` — last-resort escalation
 
@@ -164,15 +158,7 @@ Space variables set via **Settings > Variables** or `llmflows space var set KEY 
 
 ## Step content format
 
-Each step's `content` is a markdown prompt. Use clear sections:
-
-| Section | Required | Purpose |
-|---------|----------|---------|
-| `# TITLE` | Yes | Step name in uppercase |
-| `## PURPOSE` | Yes | One-sentence goal |
-| `## WORKFLOW` | Yes | Numbered action list |
-| `## RULES` | No | Output format, constraints |
-| `## FORBIDDEN` | No | Hard constraints the agent must never violate |
+Each step's `content` is a plain markdown prompt — there is no special structure or required sections. Write it however makes sense for the task.
 
 ---
 
@@ -182,8 +168,8 @@ Each step's `content` is a markdown prompt. Use clear sections:
 |-------|------|---------|-------------|
 | `name` | string | **required** | Step identifier |
 | `position` | integer | **required** | Sequential index starting at 0 |
-| `content` | string | `""` | Markdown prompt or shell command |
-| `step_type` | string | `"agent"` | `"agent"`, `"code"`, `"shell"`, or `"hitl"` |
+| `content` | string | `""` | Markdown prompt |
+| `step_type` | string | `"agent"` | `"agent"`, `"code"`, or `"hitl"` |
 | `agent_alias` | string | `"normal"` | Agent tier: `"mini"`, `"normal"`, or `"max"` |
 | `allow_max` | boolean | `false` | Escalate to `"max"` on last gate retry |
 | `max_gate_retries` | integer | `5` | Max retries on gate failure. `0` = unlimited |
@@ -345,8 +331,8 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
         {
           "name": "Build check",
           "position": 3,
-          "step_type": "shell",
-          "content": "npm run build 2>&1",
+          "agent_alias": "mini",
+          "content": "# BUILD CHECK\n\n## PURPOSE\n\nRun the build and verify it succeeds.\n\n## WORKFLOW\n\n1. Run `npm run build`\n2. Write the build output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not modify any source files\n- Do not push to remote",
           "gates": [
             {"command": "test -f dist/index.js", "message": "Build output must exist."}
           ]
@@ -361,7 +347,7 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
 - **`agent`** step (Research) with `mini` alias — cheap model for simple exploration
 - **`hitl`** step (Propose) — pauses for human input, no gates
 - **`code`** step (Implement) — uses Cursor/Claude Code with `max` alias for complex work
-- **`shell`** step (Build check) — deterministic build verification, no LLM involved
+- **`agent`** step (Build check) with `mini` — runs the build and validates output via gates
 - `{{steps.Propose.user_response}}` — referencing the human's response in a later step
 - `allow_max: true` — escalates to stronger model on last gate retry
 - `max_gate_retries: 3` — limits retry attempts
@@ -440,8 +426,8 @@ A flow that lints whatever languages are present in the project. Steps are skipp
         {
           "name": "Lint Python",
           "position": 0,
-          "step_type": "shell",
-          "content": "python -m ruff check . 2>&1",
+          "agent_alias": "mini",
+          "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `python -m ruff check .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f pyproject.toml || test -f requirements.txt", "message": "Python project detected"}
           ]
@@ -449,8 +435,8 @@ A flow that lints whatever languages are present in the project. Steps are skipp
         {
           "name": "Lint JavaScript",
           "position": 1,
-          "step_type": "shell",
-          "content": "npx eslint . 2>&1",
+          "agent_alias": "mini",
+          "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `npx eslint .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f package.json", "message": "Node project detected"},
             {"command": "grep -q eslint package.json", "message": "ESLint is configured"}
@@ -459,8 +445,8 @@ A flow that lints whatever languages are present in the project. Steps are skipp
         {
           "name": "Lint Go",
           "position": 2,
-          "step_type": "shell",
-          "content": "golangci-lint run ./... 2>&1",
+          "agent_alias": "mini",
+          "content": "# LINT GO\n\n## PURPOSE\n\nRun the Go linter and capture results.\n\n## WORKFLOW\n\n1. Run `golangci-lint run ./...`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f go.mod", "message": "Go project detected"}
           ]
@@ -480,7 +466,7 @@ A flow that lints whatever languages are present in the project. Steps are skipp
 **What this demonstrates:**
 - `ifs` — each lint step only runs if the language is detected
 - Multiple IFs on one step (Lint JavaScript) — **all** must pass
-- `shell` steps for deterministic commands
+- `agent_alias: "mini"` — cheap model for simple command-and-capture steps
 - `agent` summary step that reads only the outputs from steps that actually ran
 - Skipped steps produce no artifacts, so they don't appear in later context
 

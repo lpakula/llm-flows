@@ -17,7 +17,7 @@ SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 SPACE_DIR = ".llmflows"
 
 
-VALID_STEP_TYPES = ("agent", "code", "shell", "hitl")
+VALID_STEP_TYPES = ("agent", "code", "hitl")
 
 KNOWN_AGENTS = [
     "cursor",

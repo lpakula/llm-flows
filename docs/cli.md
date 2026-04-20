@@ -37,7 +37,7 @@ llmflows space settings
 
 ### Space Variables
 
-Variables are available as `{{space.<KEY>}}` in flow step content, gates, and IFs. They are also injected as environment variables into shell steps.
+Variables are available as `{{space.<KEY>}}` in flow step content, gates, and IFs.
 
 ```bash
 # Set a variable
