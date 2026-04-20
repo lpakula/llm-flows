@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { RotateCcw, Loader2, Workflow, Rocket, HelpCircle, ArrowUp } from "lucide-react";
+import { RotateCcw, Loader2, Workflow, Rocket, HelpCircle, ArrowUp, ChevronDown } from "lucide-react";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { formatCost } from "@/lib/format";
 import type { ChatEvent } from "@/api/types";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -140,6 +141,9 @@ function StreamingBubble({ text }: { text: string }) {
   );
 }
 
+const TIERS = ["mini", "normal", "max"] as const;
+type Tier = (typeof TIERS)[number];
+
 export function ChatView() {
   const { selectedSpaceId, chatState, setChatState } = useApp();
   const messages = chatState.messages;
@@ -159,6 +163,9 @@ export function ChatView() {
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [streamText, setStreamText] = useState("");
+  const [tier, setTier] = useState<Tier>("max");
+  const [totalCost, setTotalCost] = useState(0);
+  const [tierOpen, setTierOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -171,6 +178,16 @@ export function ChatView() {
   }, []);
 
   useEffect(scrollToBottom, [messages, streamText, scrollToBottom]);
+
+  useEffect(() => {
+    if (!tierOpen) return;
+    const close = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest?.("[data-tier-toggle]")) return;
+      setTierOpen(false);
+    };
+    requestAnimationFrame(() => document.addEventListener("click", close));
+    return () => document.removeEventListener("click", close);
+  }, [tierOpen]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -190,6 +207,7 @@ export function ChatView() {
           text.trim(),
           selectedSpaceId,
           sessionId,
+          tier,
         );
 
         if (!response.ok) {
@@ -213,6 +231,9 @@ export function ChatView() {
           } else if (event.type === "done") {
             if (event.session_id) {
               setSessionId(event.session_id);
+            }
+            if (event.cost_usd) {
+              setTotalCost((prev) => prev + event.cost_usd!);
             }
           }
         }
@@ -238,7 +259,7 @@ export function ChatView() {
         setTimeout(() => inputRef.current?.focus(), 50);
       }
     },
-    [streaming, selectedSpaceId, sessionId],
+    [streaming, selectedSpaceId, sessionId, tier],
   );
 
   const handleNewChat = useCallback(() => {
@@ -252,6 +273,7 @@ export function ChatView() {
     setStreaming(false);
     setStreamText("");
     setInput("");
+    setTotalCost(0);
   }, [streaming, sessionId, setChatState]);
 
   const handleKeyDown = useCallback(
@@ -289,6 +311,33 @@ export function ChatView() {
             centered
           />
 
+          <div className="relative mt-2.5 self-start flex items-center gap-1.5">
+            <span className="text-[11px] text-gray-500">Agent</span>
+            <button
+              data-tier-toggle
+              onClick={() => setTierOpen((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700/60 rounded-md px-2 py-0.5 transition"
+            >
+              {tier}
+              <ChevronDown size={10} />
+            </button>
+            {tierOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 py-1 min-w-[80px]">
+                {TIERS.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => { setTier(t); setTierOpen(false); }}
+                    className={`block w-full text-left px-3 py-1.5 text-xs transition ${
+                      t === tier ? "text-blue-400 bg-blue-500/10" : "text-gray-300 hover:bg-gray-700/60"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="w-full mt-8">
             <p className="text-xs text-gray-500 mb-3 px-0.5">Get started</p>
             <div className="grid grid-cols-3 gap-3">
@@ -313,14 +362,47 @@ export function ChatView() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-6 py-3 border-b border-gray-800 flex-shrink-0 flex items-center justify-between">
-        <h2 className="text-sm font-medium text-gray-400">Chat</h2>
-        <button
-          onClick={handleNewChat}
-          className="text-xs text-gray-500 hover:text-gray-300 inline-flex items-center gap-1.5 transition"
-        >
-          <RotateCcw size={12} />
-          New chat
-        </button>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-medium text-gray-400">Chat</h2>
+          <div className="relative">
+            <button
+              data-tier-toggle
+              onClick={() => setTierOpen((v) => !v)}
+              disabled={streaming}
+              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700/60 rounded-md px-2 py-0.5 transition disabled:opacity-40"
+            >
+              {tier}
+              <ChevronDown size={10} />
+            </button>
+            {tierOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 py-1 min-w-[80px]">
+                {TIERS.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => { setTier(t); setTierOpen(false); }}
+                    className={`block w-full text-left px-3 py-1.5 text-xs transition ${
+                      t === tier ? "text-blue-400 bg-blue-500/10" : "text-gray-300 hover:bg-gray-700/60"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {totalCost > 0 && (
+            <span className="text-[11px] text-emerald-400 tabular-nums">{formatCost(totalCost)}</span>
+          )}
+          <button
+            onClick={handleNewChat}
+            className="text-xs text-gray-500 hover:text-gray-300 inline-flex items-center gap-1.5 transition"
+          >
+            <RotateCcw size={12} />
+            New chat
+          </button>
+        </div>
       </div>
 
       {/* Messages */}

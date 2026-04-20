@@ -1996,6 +1996,7 @@ class ChatBody(BaseModel):
     message: str
     space_id: Optional[str] = None
     session_id: Optional[str] = None
+    tier: Optional[str] = None
 
 
 _CHAT_SYSTEM_PROMPT = """\
@@ -2118,13 +2119,14 @@ async def chat(body: ChatBody):
 
     system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context)
 
-    # Resolve the "max" pi alias for model selection
+    # Resolve the pi alias for model selection (tier defaults to "max")
     from ..config import resolve_alias, KNOWN_LLM_PROVIDERS
     from ..db.database import get_session as _get_db_session
     chat_model = ""
+    tier = body.tier or "max"
     try:
         _db = _get_db_session()
-        chat_agent, chat_model = resolve_alias(_db, "pi", "max")
+        chat_agent, chat_model = resolve_alias(_db, "pi", tier)
         if chat_agent in KNOWN_LLM_PROVIDERS:
             if "/" not in chat_model:
                 chat_model = f"{chat_agent}/{chat_model}"
@@ -2167,6 +2169,7 @@ async def chat(body: ChatBody):
     )
 
     async def stream():
+        total_cost = 0.0
         try:
             assert proc.stdout is not None
             buf = b""
@@ -2194,13 +2197,21 @@ async def chat(body: ChatBody):
                                 yield f"data: {json.dumps({'type': 'text_delta', 'text': delta})}\n\n"
                         elif ame_type == "thinking_start":
                             yield f"data: {json.dumps({'type': 'thinking'})}\n\n"
+                    elif ev_type == "message_end":
+                        msg = ev.get("message", {})
+                        usage = msg.get("usage", {})
+                        cost = usage.get("cost", {})
+                        total_cost += cost.get("total", 0) or 0
             await proc.wait()
         except asyncio.CancelledError:
             if proc.returncode is None:
                 proc.terminate()
                 await proc.wait()
             raise
-        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+        done_payload: dict = {"type": "done", "session_id": session_id}
+        if total_cost > 0:
+            done_payload["cost_usd"] = round(total_cost, 6)
+        yield f"data: {json.dumps(done_payload)}\n\n"
 
     return StreamingResponse(
         stream(),

@@ -268,4 +268,4 @@ export interface LogEntry {
 export type ChatEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking" }
-  | { type: "done"; session_id: string };
+  | { type: "done"; session_id: string; cost_usd?: number };
