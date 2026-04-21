@@ -122,13 +122,28 @@ class PiExecutor(StepExecutor):
             try:
                 log = Path(ctx.log_path)
                 if log.exists() and log.stat().st_size > 0:
-                    tail = log.read_bytes()[-262144:]
+                    size = log.stat().st_size
+                    # Read last 1MB to handle large agent_end events
+                    tail = log.read_bytes()[-1_048_576:]
                     if b'"type":"agent_end"' in tail:
                         logger.info("Pi finished but process still alive — killing")
                         AgentService.kill_agent(
                             str(ctx.working_path), run_id=ctx.run_id, flow_name=ctx.flow_name,
                         )
                         return False
+                    # If log hasn't grown in 60s and is large, agent is likely
+                    # done but agent_end was truncated — kill to unblock.
+                    if size > 1_048_576:
+                        mtime = log.stat().st_mtime
+                        if (__import__("time").time() - mtime) > 60:
+                            logger.warning(
+                                "Pi log stale for >60s and agent_end not found — killing (size=%d)",
+                                size,
+                            )
+                            AgentService.kill_agent(
+                                str(ctx.working_path), run_id=ctx.run_id, flow_name=ctx.flow_name,
+                            )
+                            return False
             except Exception:
                 pass
         return True

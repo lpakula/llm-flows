@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmflows"
-version = "0.9.10"
+version = "0.9.11"
 description = "Agentic workflow orchestrator with kanban UI"
 readme = "README.md"
 requires-python = ">=3.11"
