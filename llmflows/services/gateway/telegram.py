@@ -288,6 +288,7 @@ class TelegramBot:
                 return
 
             now = datetime.now(timezone.utc)
+            sent = 0
 
             for item in items:
                 space = session.query(SpaceModel).filter_by(id=item.space_id).first()
@@ -312,10 +313,12 @@ class TelegramBot:
                         text, parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(buttons),
                     )
+                    sent += 1
 
                 elif item.type == "completed_run":
                     run = session.query(FlowRun).filter_by(id=item.reference_id).first()
                     if not run:
+                        run_svc.archive_inbox_item(item.id)
                         continue
                     flow_name = run.flow_name or "?"
                     outcome = run.outcome or "completed"
@@ -343,6 +346,10 @@ class TelegramBot:
                         text, parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(buttons),
                     )
+                    sent += 1
+
+            if not sent:
+                await update.message.reply_text("Inbox is empty.")
         finally:
             session.close()
 
