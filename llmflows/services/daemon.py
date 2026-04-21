@@ -753,8 +753,11 @@ class Daemon:
             run_svc.session.commit()
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
+        space_root = Path(space.path)
+        flow_dir = ContextService.get_flow_dir(space_root, flow_name)
         step_vars = self._build_step_vars({
             "run.id": run.id, "flow.name": flow_name,
+            "flow_dir": str(flow_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         steps = self._get_snapshot_steps(run)
