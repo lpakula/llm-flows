@@ -8,8 +8,25 @@ import asyncio
 import logging
 import re
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
+from ..context import ContextService
+from ..flow import FlowService
+from ..run import RunService
+from ..space import SpaceService
+
+try:
+    from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import (
+        Application, CallbackQueryHandler, CommandHandler,
+        MessageHandler, filters,
+    )
+    from telegram.request import HTTPXRequest
+except ImportError:
+    BotCommand = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger("llmflows.telegram")
 
@@ -83,8 +100,7 @@ def _to_telegram_html(text: str) -> str:
 def _format_elapsed(start, now) -> str:
     if not start:
         return ""
-    from datetime import timezone as _tz
-    s = start if start.tzinfo else start.replace(tzinfo=_tz.utc)
+    s = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
     secs = int((now - s).total_seconds())
     if secs < 60:
         return f"{secs}s"
@@ -128,11 +144,7 @@ class TelegramBot:
         logger.info("Telegram bot stopped")
 
     def _run(self) -> None:
-        try:
-            from telegram.ext import (
-                Application, MessageHandler, CallbackQueryHandler, filters,
-            )
-        except ImportError:
+        if BotCommand is None:
             logger.error(
                 "python-telegram-bot is not installed. "
                 "Install it with: pip install 'python-telegram-bot>=20'"
@@ -142,7 +154,6 @@ class TelegramBot:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
-        from telegram.request import HTTPXRequest
         request = HTTPXRequest(
             connect_timeout=10,
             read_timeout=35,
@@ -155,7 +166,6 @@ class TelegramBot:
             .build()
         )
 
-        from telegram.ext import CommandHandler
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
@@ -183,7 +193,6 @@ class TelegramBot:
             self._loop.close()
 
     async def _register_commands(self) -> None:
-        from telegram import BotCommand
         await self._app.bot.set_my_commands([
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
@@ -204,9 +213,6 @@ class TelegramBot:
         if not self._is_allowed(chat_id):
             return
         self._active_chats.add(chat_id)
-
-        from ..space import SpaceService
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         session = self.session_factory()
         try:
@@ -232,10 +238,6 @@ class TelegramBot:
         if not self._is_allowed(chat_id):
             return
         self._active_chats.add(chat_id)
-
-        from ..space import SpaceService
-        from ..run import RunService
-        from datetime import datetime, timezone
 
         session = self.session_factory()
         try:
@@ -277,10 +279,6 @@ class TelegramBot:
             return
         self._active_chats.add(chat_id)
 
-        from ..run import RunService
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        from datetime import datetime, timezone
-
         session = self.session_factory()
         try:
             run_svc = RunService(session)
@@ -289,7 +287,6 @@ class TelegramBot:
                 await update.message.reply_text("Inbox is empty.")
                 return
 
-            from ..db.models import StepRun, FlowRun, Space as SpaceModel
             now = datetime.now(timezone.utc)
 
             for item in items:
@@ -383,7 +380,6 @@ class TelegramBot:
 
         response_text = update.message.text or ""
 
-        from ..run import RunService
         session = self.session_factory()
         try:
             run_svc = RunService(session)
@@ -438,7 +434,6 @@ class TelegramBot:
 
         elif data.startswith("complete:"):
             step_run_id = data[len("complete:"):]
-            from ..run import RunService
             session = self.session_factory()
             try:
                 run_svc = RunService(session)
@@ -453,7 +448,6 @@ class TelegramBot:
 
         elif data.startswith("dismiss:"):
             inbox_id = data[len("dismiss:"):]
-            from ..run import RunService
             session = self.session_factory()
             try:
                 run_svc = RunService(session)
@@ -475,10 +469,6 @@ class TelegramBot:
     # ── /run callback helpers ────────────────────────────────────────────────
 
     async def _cb_select_space(self, query, space_id: str) -> None:
-        from ..space import SpaceService
-        from ..flow import FlowService
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
         session = self.session_factory()
         try:
             space = SpaceService(session).get(space_id)
@@ -502,9 +492,6 @@ class TelegramBot:
             session.close()
 
     async def _cb_enqueue_run(self, query, payload: str) -> None:
-        from ..run import RunService
-        from ..flow import FlowService
-
         parts = payload.split(":", 1)
         if len(parts) != 2:
             await query.edit_message_text("Invalid selection.")
@@ -513,8 +500,7 @@ class TelegramBot:
 
         session = self.session_factory()
         try:
-            flow_svc = FlowService(session)
-            flow = flow_svc.get(flow_id)
+            flow = FlowService(session).get(flow_id)
             if not flow:
                 await query.edit_message_text("Flow not found.")
                 return
@@ -531,15 +517,9 @@ class TelegramBot:
     # ── /inbox detail callback ─────────────────────────────────────────────
 
     async def _cb_inbox_detail(self, query, inbox_id: str) -> None:
-        from ..run import RunService
-        from ..context import ContextService
-        from ..db.models import StepRun, FlowRun, Space as SpaceModel
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
         session = self.session_factory()
         try:
             run_svc = RunService(session)
-            from ..db.models import InboxItem
             item = session.query(InboxItem).filter_by(id=inbox_id).first()
             if not item:
                 await query.edit_message_text("Inbox item not found.")
@@ -645,7 +625,7 @@ class TelegramBot:
             except Exception:
                 logger.warning("Failed to send notification to chat %s", chat_id)
 
-    async def _send_message_safe(self, chat_id: int, text: str, markup=None) -> "Any":
+    async def _send_message_safe(self, chat_id: int, text: str, markup=None) -> Any:
         """Send a message with HTML, falling back to plain text on failure."""
         try:
             return await self._app.bot.send_message(
@@ -655,8 +635,7 @@ class TelegramBot:
         except Exception:
             logger.debug("HTML send failed, retrying as plain text", exc_info=True)
         try:
-            import re as _re
-            plain = _re.sub(r"<[^>]+>", "", text)
+            plain = re.sub(r"<[^>]+>", "", text)
             return await self._app.bot.send_message(
                 chat_id=chat_id, text=plain, reply_markup=markup,
             )
@@ -669,20 +648,13 @@ class TelegramBot:
         step_run_id = payload.get("step_run_id")
 
         markup = None
-        try:
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            buttons = []
-
-            if event == "step.awaiting_user" and step_run_id:
-                buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
-
-            if inbox_id:
-                buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
-
-            if buttons:
-                markup = InlineKeyboardMarkup([buttons])
-        except ImportError:
-            pass
+        buttons = []
+        if event == "step.awaiting_user" and step_run_id:
+            buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
+        if inbox_id:
+            buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
+        if buttons:
+            markup = InlineKeyboardMarkup([buttons])
 
         att_files: list[Path] = []
         if event == "run.completed":
