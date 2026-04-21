@@ -224,6 +224,7 @@ async def update_gateway_config(body: GatewayConfigBody):
         sl["allowed_channel_ids"] = body.slack_allowed_channel_ids
 
     save_system_config(config)
+    _signal_gateway_restart()
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
@@ -235,20 +236,27 @@ async def update_gateway_config(body: GatewayConfigBody):
     }
 
 
-@app.post("/api/gateway/restart")
-async def restart_gateway():
-    """Signal the daemon to restart all gateway channels."""
+def _signal_gateway_restart() -> bool:
+    """Send SIGUSR1 to the daemon to restart gateway channels. Returns True on success."""
     from ..services.daemon import read_pid_file
     import signal as sig
     pid = read_pid_file()
     if pid is None:
-        raise HTTPException(status_code=400, detail="Daemon is not running")
+        return False
     try:
         import os
         os.kill(pid, sig.SIGUSR1)
-        return {"ok": True, "message": "Gateway restart signal sent"}
-    except ProcessLookupError:
-        raise HTTPException(status_code=400, detail="Daemon process not found")
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+@app.post("/api/gateway/restart")
+async def restart_gateway():
+    """Signal the daemon to restart all gateway channels."""
+    if not _signal_gateway_restart():
+        raise HTTPException(status_code=400, detail="Daemon is not running or not reachable")
+    return {"ok": True, "message": "Gateway restart signal sent"}
 
 
 TOOL_REGISTRY: list[dict] = [

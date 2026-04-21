@@ -158,6 +158,7 @@ class TelegramBot:
         from telegram.ext import CommandHandler
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
+        app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
         app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -186,6 +187,7 @@ class TelegramBot:
         await self._app.bot.set_my_commands([
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
+            BotCommand("inbox", "Show inbox items"),
             BotCommand("help", "Show commands & chat ID"),
         ])
         logger.info("Telegram bot commands registered")
@@ -267,6 +269,86 @@ class TelegramBot:
         finally:
             session.close()
 
+    # ── /inbox command — list inbox items ────────────────────────────────────
+
+    async def _handle_inbox_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        from ..run import RunService
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from datetime import datetime, timezone
+
+        session = self.session_factory()
+        try:
+            run_svc = RunService(session)
+            items = run_svc.list_inbox()
+            if not items:
+                await update.message.reply_text("Inbox is empty.")
+                return
+
+            from ..db.models import StepRun, FlowRun, Space as SpaceModel
+            now = datetime.now(timezone.utc)
+
+            for item in items:
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                space_name = space.name if space else "?"
+
+                if item.type == "awaiting_user":
+                    sr = session.query(StepRun).filter_by(id=item.reference_id).first()
+                    if not sr or sr.completed_at:
+                        run_svc.archive_inbox_item(item.id)
+                        continue
+                    run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
+                    flow_name = (run.flow_name if run else None) or "?"
+                    waited = _format_elapsed(sr.awaiting_user_at or item.created_at, now)
+                    text = f"⏳ <b>{flow_name}</b> — {sr.step_name}\n<i>{space_name}</i> · waiting {waited}"
+                    buttons = [
+                        [
+                            InlineKeyboardButton("Details", callback_data=f"inbox_detail:{item.id}"),
+                            InlineKeyboardButton("Respond", callback_data=f"respond:{sr.id}"),
+                        ],
+                    ]
+                    await update.message.reply_text(
+                        text, parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(buttons),
+                    )
+
+                elif item.type == "completed_run":
+                    run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                    if not run:
+                        continue
+                    flow_name = run.flow_name or "?"
+                    outcome = run.outcome or "completed"
+                    emoji = "✅" if outcome == "completed" else "❌"
+                    meta: list[str] = []
+                    if run.duration_seconds is not None:
+                        secs = int(run.duration_seconds)
+                        if secs < 60:
+                            meta.append(f"{secs}s")
+                        elif secs < 3600:
+                            meta.append(f"{secs // 60}m")
+                        else:
+                            meta.append(f"{secs // 3600}h{(secs % 3600) // 60}m")
+                    if run.cost_usd is not None:
+                        meta.append(f"${run.cost_usd:.4f}")
+                    meta_str = f"  ({' · '.join(meta)})" if meta else ""
+                    text = f"{emoji} <b>{flow_name}</b> — {outcome}{meta_str}\n<i>{space_name}</i>"
+                    buttons = [
+                        [
+                            InlineKeyboardButton("Details", callback_data=f"inbox_detail:{item.id}"),
+                            InlineKeyboardButton("Archive", callback_data=f"dismiss:{item.id}"),
+                        ],
+                    ]
+                    await update.message.reply_text(
+                        text, parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(buttons),
+                    )
+        finally:
+            session.close()
+
     # ── /help — show commands and chat ID ───────────────────────────────────
 
     async def _handle_help_command(self, update, context) -> None:
@@ -278,6 +360,7 @@ class TelegramBot:
             f"<b>Commands:</b>\n"
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
+            f"/inbox — Show inbox items\n"
             f"/help — Show this message",
             parse_mode="HTML",
         )
@@ -341,6 +424,10 @@ class TelegramBot:
             await self._cb_enqueue_run(query, data[len("run:"):])
             return
 
+        if data.startswith("inbox_detail:"):
+            await self._cb_inbox_detail(query, data[len("inbox_detail:"):])
+            return
+
         if data.startswith("respond:"):
             step_run_id = data[len("respond:"):]
             self._awaiting_response[chat_id] = step_run_id
@@ -372,7 +459,7 @@ class TelegramBot:
                 run_svc = RunService(session)
                 run_svc.archive_inbox_item(inbox_id)
                 try:
-                    await query.edit_message_text("Dismissed.")
+                    await query.edit_message_text("Archived.")
                 except Exception:
                     await query.edit_message_reply_markup(reply_markup=None)
             finally:
@@ -441,6 +528,103 @@ class TelegramBot:
         finally:
             session.close()
 
+    # ── /inbox detail callback ─────────────────────────────────────────────
+
+    async def _cb_inbox_detail(self, query, inbox_id: str) -> None:
+        from ..run import RunService
+        from ..context import ContextService
+        from ..db.models import StepRun, FlowRun, Space as SpaceModel
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        session = self.session_factory()
+        try:
+            run_svc = RunService(session)
+            from ..db.models import InboxItem
+            item = session.query(InboxItem).filter_by(id=inbox_id).first()
+            if not item:
+                await query.edit_message_text("Inbox item not found.")
+                return
+
+            space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+
+            if item.type == "awaiting_user":
+                sr = session.query(StepRun).filter_by(id=item.reference_id).first()
+                if not sr or sr.completed_at:
+                    run_svc.archive_inbox_item(item.id)
+                    await query.edit_message_text("This step has already been completed.")
+                    return
+                run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
+                flow_name = (run.flow_name if run else None) or "?"
+
+                user_message = ""
+                if space:
+                    try:
+                        artifacts_dir = ContextService.get_artifacts_dir(
+                            Path(space.path), run.id, run.flow_name or "",
+                        )
+                        result_file = artifacts_dir / ContextService.step_dir_name(
+                            sr.step_position, sr.step_name,
+                        ) / "_result.md"
+                        if result_file.exists():
+                            user_message = result_file.read_text().strip()
+                    except (PermissionError, OSError):
+                        pass
+
+                text = f"<b>{flow_name}</b> — {sr.step_name}\n"
+                if user_message:
+                    detail_html = _to_telegram_html(user_message)
+                    text += f"\n{detail_html}"
+                else:
+                    text += "\n<i>No message from this step.</i>"
+
+                buttons = [
+                    [
+                        InlineKeyboardButton("Respond", callback_data=f"respond:{sr.id}"),
+                        InlineKeyboardButton("Complete", callback_data=f"complete:{sr.id}"),
+                    ],
+                ]
+                for chunk in _split_message(text):
+                    await self._send_message_safe(query.message.chat_id, chunk)
+                await query.message.reply_text(
+                    "Actions:",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+
+            elif item.type == "completed_run":
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                if not run:
+                    await query.edit_message_text("Run not found.")
+                    return
+                flow_name = run.flow_name or "?"
+                outcome = run.outcome or "completed"
+
+                text = f"<b>{flow_name}</b> — {outcome}\n"
+                if run.summary:
+                    summary_html = _to_telegram_html(run.summary)
+                    text += f"\n{summary_html}"
+                else:
+                    text += "\n<i>No summary available.</i>"
+
+                buttons = [
+                    [InlineKeyboardButton("Archive", callback_data=f"dismiss:{item.id}")],
+                ]
+                for chunk in _split_message(text):
+                    await self._send_message_safe(query.message.chat_id, chunk)
+                await query.message.reply_text(
+                    "Actions:",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+        finally:
+            session.close()
+
     # ── NotificationChannel interface ────────────────────────────────────────
 
     def send(self, event: str, payload: dict[str, Any]) -> None:
@@ -461,10 +645,28 @@ class TelegramBot:
             except Exception:
                 logger.warning("Failed to send notification to chat %s", chat_id)
 
+    async def _send_message_safe(self, chat_id: int, text: str, markup=None) -> "Any":
+        """Send a message with HTML, falling back to plain text on failure."""
+        try:
+            return await self._app.bot.send_message(
+                chat_id=chat_id, text=text,
+                parse_mode="HTML", reply_markup=markup,
+            )
+        except Exception:
+            logger.debug("HTML send failed, retrying as plain text", exc_info=True)
+        try:
+            import re as _re
+            plain = _re.sub(r"<[^>]+>", "", text)
+            return await self._app.bot.send_message(
+                chat_id=chat_id, text=plain, reply_markup=markup,
+            )
+        except Exception:
+            logger.warning("Failed to send message to chat %s", chat_id, exc_info=True)
+            return None
+
     async def _send_notification(self, chat_id: int, text: str, event: str, payload: dict) -> None:
         inbox_id = payload.get("inbox_id")
         step_run_id = payload.get("step_run_id")
-        step_type = payload.get("step_type", "agent")
 
         markup = None
         try:
@@ -488,22 +690,32 @@ class TelegramBot:
             if run_id:
                 att_dir = Path.home() / ".llmflows" / "attachments" / run_id
                 if att_dir.is_dir():
-                    for f in sorted(att_dir.iterdir()):
-                        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-                            size_mb = f.stat().st_size / (1024 * 1024)
-                            if size_mb <= 10:
-                                att_files.append(f)
+                    try:
+                        for f in sorted(att_dir.iterdir()):
+                            if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                                size_mb = f.stat().st_size / (1024 * 1024)
+                                if size_mb <= 10:
+                                    att_files.append(f)
+                    except OSError:
+                        logger.debug("Error reading attachments dir %s", att_dir, exc_info=True)
 
         html = _to_telegram_html(text)
-        text_msg = await self._app.bot.send_message(
-            chat_id=chat_id,
-            text=html,
-            parse_mode="HTML",
-            reply_markup=markup if not att_files else None,
-        )
+        chunks = _split_message(html)
+
+        last_text_msg = None
+        for i, chunk in enumerate(chunks):
+            is_last_chunk = i == len(chunks) - 1
+            chunk_markup = markup if is_last_chunk and not att_files else None
+            msg = await self._send_message_safe(chat_id, chunk, chunk_markup)
+            if msg:
+                last_text_msg = msg
+            else:
+                return
 
         if att_files:
-            photo_msgs: list[tuple[int, int]] = [(chat_id, text_msg.message_id)]
+            photo_msgs: list[tuple[int, int]] = []
+            if last_text_msg:
+                photo_msgs.append((chat_id, last_text_msg.message_id))
             for i, f in enumerate(att_files):
                 is_last = i == len(att_files) - 1
                 last_markup = markup if is_last else None
