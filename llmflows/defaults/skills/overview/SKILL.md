@@ -121,8 +121,9 @@ This is where automation meets human judgment.
 Tools extend what agents can do during runs. Currently available:
 
 - **Web Search** — gives Pi agents `web_search` and `web_fetch` capabilities. Supports DuckDuckGo (free) and Brave (API key required)
+- **Browser** — gives Pi agents control over a real Chromium browser (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_screenshot`). The daemon manages one browser session per run so the browser persists across all steps — login state, cookies, and open pages carry over between steps, including across `hitl` pauses. This enables multi-step patterns like: step 1 opens a page and enters credentials → step 2 (`hitl`) asks the user for an MFA code → step 3 submits the code and continues in the authenticated session
 
-Enable tools in Settings > Tools.
+Enable tools in Settings > Tools. Flows declare needed tools in `requirements.tools`.
 
 ---
 

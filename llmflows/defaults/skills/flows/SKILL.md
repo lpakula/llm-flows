@@ -462,8 +462,9 @@ The agent then uses ref numbers to interact: `browser_fill(ref=1, value="user@ex
 - **Always start with `browser_navigate`** to go to the target URL — the agent gets a snapshot automatically
 - **Use `browser_snapshot`** after actions that change the page (navigation, form submissions) to see the updated state
 - **Use `browser_screenshot`** to capture visual confirmation and save to artifacts (useful for gates and for `hitl` steps where the user needs to see the page)
-- **Browser state persists across steps** — if step 1 logs in, step 2 sees the authenticated session
-- **`hitl` steps work naturally with browser** — the browser stays alive while waiting for user input (e.g., MFA codes)
+- **Browser state persists across steps** — if step 1 logs in, step 2 sees the authenticated session. The daemon manages one browser server per run and each step's agent connects to it, so the same browser window, cookies, localStorage, and page state carry over from one step to the next
+- **`hitl` steps work naturally with browser** — the browser stays alive while waiting for user input. This is a key design pattern: use one step to navigate to a page, a `hitl` step to ask the user for input (e.g., MFA code, CAPTCHA, manual approval), then continue in a subsequent step with the same browser session. The user never needs to re-login or re-navigate
+- **Split browser workflows across steps** — don't try to do everything in one step. Use separate steps for navigation/login, user interaction (`hitl`), and the actual task. Each step connects to the same running browser automatically
 
 ### Browser flow requirements
 
