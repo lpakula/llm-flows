@@ -33,6 +33,11 @@ async function ensurePage(): Promise<Page> {
   if (!WS_ENDPOINT) throw new Error("BROWSER_WS_ENDPOINT is not set.");
   if (!browser) {
     browser = await chromium.connectOverCDP(WS_ENDPOINT);
+    for (const ctx of browser.contexts()) {
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      });
+    }
   }
   if (!page || page.isClosed()) {
     const contexts = browser.contexts();
@@ -40,6 +45,9 @@ async function ensurePage(): Promise<Page> {
       page = contexts[0].pages()[0];
     } else {
       const ctx = contexts.length > 0 ? contexts[0] : await browser.newContext();
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      });
       page = await ctx.newPage();
     }
   }

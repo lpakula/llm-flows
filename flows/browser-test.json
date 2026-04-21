@@ -3,31 +3,31 @@
   "flows": [
     {
       "name": "browser-test",
-      "description": "Test browser automation: navigate to a page, pause for user review, then click a navigation link.",
+      "description": "Open the Google login page, wait for the user to log in, then navigate to Gmail.",
       "requirements": {
         "tools": ["browser"]
       },
       "steps": [
         {
-          "name": "Navigate to page",
+          "name": "Open Google login",
           "position": 0,
-          "content": "# NAVIGATE TO PAGE\n\n## PURPOSE\n\nOpen the Anthropic Claude Opus 4.7 announcement page in the browser and capture its content.\n\n## TOOLS\n\nUse ONLY the browser_* tools. Do NOT use shell commands, curl, python, or web_fetch.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://www.anthropic.com/news/claude-opus-4-7\n2. Use `browser_snapshot` to see the full page structure\n3. Take a `browser_screenshot` and save as `{{artifacts_dir}}/page.png`\n4. Write to `{{artifacts_dir}}/_result.md` (using the snapshot output from step 2):\n   - The page title and URL\n   - A summary of what's visible on the page (headline, key content)\n   - List all navigation links visible in the header with their ref numbers",
+          "content": "# OPEN GOOGLE LOGIN PAGE\n\n## PURPOSE\n\nOpen the Google account login page so the user can sign in.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://accounts.google.com\n2. Use `browser_snapshot` to see the page structure\n3. Take a `browser_screenshot` and save as `{{artifacts_dir}}/login-page.png`\n4. Write to `{{artifacts_dir}}/_result.md`:\n   - The page URL\n   - Confirm the Google login page is displayed\n   - Note that the user needs to log in manually in the browser window",
           "gates": [
-            {"command": "test -f {{artifacts_dir}}/page.png", "message": "Screenshot of the page must exist."}
+            {"command": "test -f {{artifacts_dir}}/login-page.png", "message": "Screenshot of the login page must exist."}
           ]
         },
         {
-          "name": "Review page",
+          "name": "Wait for login",
           "position": 1,
           "step_type": "hitl",
-          "content": "# REVIEW PAGE\n\n## PURPOSE\n\nPause for the user to confirm the page loaded correctly before continuing.\n\n## WORKFLOW\n\n1. Read the previous step's result from `{{artifacts_dir}}/../00-navigate-to-page/_result.md`\n2. Write to `{{artifacts_dir}}/_result.md`:\n   - Summarize what the previous step found (page title, URL, key content)\n   - Ask: \"The page is loaded. I'll click the 'News' link next. Type 'go' to continue.\""
+          "content": "# WAIT FOR USER LOGIN\n\n## PURPOSE\n\nPause and wait for the user to complete the Google login in the browser window.\n\n## WORKFLOW\n\n1. Write to `{{artifacts_dir}}/_result.md`:\n   - Tell the user: \"The Google login page is open in the browser window. Please log in to your Google account there. Once you're logged in, type 'done' to continue to Gmail.\""
         },
         {
-          "name": "Click News link",
+          "name": "Navigate to Gmail",
           "position": 2,
-          "content": "# CLICK NEWS LINK\n\n## PURPOSE\n\nClick the \"News\" link in the header navigation and capture the resulting page.\n\n## TOOLS\n\nUse ONLY the browser_* tools. Do NOT use shell commands, curl, python, or web_fetch.\n\n## WORKFLOW\n\n1. Use `browser_snapshot` to find the \"News\" link in the header navigation\n2. Use `browser_click` with the ref number of the \"News\" link\n3. Wait for the page to load, then take a `browser_snapshot`\n4. Take a `browser_screenshot` and save as `{{artifacts_dir}}/news-page.png`\n5. Write to `{{artifacts_dir}}/_result.md` (using the snapshot output from step 3):\n   - Confirm the navigation to the News page succeeded\n   - The new page URL and title\n   - List the first few news article headlines visible on the page",
+          "content": "# NAVIGATE TO GMAIL\n\n## PURPOSE\n\nAfter the user has logged in, navigate to Gmail and confirm it loaded.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://mail.google.com\n2. Wait a moment for the page to load fully\n3. Use `browser_snapshot` to verify Gmail is showing the inbox\n4. Take a `browser_screenshot` and save as `{{artifacts_dir}}/gmail.png`\n5. Write to `{{artifacts_dir}}/_result.md`:\n   - The page URL\n   - Confirm Gmail loaded successfully\n   - Note the account name or email visible on the page if any\n   - List any visible inbox items or UI elements",
           "gates": [
-            {"command": "test -f {{artifacts_dir}}/news-page.png", "message": "Screenshot of the News page must exist."}
+            {"command": "test -f {{artifacts_dir}}/gmail.png", "message": "Screenshot of Gmail must exist."}
           ]
         }
       ]

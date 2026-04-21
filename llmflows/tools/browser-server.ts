@@ -38,6 +38,8 @@ async function main() {
   const args = [
     "--no-first-run",
     "--disable-gpu",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
     "--remote-debugging-port=0",
   ];
   if (headless) {
