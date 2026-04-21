@@ -452,19 +452,24 @@ class TelegramBot:
             try:
                 run_svc = RunService(session)
                 run_svc.archive_inbox_item(inbox_id)
-                try:
-                    await query.edit_message_text("Archived.")
-                except Exception:
-                    await query.edit_message_reply_markup(reply_markup=None)
             finally:
                 session.close()
 
-            photo_msgs = self._notification_photos.pop(inbox_id, [])
-            for cid, message_id in photo_msgs:
+            tracked = self._notification_photos.pop(inbox_id, [])
+            try:
+                await self._app.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+            except Exception:
+                try:
+                    await query.edit_message_text("Archived.")
+                except Exception:
+                    pass
+            for cid, message_id in tracked:
+                if message_id == query.message.message_id:
+                    continue
                 try:
                     await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
                 except Exception:
-                    logger.debug("Failed to delete attachment message %s", message_id)
+                    logger.debug("Failed to delete message %s", message_id)
 
     # ── /run callback helpers ────────────────────────────────────────────────
 
@@ -517,6 +522,7 @@ class TelegramBot:
     # ── /inbox detail callback ─────────────────────────────────────────────
 
     async def _cb_inbox_detail(self, query, inbox_id: str) -> None:
+        chat_id = query.message.chat_id
         session = self.session_factory()
         try:
             run_svc = RunService(session)
@@ -557,18 +563,14 @@ class TelegramBot:
                 else:
                     text += "\n<i>No message from this step.</i>"
 
-                buttons = [
+                markup = InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton("Respond", callback_data=f"respond:{sr.id}"),
                         InlineKeyboardButton("Complete", callback_data=f"complete:{sr.id}"),
                     ],
-                ]
-                for chunk in _split_message(text):
-                    await self._send_message_safe(query.message.chat_id, chunk)
-                await query.message.reply_text(
-                    "Actions:",
-                    reply_markup=InlineKeyboardMarkup(buttons),
-                )
+                ])
+                sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
+                self._notification_photos[inbox_id] = sent_ids
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
@@ -589,21 +591,30 @@ class TelegramBot:
                 else:
                     text += "\n<i>No summary available.</i>"
 
-                buttons = [
-                    [InlineKeyboardButton("Archive", callback_data=f"dismiss:{item.id}")],
-                ]
-                for chunk in _split_message(text):
-                    await self._send_message_safe(query.message.chat_id, chunk)
-                await query.message.reply_text(
-                    "Actions:",
-                    reply_markup=InlineKeyboardMarkup(buttons),
-                )
+                markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Archive", callback_data=f"dismiss:{inbox_id}")],
+                ])
+                sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
+                self._notification_photos[inbox_id] = sent_ids
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
                     pass
         finally:
             session.close()
+
+    async def _send_detail_chunks(
+        self, chat_id: int, text: str, markup, inbox_id: str,
+    ) -> list[tuple[int, int]]:
+        """Send detail text in chunks, attaching markup to the last one. Returns sent message IDs."""
+        chunks = _split_message(text)
+        sent: list[tuple[int, int]] = []
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            msg = await self._send_message_safe(chat_id, chunk, markup if is_last else None)
+            if msg:
+                sent.append((chat_id, msg.message_id))
+        return sent
 
     # ── NotificationChannel interface ────────────────────────────────────────
 
