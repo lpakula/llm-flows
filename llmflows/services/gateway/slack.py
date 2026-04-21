@@ -414,7 +414,7 @@ class SlackChannel:
                 att_dir = Path.home() / ".llmflows" / "attachments" / run_id
                 if att_dir.is_dir():
                     for f in sorted(att_dir.iterdir()):
-                        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                        if f.is_file():
                             size_mb = f.stat().st_size / (1024 * 1024)
                             if size_mb <= 10:
                                 try:

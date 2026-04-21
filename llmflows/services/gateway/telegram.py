@@ -682,7 +682,7 @@ class TelegramBot:
                 if att_dir.is_dir():
                     try:
                         for f in sorted(att_dir.iterdir()):
-                            if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                            if f.is_file():
                                 size_mb = f.stat().st_size / (1024 * 1024)
                                 if size_mb <= 10:
                                     att_files.append(f)
@@ -706,13 +706,20 @@ class TelegramBot:
             photo_msgs: list[tuple[int, int]] = []
             if last_text_msg:
                 photo_msgs.append((chat_id, last_text_msg.message_id))
+            _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+            _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".wav", ".flac"}
             for i, f in enumerate(att_files):
                 is_last = i == len(att_files) - 1
                 last_markup = markup if is_last else None
                 try:
-                    size_mb = f.stat().st_size / (1024 * 1024)
+                    ext = f.suffix.lower()
                     msg = None
-                    if size_mb <= 5:
+                    if ext in _AUDIO_EXTS:
+                        msg = await self._app.bot.send_audio(
+                            chat_id=chat_id, audio=open(f, "rb"),
+                            caption=f.name, reply_markup=last_markup,
+                        )
+                    elif ext in _IMAGE_EXTS and f.stat().st_size / (1024 * 1024) <= 5:
                         msg = await self._app.bot.send_photo(
                             chat_id=chat_id, photo=open(f, "rb"),
                             caption=f.name, reply_markup=last_markup,
