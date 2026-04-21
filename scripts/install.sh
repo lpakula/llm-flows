@@ -606,15 +606,8 @@ install_node_tools() {
         return 1
     fi
 
-    log_info "Downloading Chromium browser..."
-    if run_quiet_step "Downloading Chromium" "$tools_dir/node_modules/.bin/playwright" install chromium; then
-        log_success "Chromium browser downloaded"
-        return 0
-    fi
-
-    log_warning "Failed to download Chromium — browser tools may not work"
-    log_muted "  Run manually: ~/.llmflows/node_modules/.bin/playwright install chromium"
-    return 1
+    log_success "Browser tools ready (uses system Chrome by default)"
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -830,7 +823,7 @@ main() {
         echo "    [3/7] Install llmflows (includes telegram + slack)"
         echo "    [4/7] Check / install Node.js ${MIN_NODE_MAJOR}+"
         echo "    [5/7] Install Pi agent (npm: ${PI_NPM_PACKAGE})"
-        echo "    [6/7] Set up browser tools (Playwright, Chromium)"
+        echo "    [6/7] Set up browser tools (Playwright libs, uses system Chrome)"
         echo "    [7/7] Verify installation"
         echo ""
         log_success "Dry run complete (no changes made)"

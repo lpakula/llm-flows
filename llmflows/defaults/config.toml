@@ -11,7 +11,8 @@ enabled = true
 provider = "duckduckgo"
 [browser]
 enabled = false
-headless = true
+headless = false
+user_data_dir = "~/.llmflows/browser-profile"
 [channels.telegram]
 enabled = false
 bot_token = ""

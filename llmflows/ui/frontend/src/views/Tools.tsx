@@ -104,8 +104,16 @@ function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConf
         </button>
       </div>
 
-      {tool.enabled && expanded && tool.config_fields.length > 0 && (
+      {tool.enabled && expanded && (tool.config_fields.length > 0 || tool.info) && (
         <div className="border-t border-gray-800 p-4 space-y-4">
+          {tool.info && (
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                tool.info.status === "ok" ? "bg-green-400" : "bg-amber-400"
+              }`} />
+              <span className="text-xs text-gray-500 font-mono">{tool.info.text}</span>
+            </div>
+          )}
           {tool.config_fields.filter(isTopLevel).map((field) => (
             <div key={field.key}>
               <label className="text-xs font-medium text-gray-400 mb-1.5 block">

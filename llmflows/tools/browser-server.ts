@@ -1,5 +1,5 @@
 /**
- * Browser server: launches Chromium with CDP and keeps it alive.
+ * Browser server: launches Chrome with CDP and keeps it alive.
  *
  * Uses --remote-debugging-port so each step's Pi extension can connect
  * via connectOverCDP().  Unlike Playwright's own server protocol, CDP
@@ -9,16 +9,31 @@
  * Prints a WS_ENDPOINT line to stdout with the CDP WebSocket URL.
  *
  * Environment variables:
- *   BROWSER_HEADLESS  – "true" (default) or "false"
+ *   BROWSER_HEADLESS       – "true" (default) or "false"
+ *   BROWSER_USER_DATA_DIR  – persistent profile directory (empty = temp profile)
  */
 
-import { chromium } from "playwright";
 import { spawn, type ChildProcess } from "child_process";
+import { existsSync } from "fs";
 
 const headless = process.env.BROWSER_HEADLESS !== "false";
+const userDataDir = process.env.BROWSER_USER_DATA_DIR || "";
+
+const CHROME_PATHS = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+];
+
+function resolveChromePath(): string {
+  for (const p of CHROME_PATHS) {
+    if (existsSync(p)) return p;
+  }
+  throw new Error(`Google Chrome not found. Searched: ${CHROME_PATHS.join(", ")}`);
+}
 
 async function main() {
-  const execPath = chromium.executablePath();
+  const execPath = resolveChromePath();
 
   const args = [
     "--no-first-run",
@@ -28,6 +43,9 @@ async function main() {
   if (headless) {
     args.push("--headless=new");
   }
+  if (userDataDir) {
+    args.push(`--user-data-dir=${userDataDir}`);
+  }
 
   const proc: ChildProcess = spawn(execPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -35,7 +53,7 @@ async function main() {
 
   const cdpUrl = await new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error("Chromium did not print CDP endpoint within 15s"));
+      reject(new Error("Chrome did not print CDP endpoint within 15s"));
     }, 15_000);
 
     proc.stderr?.on("data", (data: Buffer) => {
@@ -49,7 +67,7 @@ async function main() {
 
     proc.on("exit", (code) => {
       clearTimeout(timeout);
-      reject(new Error(`Chromium exited with code ${code}`));
+      reject(new Error(`Chrome exited with code ${code}`));
     });
   });
 

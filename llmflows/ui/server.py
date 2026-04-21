@@ -303,8 +303,8 @@ TOOL_REGISTRY: list[dict] = [
     {
         "id": "browser",
         "name": "Browser",
-        "description": "Allow agents to control a real browser — navigate pages, click, fill forms, take screenshots. Requires Playwright.",
-        "defaults": {"headless": "true"},
+        "description": "Allow agents to control a real browser — navigate pages, click, fill forms, take screenshots. Requires Google Chrome.",
+        "defaults": {"headless": "false"},
         "config_fields": [
             {
                 "key": "headless",
@@ -320,18 +320,37 @@ TOOL_REGISTRY: list[dict] = [
 ]
 
 
+def _tool_info(tool_id: str) -> dict | None:
+    """Return {"text": ..., "status": "ok"|"warning"} or None."""
+    if tool_id == "browser":
+        from ..services.browser import find_chrome
+        path = find_chrome()
+        if path:
+            return {"text": f"Using {path}", "status": "ok"}
+        return {"text": "Google Chrome not found — install from https://google.com/chrome", "status": "warning"}
+    return None
+
+
 def _tool_response(tool_def: dict, config: dict) -> dict:
     tool_id = tool_def["id"]
     stored = config.get(tool_id, {})
     defaults = tool_def.get("defaults", {})
-    return {
+    resp: dict = {
         "id": tool_id,
         "name": tool_def["name"],
         "description": tool_def["description"],
         "enabled": stored.get("enabled", False),
-        "config": {k: stored.get(k, v) for k, v in defaults.items()},
+        "config": {
+            k: str(val).lower() if isinstance(val, bool) else val
+            for k, v in defaults.items()
+            for val in [stored.get(k, v)]
+        },
         "config_fields": tool_def.get("config_fields", []),
     }
+    info = _tool_info(tool_id)
+    if info:
+        resp["info"] = info
+    return resp
 
 
 @app.get("/api/config/tools")

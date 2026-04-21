@@ -907,8 +907,13 @@ class Daemon:
         browser_config = load_system_config().get("browser", {})
         if self._flow_requires_browser(run) and browser_config.get("enabled", False):
             headless = browser_config.get("headless", True)
+            user_data_dir = browser_config.get("user_data_dir", "~/.llmflows/browser-profile")
             try:
-                ws = self.browser_service.ensure_browser(run.id, headless=headless)
+                ws = self.browser_service.ensure_browser(
+                    run.id,
+                    headless=headless,
+                    user_data_dir=user_data_dir,
+                )
                 extra_env["BROWSER_WS_ENDPOINT"] = ws
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
             except Exception:
