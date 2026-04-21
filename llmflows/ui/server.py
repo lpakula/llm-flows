@@ -60,6 +60,7 @@ class StepCreate(BaseModel):
     allow_max: bool = False
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
+    tools: Optional[list[str]] = None
 
 
 class StepUpdate(BaseModel):
@@ -73,6 +74,7 @@ class StepUpdate(BaseModel):
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
     skills: Optional[list[str]] = None
+    tools: Optional[list[str]] = None
 
 
 class StepRespondBody(BaseModel):
@@ -1727,6 +1729,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
             skills=body.skills,
+            tools=body.tools,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1761,6 +1764,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["max_gate_retries"] = body.max_gate_retries
         if body.skills is not None:
             updates["skills"] = json.dumps(body.skills)
+        if body.tools is not None:
+            updates["tools"] = json.dumps(body.tools)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")

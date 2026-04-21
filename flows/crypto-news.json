@@ -4,14 +4,12 @@
     {
       "name": "crypto-news",
       "description": "Fetch the latest crypto news from CoinDesk, store each article, then summarize.",
-      "requirements": {
-        "tools": ["web_search"]
-      },
       "steps": [
         {
           "name": "Fetch articles",
           "position": 0,
           "agent_alias": "normal",
+          "tools": ["web_search"],
           "content": "# FETCH COINDESK ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles from CoinDesk and save each one as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load: https://www.coindesk.com/latest-crypto-news\n\n2. From the page, identify the first 5 news article links.\n\n3. For each article, use `web_fetch` to load the full article page and extract:\n   - Headline\n   - Author (if available)\n   - Publication date (if available)\n   - Full article text\n\n4. Save each article as a separate file in the artifacts directory:\n   - `{{run.dir}}/article-1.md`\n   - `{{run.dir}}/article-2.md`\n   - `{{run.dir}}/article-3.md`\n   - `{{run.dir}}/article-4.md`\n   - `{{run.dir}}/article-5.md`\n\n   Each file should have this format:\n   ```\n   # Headline\n   **Author:** Name · **Date:** YYYY-MM-DD\n   **URL:** https://...\n\n   Full article text here...\n   ```\n\n## RULES\n\n- Only fetch articles from CoinDesk\n- Save exactly 5 articles, one per file\n- Preserve the original article content faithfully\n- Do not summarize at this stage, save the full text",
           "gates": [
             {"command": "test -f {{run.dir}}/article-1.md && test -f {{run.dir}}/article-2.md && test -f {{run.dir}}/article-3.md && test -f {{run.dir}}/article-4.md && test -f {{run.dir}}/article-5.md", "message": "Not all 5 article files were saved. Ensure article-1.md through article-5.md exist in the artifacts directory."}

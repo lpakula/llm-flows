@@ -71,6 +71,7 @@ class FlowService:
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
+                    tools=_serialize_json_list(step_data.get("tools")),
                 )
                 self.session.add(step)
 
@@ -125,6 +126,7 @@ class FlowService:
         agent_alias: str = "normal", step_type: str = "agent",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
+        tools: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -142,6 +144,7 @@ class FlowService:
             step_type=_normalize_step_type(step_type),
             allow_max=allow_max, max_gate_retries=max_gate_retries,
             skills=_serialize_json_list(skills),
+            tools=_serialize_json_list(tools),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -220,7 +223,8 @@ class FlowService:
              "step_type": _normalize_step_type(s.step_type),
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
-             "skills": s.get_skills()}
+             "skills": s.get_skills(),
+             "tools": s.get_tools()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -254,6 +258,7 @@ class FlowService:
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
+                    "tools": s.get_tools(),
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
@@ -299,6 +304,9 @@ class FlowService:
                 skills = s.get_skills()
                 if skills:
                     step_data["skills"] = skills
+                tools = s.get_tools()
+                if tools:
+                    step_data["tools"] = tools
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -349,6 +357,7 @@ class FlowService:
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
+                        tools=_serialize_json_list(step_data.get("tools")),
                     )
                     self.session.add(step)
             else:
@@ -403,9 +412,6 @@ class FlowService:
 
         warnings: list[dict] = []
 
-        reqs = flow.get_requirements()
-        req_tools = reqs.get("tools", [])
-
         flow_vars = flow.get_variables()
         for var_name, var_value in flow_vars.items():
             if not var_value:
@@ -415,16 +421,19 @@ class FlowService:
                     "message": f"Variable '{var_name}' has no value. Fill it in on the flow page before running.",
                 })
 
-        if req_tools:
-            sys_config = load_system_config()
-            for tool in req_tools:
-                tool_config = sys_config.get(tool, {})
-                if not tool_config.get("enabled", False):
-                    warnings.append({
-                        "step_name": "",
-                        "warning_type": "missing_tool",
-                        "message": f"Required tool '{tool}' is not enabled. Enable it in Settings > Tools.",
-                    })
+        sys_config = load_system_config()
+        warned_tools: set[str] = set()
+        for step in flow.steps:
+            for tool in step.get_tools():
+                if tool not in warned_tools:
+                    tool_config = sys_config.get(tool, {})
+                    if not tool_config.get("enabled", False):
+                        warnings.append({
+                            "step_name": step.name,
+                            "warning_type": "missing_tool",
+                            "message": f"Required tool '{tool}' is not enabled. Enable it in Settings > Tools.",
+                        })
+                        warned_tools.add(tool)
 
         for step in flow.steps:
             st = _normalize_step_type(step.step_type)

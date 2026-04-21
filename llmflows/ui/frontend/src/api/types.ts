@@ -93,6 +93,7 @@ export interface FlowStep {
   allow_max: boolean;
   max_gate_retries: number;
   skills: string[];
+  tools: string[];
 }
 
 export interface Gate {

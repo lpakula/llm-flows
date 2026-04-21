@@ -136,16 +136,11 @@ class Daemon:
         return True
 
     @staticmethod
-    def _flow_requires_browser(run) -> bool:
-        """Check if the run's flow snapshot declares a browser tool requirement."""
-        if not run.flow_snapshot:
+    def _step_requires_tool(snap_step: dict | None, tool: str) -> bool:
+        """Check if a snapshot step declares a specific tool requirement."""
+        if not snap_step:
             return False
-        try:
-            snap = json.loads(run.flow_snapshot)
-            tools = snap.get("requirements", {}).get("tools", [])
-            return "browser" in tools
-        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
-            return False
+        return tool in snap_step.get("tools", [])
 
     def _build_channels(self) -> list:
         """Build channel instances from config (lazy import, only if enabled)."""
@@ -908,7 +903,7 @@ class Daemon:
 
         extra_env: dict[str, str] = {}
         browser_config = load_system_config().get("browser", {})
-        if self._flow_requires_browser(run) and browser_config.get("enabled", False):
+        if self._step_requires_tool(snap_step, "browser") and browser_config.get("enabled", False):
             headless = browser_config.get("headless", True)
             user_data_dir = browser_config.get("user_data_dir", "~/.llmflows/browser-profile")
             try:
@@ -921,6 +916,10 @@ class Daemon:
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
             except Exception:
                 logger.exception("Failed to start browser for run %s", run.id)
+        elif not self._step_requires_tool(snap_step, "browser"):
+            if self.browser_service.get_ws_endpoint(run.id):
+                logger.info("Step '%s' does not need browser, cleaning up for run %s", step_name, run.id)
+                self.browser_service.cleanup(run.id)
 
         space_dir = Path(space.path) / ".llmflows"
         executor = get_executor(step_type)

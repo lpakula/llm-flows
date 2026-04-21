@@ -132,16 +132,16 @@ To publish files (screenshots, images) in the run summary, save them to `{{run.d
 
 ---
 
-## Flow requirements
+## Step tools
 
-Flows can declare tools and variables they need. These are validated before running — the UI shows warnings if something is missing.
+Tools are declared **per step** via the `tools` field. The daemon starts/stops tool services based on step transitions — consecutive steps sharing a tool keep the session alive.
 
 ```json
 {
-  "requirements": {
-    "tools": ["web_search", "browser"],
-    "variables": ["TARGET_URL", "USERNAME"]
-  }
+  "name": "fetch-data",
+  "position": 0,
+  "tools": ["web_search"],
+  "content": "..."
 }
 ```
 
@@ -176,6 +176,7 @@ Each step's `content` is a plain markdown prompt — there is no special structu
 | `gates` | array | `[]` | Shell commands that must pass |
 | `ifs` | array | `[]` | Conditions that must pass to enter the step |
 | `skills` | array | `[]` | Skill identifiers to load |
+| `tools` | array | `[]` | Optional tools: `"browser"`, `"web_search"` |
 
 ---
 
@@ -190,10 +191,6 @@ The export/import format. Fields at their default values can be omitted.
     {
       "name": "my-flow",
       "description": "What this flow does.",
-      "requirements": {
-        "tools": ["web_search"],
-        "variables": []
-      },
       "steps": [
         {
           "name": "step-name",
@@ -202,7 +199,8 @@ The export/import format. Fields at their default values can be omitted.
           "agent_alias": "normal",
           "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
           "gates": [],
-          "ifs": []
+          "ifs": [],
+          "tools": []
         }
       ]
     }
@@ -214,7 +212,7 @@ The export/import format. Fields at their default values can be omitted.
 
 ## Browser automation
 
-Declare `"browser"` in `requirements.tools` to give agents control of a real Chromium browser. The browser persists across all steps in a run — login state, cookies, and pages carry over.
+Declare `"browser"` in a step's `tools` array to give that step control of a real Chromium browser. The browser persists across consecutive steps that declare `"browser"` — login state, cookies, and pages carry over.
 
 ### Browser tools
 
@@ -257,13 +255,11 @@ A simple 2-step flow that fetches news articles and produces a summary. Uses web
     {
       "name": "ai-news-digest",
       "description": "Fetch the latest AI news and produce a daily digest.",
-      "requirements": {
-        "tools": ["web_search"]
-      },
       "steps": [
         {
           "name": "Fetch articles",
           "position": 0,
+          "tools": ["web_search"],
           "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent AI news articles and save each one as a separate file.\n\n## WORKFLOW\n\n1. Use `web_search` to find the latest AI news from the past 24 hours\n2. Pick the 5 most significant stories\n3. For each, use `web_fetch` to load the full article\n4. Save each article to `{{run.dir}}/article-N.md` with: headline, author, date, URL, and full text\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully\n- Do not summarize at this stage",
           "gates": [
             {
@@ -285,7 +281,7 @@ A simple 2-step flow that fetches news articles and produces a summary. Uses web
 ```
 
 **What this demonstrates:**
-- `requirements.tools` declaring `web_search` dependency
+- Step-level `tools` declaring `web_search` only on the step that needs it
 - Gates verifying expected output files exist
 - `agent_alias: "mini"` on the summary step (cheap model for simple work)
 - Step 2 reads Step 1's artifacts automatically via context injection
@@ -357,7 +353,7 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
 
 ### 3. Browser automation with MFA bypass
 
-A flow that logs into a website, handles MFA via human-in-the-loop, and performs an action in the authenticated browser session. The browser persists across all steps.
+A flow that logs into a website, handles MFA via human-in-the-loop, and performs an action in the authenticated browser session. The browser persists across consecutive steps that declare it.
 
 ```json
 {
@@ -366,14 +362,11 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
     {
       "name": "login-and-export",
       "description": "Log into a web app with MFA, then export a report.",
-      "requirements": {
-        "tools": ["browser"],
-        "variables": ["TARGET_URL", "USERNAME", "PASSWORD"]
-      },
       "steps": [
         {
           "name": "Login",
           "position": 0,
+          "tools": ["browser"],
           "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{run.dir}}/after-login.png`\n6. Write the current page state to `{{run.dir}}/_result.md`",
           "gates": [
             {"command": "test -f {{run.dir}}/after-login.png", "message": "Login screenshot must exist."}
@@ -383,16 +376,19 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
           "name": "MFA",
           "position": 1,
           "step_type": "hitl",
+          "tools": ["browser"],
           "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/_result.md`: explain that the site is asking for an MFA code and ask the user to provide it"
         },
         {
           "name": "Submit MFA",
           "position": 2,
+          "tools": ["browser"],
           "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.MFA.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{run.dir}}/_result.md`"
         },
         {
           "name": "Export report",
           "position": 3,
+          "tools": ["browser"],
           "content": "# EXPORT REPORT\n\n## PURPOSE\n\nNavigate to the reports page and export the latest report.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or links in the snapshot to reach the reports section\n2. Find and click the export/download button\n3. Take a `browser_screenshot` of the confirmation\n4. Save it to `{{run.dir}}/attachments/export-confirmation.png`\n5. Write a summary of what was exported to `{{run.dir}}/_result.md`"
         }
       ]
@@ -402,9 +398,9 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
 ```
 
 **What this demonstrates:**
-- `requirements.tools: ["browser"]` — Chromium browser persists across all steps
-- `requirements.variables` — credentials stored as space variables, not hardcoded
-- `hitl` step for MFA — browser stays alive while waiting for the user's code
+- Step-level `tools: ["browser"]` — each step that needs the browser declares it; session persists across consecutive browser steps
+- Variables — credentials stored as space variables, not hardcoded
+- `hitl` step for MFA — browser stays alive while waiting for the user's code (because the hitl step declares `"browser"`)
 - `{{steps.MFA.user_response}}` — passing the MFA code to the next step
 - `attachments/` directory — screenshot published in the run summary
 - Browser state carries over: step 1 logs in, step 3 still has the session

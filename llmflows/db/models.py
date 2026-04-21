@@ -212,6 +212,14 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    def get_tools(self) -> list[str]:
+        """Parse tools JSON into a list of tool names."""
+        import json
+        try:
+            return json.loads(self.tools or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -226,6 +234,7 @@ class FlowStep(Base):
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
+            "tools": self.get_tools(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -191,17 +191,6 @@ export function FlowDetailView() {
     load();
   };
 
-  // Tools
-  const toggleTool = async (toolId: string) => {
-    if (!flow) return;
-    const currentTools = flow.requirements?.tools || [];
-    const newTools = currentTools.includes(toolId)
-      ? currentTools.filter((t) => t !== toolId)
-      : [...currentTools, toolId];
-    await api.updateFlow(flow.id, { requirements: { tools: newTools } });
-    load();
-  };
-
   // Schedule
   const saveSchedule = async (cron: string, tz: string, enabled: boolean) => {
     if (!flow) return;
@@ -227,7 +216,7 @@ export function FlowDetailView() {
 
   // Steps
   const saveStep = async (data: { name: string; content: string; gates: Gate[]; ifs: Gate[];
-    agent_alias: string; step_type: string; allow_max: boolean; max_gate_retries: number; skills: string[] }) => {
+    agent_alias: string; step_type: string; allow_max: boolean; max_gate_retries: number; skills: string[]; tools: string[] }) => {
     if (!flow || !stepModal) return;
     if (stepModal.mode === "edit" && stepModal.step) {
       await api.updateStep(flow.id, stepModal.step.id, {
@@ -235,7 +224,8 @@ export function FlowDetailView() {
         gates: data.gates.filter((g) => g.command.trim()),
         ifs: data.ifs.filter((g) => g.command.trim()),
         agent_alias: data.agent_alias, step_type: data.step_type,
-        allow_max: data.allow_max, max_gate_retries: data.max_gate_retries, skills: data.skills,
+        allow_max: data.allow_max, max_gate_retries: data.max_gate_retries,
+        skills: data.skills, tools: data.tools,
       });
     } else {
       await api.addStep(flow.id, {
@@ -243,7 +233,8 @@ export function FlowDetailView() {
         gates: data.gates.filter((g) => g.command.trim()),
         ifs: data.ifs.filter((g) => g.command.trim()),
         agent_alias: data.agent_alias, step_type: data.step_type,
-        allow_max: data.allow_max, max_gate_retries: data.max_gate_retries, skills: data.skills,
+        allow_max: data.allow_max, max_gate_retries: data.max_gate_retries,
+        skills: data.skills, tools: data.tools,
       });
     }
     setStepModal(null);
@@ -477,33 +468,6 @@ export function FlowDetailView() {
             </div>
           </div>
 
-          {/* Tools */}
-          {tools.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-200 mb-1">Tools</h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Read, write, edit, and shell tools are always available. Select additional tools for this flow:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {tools.map((tool) => {
-                  const selected = flow.requirements?.tools?.includes(tool.id) || false;
-                  const base = "px-3 py-1.5 rounded-lg text-xs border transition cursor-pointer";
-                  const style = selected
-                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                    : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300";
-                  return (
-                    <button key={tool.id} onClick={() => toggleTool(tool.id)} className={`${base} ${style}`}>
-                      {tool.name}
-                      {!tool.enabled && selected && (
-                        <span className="ml-1 text-[10px] text-amber-400">(off)</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Limits */}
           <div className="flex gap-8">
             <div>
@@ -689,10 +653,13 @@ export function FlowDetailView() {
                       </span>
                     )}
                     {step.ifs && step.ifs.length > 0 && (
-                      <span className="text-[10px] text-yellow-400 shrink-0">
+                      <span className="text-[10px] text-purple-400 shrink-0">
                         {step.ifs.length} {step.ifs.length === 1 ? "if" : "ifs"}
                       </span>
                     )}
+                    {step.tools && step.tools.length > 0 && step.tools.map((t) => (
+                      <span key={t} className="text-[10px] text-emerald-400 shrink-0">{t}</span>
+                    ))}
                     {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name) && (
                       <span className="text-[10px] text-amber-400 shrink-0" title="Has warnings">⚠</span>
                     )}
@@ -1008,15 +975,18 @@ export function FlowDetailView() {
                   allow_max: stepModal.step.allow_max || false,
                   max_gate_retries: stepModal.step.max_gate_retries ?? 3,
                   skills: stepModal.step.skills || [],
+                  tools: stepModal.step.tools || [],
                 }
               : {
                   name: "", content: "", gates: [], ifs: [],
                   agent_alias: "normal", step_type: "agent",
                   allow_max: false, max_gate_retries: 3, skills: [],
+                  tools: [],
                 }
           }
           aliases={aliases}
           skills={spaceSkills}
+          tools={tools}
           onSave={saveStep}
           onClose={() => setStepModal(null)}
         />
