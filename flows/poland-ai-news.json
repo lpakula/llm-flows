@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "flows": [
+    {
+      "name": "poland-ai-news",
+      "description": "Find the most recent AI news from Poland and format it as a short English news list with links.",
+      "requirements": {
+        "tools": ["web_search"]
+      },
+      "steps": [
+        {
+          "name": "Find news",
+          "position": 0,
+          "agent_alias": "normal",
+          "content": "# FIND POLAND AI NEWS\n\n## PURPOSE\n\nFind the most recent AI news related to Poland and save up to 5 high-quality news items as artifacts for the next step.\n\n## WORKFLOW\n\n1. Use `web_search` to search broadly for recent AI news from Poland. Use multiple targeted searches if needed, such as Polish AI news, Poland artificial intelligence news, AI startups or AI policy in Poland, and major Polish tech/media coverage of AI.\n\n2. Select up to 5 of the most recent and clearly relevant news items. Relevance means the news must be about AI and meaningfully connected to Poland, for example Polish companies, institutions, research, regulation, investments, launches, or events.\n\n3. For each selected item, use `web_fetch` to read the source page and extract:\n   - headline\n   - publication date if available\n   - source name\n   - canonical link\n   - a short factual description of the news\n   - the key details needed for a later summary\n\n4. Save each item as a separate file in `{{run.dir}}/article-N.md` where N starts at 1.\n\n5. Also write `{{run.dir}}/_result.md` containing a short research log with the selected items, their dates if known, and links.\n\n## RULES\n\n- Save between 1 and 5 items\n- Prioritize recency first, then quality and relevance\n- Prefer original reporting or credible publications\n- Avoid duplicate stories covering the exact same announcement unless necessary\n- Do not invent dates, facts, or links\n- Keep the article files factual and source-grounded\n\n## OUTPUT FORMAT\n\nEach `article-N.md` file must use this format:\n\n```\n# Headline\n**Source:** Publication name\n**Date:** YYYY-MM-DD or Unknown\n**URL:** https://...\n\n## Short Description\n\n2-4 sentences describing the news item factually.\n\n## Key Details\n\n- Bullet 1\n- Bullet 2\n- Bullet 3\n```",
+          "gates": [
+            {
+              "command": "count=$(find '{{run.dir}}' -maxdepth 1 -name 'article-*.md' | wc -l | tr -d ' '); test -f '{{run.dir}}/_result.md' && [ \"$count\" -ge 1 ] && [ \"$count\" -le 5 ]",
+              "message": "The step must create {{run.dir}}/_result.md and between 1 and 5 article-N.md files."
+            }
+          ]
+        },
+        {
+          "name": "Format roundup",
+          "position": 1,
+          "agent_alias": "normal",
+          "content": "# FORMAT POLAND AI NEWS ROUNDUP\n\n## PURPOSE\n\nTurn the collected Poland AI news items from the previous step into a clean English roundup with headline, short description, and link for each item.\n\n## WORKFLOW\n\n1. Use the article artifacts from the previous step that are already provided in your context. Do not search the web again.\n\n2. Create a final roundup in English covering all selected items.\n\n3. Write the final output to `{{run.dir}}/_result.md`.\n\n## RULES\n\n- Include every news item selected in the previous step\n- Keep the writing concise and factual\n- Preserve the original headline wording as closely as possible\n- Include the link for every item\n- If a publication date is available, include it\n- Do not add analysis or opinion\n\n## OUTPUT FORMAT\n\nWrite exactly in this structure:\n\n```\n# Latest AI News from Poland\n\nA short one-paragraph introduction summarizing what this roundup contains.\n\n## 1. Headline\n**Source:** Publication name\n**Date:** YYYY-MM-DD or Unknown\n**Link:** https://...\n\nShort description in 2-3 sentences.\n\n## 2. Headline\n...\n```"
+        }
+      ]
+    }
+  ]
+}

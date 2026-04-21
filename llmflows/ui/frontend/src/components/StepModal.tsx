@@ -10,8 +10,8 @@ const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
 const VARIABLES = [
   { token: "{{run.id}}", desc: "Current run ID" },
   { token: "{{flow.name}}", desc: "Flow name" },
-  { token: "{{artifacts_dir}}", desc: "Step artifacts directory" },
-  { token: "{{flow_dir}}", desc: "Persistent flow directory (cross-run)" },
+  { token: "{{run.dir}}", desc: "Step artifacts directory" },
+  { token: "{{flow.dir}}", desc: "Persistent flow directory (cross-run)" },
   { token: "{{steps.<name>.user_response}}", desc: "HITL step response" },
 ];
 

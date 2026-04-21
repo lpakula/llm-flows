@@ -550,8 +550,8 @@ class Daemon:
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": step_run.flow_name,
-            "flow_dir": str(flow_dir),
-            "artifacts_dir": str(step_artifact_dir),
+            "flow.dir": str(flow_dir),
+            "run.dir": str(step_artifact_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         snap_step = self._get_snapshot_step(run, step_run.step_name)
@@ -666,7 +666,7 @@ class Daemon:
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": current_flow,
-            "flow_dir": str(flow_dir),
+            "flow.dir": str(flow_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         if current_step_name == "__summarizer__":
@@ -757,7 +757,7 @@ class Daemon:
         flow_dir = ContextService.get_flow_dir(space_root, flow_name)
         step_vars = self._build_step_vars({
             "run.id": run.id, "flow.name": flow_name,
-            "flow_dir": str(flow_dir),
+            "flow.dir": str(flow_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         steps = self._get_snapshot_steps(run)
@@ -817,8 +817,8 @@ class Daemon:
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": flow_name,
-            "flow_dir": str(flow_dir),
-            "artifacts_dir": str(step_artifact_dir),
+            "flow.dir": str(flow_dir),
+            "run.dir": str(step_artifact_dir),
         }, space, flow_snapshot=self._get_snapshot(run))
         for sr in run_svc.list_step_runs(run.id):
             if sr.completed_at and sr.user_response:

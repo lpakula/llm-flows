@@ -24,10 +24,10 @@ A flow is an ordered list of steps that `llm-flows` executes sequentially. Each 
 
 ### Artifacts are the backbone
 
-Every step writes its output to an **artifacts directory**. The path is available as `{{artifacts_dir}}` in step content and gate commands. The daemon automatically collects artifacts from completed steps and injects them into the prompt for subsequent steps.
+Every step writes its output to an **artifacts directory**. The path is available as `{{run.dir}}` in step content and gate commands. The daemon automatically collects artifacts from completed steps and injects them into the prompt for subsequent steps.
 
 This means:
-- Step 1 writes files to its `{{artifacts_dir}}/`
+- Step 1 writes files to its `{{run.dir}}/`
 - Step 2 receives the contents of Step 1's files as context in its prompt
 - Step 3 receives Step 1 + Step 2 artifacts, and so on
 
@@ -35,20 +35,20 @@ The agent does not need to read files from previous steps — the daemon reads t
 
 ### The `_result.md` convention
 
-Every step **must** produce a `_result.md` file in its `{{artifacts_dir}}/`. This is the primary artifact:
+Every step **must** produce a `_result.md` file in its `{{run.dir}}/`. This is the primary artifact:
 
 - It gets a higher character budget (50,000 chars) when passed to subsequent steps
 - It is displayed in the inbox for `hitl` steps
 - It is the content shown in the run UI
 - The daemon prepends an **automatic gate** to every step that checks the artifacts directory is non-empty — if the step produces no files at all, this gate fails
 
-Other files saved to `{{artifacts_dir}}/` are also collected, but with a lower per-file limit (20,000 chars) and a total budget across all artifacts (120,000 chars). Binary files (images, archives, etc.) are listed but their content is not included in the prompt.
+Other files saved to `{{run.dir}}/` are also collected, but with a lower per-file limit (20,000 chars) and a total budget across all artifacts (120,000 chars). Binary files (images, archives, etc.) are listed but their content is not included in the prompt.
 
 ### Artifact directory layout
 
 ```
-.llmflows/<flow-name>/                # Persistent flow directory ({{flow_dir}})
-├── runs/<run_id>/artifacts/          # Per-run artifacts ({{artifacts_dir}})
+.llmflows/<flow-name>/                # Persistent flow directory ({{flow.dir}})
+├── runs/<run_id>/artifacts/          # Per-run artifacts ({{run.dir}})
 │   ├── 00-fetch-articles/            # Step 0 artifacts
 │   │   ├── _result.md                # Primary output (required)
 │   │   ├── article-1.md              # Additional files
@@ -63,7 +63,7 @@ Other files saved to `{{artifacts_dir}}/` are also collected, but with a lower p
 
 Step directories are named `NN-step-name` — zero-padded position + step name lowercased with spaces replaced by hyphens (e.g. step `"Fetch articles"` at position 0 → `00-fetch-articles`).
 
-To publish files (screenshots, images, reports) in the run summary UI, save them to `{{artifacts_dir}}/attachments/`. Images are rendered inline; other files appear as download links.
+To publish files (screenshots, images, reports) in the run summary UI, save them to `{{run.dir}}/attachments/`. Images are rendered inline; other files appear as download links.
 
 ---
 
@@ -161,10 +161,10 @@ Gates are shell commands attached to a step that **must exit 0** before the flow
 The daemon **automatically prepends** a gate to every step that checks the step's artifacts directory exists and is non-empty:
 
 ```bash
-test -d "<artifacts_dir>" && test "$(ls -A "<artifacts_dir>")"
+test -d "<run.dir>" && test "$(ls -A "<run.dir>")"
 ```
 
-This means every step must produce at least one file in `{{artifacts_dir}}/`. If the agent finishes without writing any artifacts, this auto-gate fails and the agent is relaunched.
+This means every step must produce at least one file in `{{run.dir}}/`. If the agent finishes without writing any artifacts, this auto-gate fails and the agent is relaunched.
 
 ### Gate retry behavior
 
@@ -189,9 +189,9 @@ Gates have a configurable timeout (default: 60 seconds, set in system config und
 **Good gates** — deterministic, fast, objective:
 - `npm test -- --watchAll=false` — tests pass
 - `npm run build` — build succeeds
-- `test -f {{artifacts_dir}}/report.md` — specific file was created
+- `test -f {{run.dir}}/report.md` — specific file was created
 - `python -m py_compile main.py` — syntax is valid
-- `ls {{artifacts_dir}}/*.png 2>/dev/null | grep -q .` — screenshots exist
+- `ls {{run.dir}}/*.png 2>/dev/null | grep -q .` — screenshots exist
 - `git diff --cached --quiet || echo ok` — changes are staged
 
 **Bad gates** — subjective, slow, unreliable:
@@ -278,12 +278,12 @@ Step content, gate commands, gate messages, and IF commands support `{{variable}
 |----------|:---:|:---:|:---:|
 | `{{run.id}}` — current run ID | Yes | Yes | Yes |
 | `{{flow.name}}` — current flow name | Yes | Yes | Yes |
-| `{{artifacts_dir}}` — absolute path to this step's artifact output directory | Yes | Yes | **No** |
-| `{{flow_dir}}` — persistent flow directory (`.llmflows/<flow>/`), shared across runs | Yes | Yes | Yes |
+| `{{run.dir}}` — absolute path to this step's artifact output directory | Yes | Yes | **No** |
+| `{{flow.dir}}` — persistent flow directory (`.llmflows/<flow>/`), shared across runs | Yes | Yes | Yes |
 | `{{space.KEY}}` — space variable (set via Settings or CLI) | Yes | Yes | Yes |
 | `{{steps.STEP_NAME.user_response}}` — user's response from a completed `hitl` step | Yes | Yes | **No** |
 
-IFs are evaluated **before** the step launches, so `{{artifacts_dir}}` and `{{steps.*.user_response}}` are not yet available.
+IFs are evaluated **before** the step launches, so `{{run.dir}}` and `{{steps.*.user_response}}` are not yet available.
 
 ### Space variables
 
@@ -402,7 +402,7 @@ The export/import format. One file can contain multiple flows.
           "step_type": "agent",
           "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
           "gates": [
-            {"command": "test -f {{artifacts_dir}}/output.md", "message": "Output file must exist."}
+            {"command": "test -f {{run.dir}}/output.md", "message": "Output file must exist."}
           ],
           "ifs": [],
           "agent_alias": "normal",
@@ -553,10 +553,10 @@ When a step consumes output from a previous step, describe the format explicitly
           "name": "Fetch articles",
           "position": 0,
           "step_type": "agent",
-          "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles and save each as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load the target URL\n2. Extract the 5 most recent article links\n3. For each, fetch the full article and extract content\n4. Save each article to `{{artifacts_dir}}/article-N.md`\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully",
+          "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles and save each as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load the target URL\n2. Extract the 5 most recent article links\n3. For each, fetch the full article and extract content\n4. Save each article to `{{run.dir}}/article-N.md`\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully",
           "gates": [
             {
-              "command": "test -f {{artifacts_dir}}/article-1.md && test -f {{artifacts_dir}}/article-5.md",
+              "command": "test -f {{run.dir}}/article-1.md && test -f {{run.dir}}/article-5.md",
               "message": "Not all 5 article files were saved."
             }
           ]
@@ -565,7 +565,7 @@ When a step consumes output from a previous step, describe the format explicitly
           "name": "Summarize",
           "position": 1,
           "step_type": "agent",
-          "content": "# SUMMARIZE\n\n## PURPOSE\n\nProduce a concise summary of all articles from the previous step.\n\n## WORKFLOW\n\n1. Read the articles from context (they are provided automatically)\n2. Write a 2-3 sentence summary for each\n3. Save to `{{artifacts_dir}}/_result.md`\n\n## RULES\n\n- Use article content from context, do not fetch anything\n- Preserve original headlines exactly"
+          "content": "# SUMMARIZE\n\n## PURPOSE\n\nProduce a concise summary of all articles from the previous step.\n\n## WORKFLOW\n\n1. Read the articles from context (they are provided automatically)\n2. Write a 2-3 sentence summary for each\n3. Save to `{{run.dir}}/_result.md`\n\n## RULES\n\n- Use article content from context, do not fetch anything\n- Preserve original headlines exactly"
         }
       ]
     }
@@ -591,7 +591,7 @@ When a step consumes output from a previous step, describe the format explicitly
       "position": 1,
       "step_type": "agent",
       "agent_alias": "max",
-      "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the approach the user chose.\n\n## WORKFLOW\n\n1. Read the user's response from context — it specifies which approach\n2. Implement that approach\n3. Write a summary of changes to `{{artifacts_dir}}/_result.md`",
+      "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the approach the user chose.\n\n## WORKFLOW\n\n1. Read the user's response from context — it specifies which approach\n2. Implement that approach\n3. Write a summary of changes to `{{run.dir}}/_result.md`",
       "gates": [
         {"command": "npm test -- --watchAll=false", "message": "Tests must pass."}
       ],
@@ -613,7 +613,7 @@ When a step consumes output from a previous step, describe the format explicitly
       "name": "lint-python",
       "position": 0,
       "agent_alias": "mini",
-      "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && python -m ruff check .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
+      "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && python -m ruff check .`\n2. Save the full output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
       "ifs": [
         {"command": "test -f {{space.PROJECT_PATH}}/pyproject.toml", "message": "Python project exists"}
       ]
@@ -622,7 +622,7 @@ When a step consumes output from a previous step, describe the format explicitly
       "name": "lint-js",
       "position": 1,
       "agent_alias": "mini",
-      "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && npx eslint .`\n2. Save the full output to `{{artifacts_dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
+      "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `cd {{space.PROJECT_PATH}} && npx eslint .`\n2. Save the full output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
       "ifs": [
         {"command": "test -f {{space.PROJECT_PATH}}/package.json", "message": "Node project exists"},
         {"command": "grep -q eslint {{space.PROJECT_PATH}}/package.json", "message": "ESLint configured"}
@@ -646,29 +646,29 @@ When a step consumes output from a previous step, describe the format explicitly
     {
       "name": "login",
       "position": 0,
-      "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{artifacts_dir}}/login.png`\n6. Write the current page state to `{{artifacts_dir}}/_result.md`",
+      "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{run.dir}}/login.png`\n6. Write the current page state to `{{run.dir}}/_result.md`",
       "gates": [
-        {"command": "test -f {{artifacts_dir}}/login.png", "message": "Login screenshot must exist."}
+        {"command": "test -f {{run.dir}}/login.png", "message": "Login screenshot must exist."}
       ]
     },
     {
       "name": "get-mfa-code",
       "position": 1,
       "step_type": "hitl",
-      "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{artifacts_dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{artifacts_dir}}/_result.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it"
+      "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/_result.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it"
     },
     {
       "name": "submit-mfa",
       "position": 2,
-      "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code provided by the user and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.get-mfa-code.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{artifacts_dir}}/_result.md`",
+      "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code provided by the user and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.get-mfa-code.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{run.dir}}/_result.md`",
       "gates": [
-        {"command": "test -f {{artifacts_dir}}/screenshot.png", "message": "Confirmation screenshot must exist."}
+        {"command": "test -f {{run.dir}}/screenshot.png", "message": "Confirmation screenshot must exist."}
       ]
     },
     {
       "name": "perform-action",
       "position": 3,
-      "content": "# PERFORM ACTION\n\n## PURPOSE\n\nExecute the target action in the authenticated browser session.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or `browser_snapshot` to find the target page/form\n2. Fill in any required fields and submit\n3. Take a `browser_screenshot` to confirm the action\n4. Write a summary of what was done to `{{artifacts_dir}}/_result.md`"
+      "content": "# PERFORM ACTION\n\n## PURPOSE\n\nExecute the target action in the authenticated browser session.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or `browser_snapshot` to find the target page/form\n2. Fill in any required fields and submit\n3. Take a `browser_screenshot` to confirm the action\n4. Write a summary of what was done to `{{run.dir}}/_result.md`"
     }
   ]
 }
