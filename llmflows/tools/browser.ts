@@ -29,14 +29,26 @@ let page: Page | null = null;
 let refMap = new Map<number, Locator>();
 let nextRef = 1;
 
+async function setupContext(ctx: Awaited<ReturnType<Browser["newContext"]>>) {
+  await ctx.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
+}
+
+async function setDownloadDir(p: Page) {
+  const client = await p.context().newCDPSession(p);
+  await client.send("Page.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: ARTIFACTS_DIR,
+  });
+}
+
 async function ensurePage(): Promise<Page> {
   if (!WS_ENDPOINT) throw new Error("BROWSER_WS_ENDPOINT is not set.");
   if (!browser) {
     browser = await chromium.connectOverCDP(WS_ENDPOINT);
     for (const ctx of browser.contexts()) {
-      await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      });
+      await setupContext(ctx);
     }
   }
   if (!page || page.isClosed()) {
@@ -45,11 +57,11 @@ async function ensurePage(): Promise<Page> {
       page = contexts[0].pages()[0];
     } else {
       const ctx = contexts.length > 0 ? contexts[0] : await browser.newContext();
-      await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      });
+      await setupContext(ctx);
       page = await ctx.newPage();
     }
+    mkdirSync(ARTIFACTS_DIR, { recursive: true });
+    await setDownloadDir(page);
   }
   return page;
 }

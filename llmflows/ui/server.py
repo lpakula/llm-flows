@@ -320,14 +320,19 @@ TOOL_REGISTRY: list[dict] = [
 ]
 
 
-def _tool_info(tool_id: str) -> dict | None:
-    """Return {"text": ..., "status": "ok"|"warning"} or None."""
+def _tool_info(tool_id: str, config: dict) -> list[dict] | None:
+    """Return list of {"text": ..., "status": "ok"|"warning"} or None."""
     if tool_id == "browser":
         from ..services.browser import find_chrome
+        items: list[dict] = []
         path = find_chrome()
         if path:
-            return {"text": f"Using {path}", "status": "ok"}
-        return {"text": "Google Chrome not found — install from https://google.com/chrome", "status": "warning"}
+            items.append({"text": f"Chrome: {path}", "status": "ok"})
+        else:
+            items.append({"text": "Google Chrome not found — install from https://google.com/chrome", "status": "warning"})
+        profile = config.get("browser", {}).get("user_data_dir", "~/.llmflows/browser-profile")
+        items.append({"text": f"Profile: {profile}", "status": "ok"})
+        return items
     return None
 
 
@@ -347,7 +352,7 @@ def _tool_response(tool_def: dict, config: dict) -> dict:
         },
         "config_fields": tool_def.get("config_fields", []),
     }
-    info = _tool_info(tool_id)
+    info = _tool_info(tool_id, config)
     if info:
         resp["info"] = info
     return resp

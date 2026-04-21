@@ -138,7 +138,7 @@ export interface ToolConfig {
   enabled: boolean;
   config: Record<string, string>;
   config_fields: ToolConfigField[];
-  info?: { text: string; status: "ok" | "warning" };
+  info?: { text: string; status: "ok" | "warning" }[];
 }
 
 export interface DashboardEntry {

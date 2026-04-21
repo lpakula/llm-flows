@@ -323,7 +323,7 @@ A list of tool names that must be enabled in system config (Settings > Tools). I
 Pi always has `read`, `write`, `edit`, and `shell` tools available — these do not need to be declared in `requirements.tools`. The following optional tools can be enabled:
 
 - `"web_search"` — gives Pi steps access to `web_search` and `web_fetch` tools for searching the web and fetching page content.
-- `"browser"` — gives Pi steps access to `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` tools for controlling a real Chromium browser. The browser session persists across all steps in a run, so login state, cookies, and page context carry over between steps. 
+- `"browser"` — gives Pi steps access to `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` tools for controlling a real Chrome browser. The browser session persists across all steps in a run, so login state, cookies, and page context carry over between steps. A persistent profile in `~/.llmflows/browser-profile/` preserves login sessions across runs.
 
 ### `requirements.variables`
 
@@ -422,7 +422,12 @@ Fields at their default values can be omitted — see the Step Fields Reference 
 
 ## Browser Automation
 
-Flows can control a real Chromium browser by declaring `"browser"` in `requirements.tools`. The browser session is managed by the daemon and persists across all steps in a run — login state, cookies, and open pages carry over between steps, including across `hitl` pauses.
+Flows can control a real Chrome browser by declaring `"browser"` in `requirements.tools`. The browser session is managed by the daemon and persists across all steps in a run — login state, cookies, and open pages carry over between steps, including across `hitl` pauses.
+
+The browser uses the system Google Chrome (not Playwright's bundled Chromium) with a persistent profile stored in `~/.llmflows/browser-profile/`. This means:
+- **Login sessions persist across runs** — log in to Google/GitHub/etc. once, and future runs reuse the session via saved cookies
+- **Downloads go to the step's artifacts directory** — any file downloaded by the browser during a step is automatically captured as a step artifact
+- **Google login works** — system Chrome avoids the automation fingerprints that cause Google to block sign-in
 
 ### How it works
 
