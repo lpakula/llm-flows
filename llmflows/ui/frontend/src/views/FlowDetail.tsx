@@ -66,6 +66,8 @@ export function FlowDetailView() {
   const [variables, setVariables] = useState<Record<string, { value: string; is_env: boolean }>>({});
   const [newVarKey, setNewVarKey] = useState("");
   const [newVarValue, setNewVarValue] = useState("");
+  const [newVarEnv, setNewVarEnv] = useState(false);
+  const [dirtyVarKeys, setDirtyVarKeys] = useState<Set<string>>(new Set());
   const [maxSpendValue, setMaxSpendValue] = useState("");
 
   // Step modal
@@ -171,26 +173,25 @@ export function FlowDetailView() {
   // Variables
   const addVariable = async () => {
     if (!flow || !newVarKey.trim()) return;
-    const updated = await api.setFlowVariable(flow.id, newVarKey.trim(), newVarValue, false);
+    const updated = await api.setFlowVariable(flow.id, newVarKey.trim(), newVarValue, newVarEnv);
     setVariables(updated);
     setNewVarKey("");
     setNewVarValue("");
+    setNewVarEnv(false);
     load();
   };
 
-  const updateVariable = async (key: string, value: string, is_env?: boolean) => {
-    if (!flow) return;
-    const cur = variables[key];
-    const updated = await api.setFlowVariable(flow.id, key, value, is_env ?? cur?.is_env ?? true);
-    setVariables(updated);
+  const toggleVarEnv = (key: string) => {
+    setVariables((v) => ({ ...v, [key]: { ...v[key], is_env: !v[key].is_env } }));
+    setDirtyVarKeys((s) => new Set(s).add(key));
   };
 
-  const toggleVarEnv = async (key: string) => {
+  const saveVar = async (key: string) => {
     if (!flow) return;
     const cur = variables[key];
     if (!cur) return;
-    const updated = await api.setFlowVariable(flow.id, key, cur.value, !cur.is_env);
-    setVariables(updated);
+    await api.setFlowVariable(flow.id, key, cur.value, cur.is_env);
+    setDirtyVarKeys((s) => { const n = new Set(s); n.delete(key); return n; });
   };
 
   const removeVariable = async (key: string) => {
@@ -444,7 +445,7 @@ export function FlowDetailView() {
           <div>
             <h3 className="text-sm font-medium text-gray-200 mb-1">Variables</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running.
+              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running. <br />Toggle <span className="text-emerald-400 font-medium">ENV</span> to also inject as an environment variable at agent runtime. 
             </p>
             <div className="space-y-2">
               {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => (
@@ -452,23 +453,29 @@ export function FlowDetailView() {
                   <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate" title={key}>{key}</span>
                   <input
                     value={entry.value}
-                    onChange={(e) => setVariables((v) => ({ ...v, [key]: { ...v[key], value: e.target.value } }))}
-                    onBlur={() => updateVariable(key, variables[key].value)}
-                    onKeyDown={(e) => e.key === "Enter" && updateVariable(key, variables[key].value)}
-                    className={`flex-1 min-w-0 bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                    onChange={(e) => {
+                      setVariables((v) => ({ ...v, [key]: { ...v[key], value: e.target.value } }));
+                      setDirtyVarKeys((s) => new Set(s).add(key));
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && saveVar(key)}
+                    className={`w-1/2 max-w-xs bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
                       !entry.value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
                     }`}
                     placeholder={!entry.value ? "required — fill before running" : "value"}
                   />
-                  <label className="flex items-center gap-1 shrink-0 cursor-pointer" title="Inject as environment variable at runtime">
-                    <input
-                      type="checkbox"
-                      checked={entry.is_env}
-                      onChange={() => toggleVarEnv(key)}
-                      className="accent-blue-500 w-3 h-3"
-                    />
-                    <span className="text-[10px] text-gray-500">env</span>
-                  </label>
+                  <button
+                    onClick={() => toggleVarEnv(key)}
+                    className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                      entry.is_env
+                        ? "bg-emerald-900/40 border-emerald-700/60 text-emerald-400"
+                        : "bg-gray-800 border-gray-700 text-gray-600 hover:text-gray-400 hover:border-gray-600"
+                    }`}
+                    title="Inject as environment variable at runtime"
+                  >ENV</button>
+                  {dirtyVarKeys.has(key) && (
+                    <button onClick={() => saveVar(key)}
+                      className="text-xs text-blue-400 hover:text-blue-300 shrink-0">Save</button>
+                  )}
                   <button onClick={() => removeVariable(key)}
                     className="text-xs text-red-400/60 hover:text-red-400 shrink-0">x</button>
                 </div>
@@ -479,7 +486,16 @@ export function FlowDetailView() {
               placeholder="NEW_KEY" className="w-32 bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             <input value={newVarValue} onChange={(e) => setNewVarValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addVariable()}
-              placeholder="value (optional)" className="w-1/2 bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+              placeholder="value" className="w-1/2 max-w-xs bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <button
+              onClick={() => setNewVarEnv((v) => !v)}
+              className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                newVarEnv
+                  ? "bg-emerald-900/40 border-emerald-700/60 text-emerald-400"
+                  : "bg-gray-800 border-gray-700 text-gray-600 hover:text-gray-400 hover:border-gray-600"
+              }`}
+              title="Inject as environment variable at runtime"
+            >ENV</button>
           </div>
           <button onClick={addVariable} disabled={!newVarKey.trim()}
             className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300">+ Add</button>
