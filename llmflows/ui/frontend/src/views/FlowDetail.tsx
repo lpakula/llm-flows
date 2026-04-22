@@ -786,7 +786,7 @@ export function FlowDetailView() {
                   const stepLabel = step.name === "__summarizer__" ? "summarizer" : step.name;
                   const isCancelled = displayStatus(expandedRun) === "cancelled";
                   const resolveStatus = (s: string) =>
-                    isCancelled && (s === "failed" || s === "error") ? "skipped" : s;
+                    isCancelled && s === "pending" ? "skipped" : s;
                   const attemptStatus = (att: typeof attempts[number], idx: number) =>
                     resolveStatus(idx < attempts.length - 1 ? "failed" : att.status);
                   return (
@@ -927,7 +927,7 @@ export function FlowDetailView() {
                   </details>
                 </div>
               )}
-              {viewingGateFailures.length > 0 && displayStatus(expandedRun) !== "cancelled" && (
+              {viewingGateFailures.length > 0 && (
                 <div className="border-b border-gray-800/80">
                   <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3" open>
                     <summary className="text-[10px] uppercase tracking-wide text-orange-600 cursor-pointer select-none list-none inline-flex items-center gap-2">
