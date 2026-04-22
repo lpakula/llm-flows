@@ -657,9 +657,16 @@ export function FlowDetailView() {
                         {step.ifs.length} {step.ifs.length === 1 ? "if" : "ifs"}
                       </span>
                     )}
-                    {step.tools && step.tools.length > 0 && step.tools.map((t) => (
-                      <span key={t} className="text-[10px] text-emerald-400 shrink-0">{t}</span>
-                    ))}
+                    {step.skills && step.skills.length > 0 && (
+                      <span className="text-[10px] text-pink-400 shrink-0">
+                        {step.skills.length} {step.skills.length === 1 ? "skill" : "skills"}
+                      </span>
+                    )}
+                    {step.tools && step.tools.length > 0 && (
+                      <span className="text-[10px] text-emerald-400 shrink-0">
+                        {step.tools.length} {step.tools.length === 1 ? "tool" : "tools"}
+                      </span>
+                    )}
                     {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name) && (
                       <span className="text-[10px] text-amber-400 shrink-0" title="Has warnings">⚠</span>
                     )}
