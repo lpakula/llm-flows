@@ -24,7 +24,15 @@ Version is defined in one place: `pyproject.toml` under `[project] version`. Fol
 - **minor** `0.X.0` — new features, backwards compatible
 - **major** `X.0.0` — breaking changes
 
-### 3. Commit
+### 3. Regenerate `uv.lock`
+
+```bash
+uv lock
+```
+
+This ensures the lock file reflects any dependency changes (e.g. new packages added to `pyproject.toml`).
+
+### 4. Commit
 
 ```bash
 git add -u
@@ -32,7 +40,7 @@ git add llmflows/ui/static/
 git commit -m "release: v<version>"
 ```
 
-### 4. Tag and push
+### 5. Tag and push
 
 ```bash
 git tag v<version>
