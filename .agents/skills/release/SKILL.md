@@ -24,13 +24,13 @@ Version is defined in one place: `pyproject.toml` under `[project] version`. Fol
 - **minor** `0.X.0` — new features, backwards compatible
 - **major** `X.0.0` — breaking changes
 
-### 3. Regenerate `uv.lock`
+### 3. Regenerate `uv.lock` (only if dependencies changed)
+
+Only run `uv lock` if packages were added, removed, or updated in `pyproject.toml` (i.e. the `[project] dependencies` or `[project.optional-dependencies]` sections changed). Skip this step for version-only bumps.
 
 ```bash
 uv lock
 ```
-
-This ensures the lock file reflects any dependency changes (e.g. new packages added to `pyproject.toml`).
 
 ### 4. Commit
 

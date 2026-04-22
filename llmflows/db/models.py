@@ -83,12 +83,20 @@ class Space(Base):
                              order_by="FlowRun.created_at")
 
     def get_variables(self) -> dict:
-        """Parse variables JSON into a dict."""
+        """Parse variables JSON into ``{KEY: {value, is_env}}``."""
         import json
         try:
             return json.loads(self.variables or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
+
+    def get_variable_values(self) -> dict[str, str]:
+        """Return plain ``{KEY: value}`` for template interpolation."""
+        return {k: v["value"] for k, v in self.get_variables().items()}
+
+    def get_env_variables(self) -> dict[str, str]:
+        """Return ``{KEY: value}`` only for variables with is_env=True."""
+        return {k: v["value"] for k, v in self.get_variables().items() if v.get("is_env")}
 
     def to_dict(self) -> dict:
         return {
@@ -139,11 +147,20 @@ class Flow(Base):
         }
 
     def get_variables(self) -> dict:
+        """Parse variables JSON into ``{KEY: {value, is_env}}``."""
         import json
         try:
             return json.loads(self.variables or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
+
+    def get_variable_values(self) -> dict[str, str]:
+        """Return plain ``{KEY: value}`` for template interpolation."""
+        return {k: v["value"] for k, v in self.get_variables().items()}
+
+    def get_env_variables(self) -> dict[str, str]:
+        """Return ``{KEY: value}`` only for variables with is_env=True."""
+        return {k: v["value"] for k, v in self.get_variables().items() if v.get("is_env")}
 
     def to_dict(self) -> dict:
         return {

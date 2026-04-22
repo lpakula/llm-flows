@@ -35,6 +35,7 @@ class CodeExecutor(StepExecutor):
             step_type=ctx.step_type,
             space_variables=ctx.space_variables,
             skills=ctx.skills,
+            extra_env=ctx.extra_env,
         )
 
         return LaunchResult(

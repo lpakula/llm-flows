@@ -70,16 +70,22 @@ Every step must produce a result artifact (`_result.md`) for the flow to continu
 
 When `allow_max` is `true` and this is the last retry, the daemon switches to the `"max"` agent tier (a more powerful model) for one final attempt.
 
+### One command per gate
+
+Each gate must be exactly **one** check. Never chain multiple checks with `&&` — use separate gates instead. This gives the agent a precise failure message for the exact check that failed.
+
 ### Good gates vs bad gates
 
-**Good** — deterministic, fast:
+**Good** — deterministic, fast, single-command:
 - `npm test` — tests pass
 - `npm run build` — build succeeds
 - `test -f {{run.dir}}/report.md` — expected file exists
 - `python -m py_compile main.py` — valid syntax
+- `command -v ffmpeg >/dev/null 2>&1` — tool is installed
 
-**Bad** — flaky, slow, external:
+**Bad** — flaky, slow, external, or compound:
 - `curl https://api.example.com/health` — depends on external service
+- `command -v foo && test -f bar && python -c 'import baz'` — multiple checks in one gate
 - Complex scripts that might hang
 
 ---
@@ -263,8 +269,12 @@ A simple 2-step flow that fetches news articles and produces a summary. Uses web
           "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent AI news articles and save each one as a separate file.\n\n## WORKFLOW\n\n1. Use `web_search` to find the latest AI news from the past 24 hours\n2. Pick the 5 most significant stories\n3. For each, use `web_fetch` to load the full article\n4. Save each article to `{{run.dir}}/article-N.md` with: headline, author, date, URL, and full text\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully\n- Do not summarize at this stage",
           "gates": [
             {
-              "command": "test -f {{run.dir}}/article-1.md && test -f {{run.dir}}/article-5.md",
-              "message": "Not all 5 article files were saved."
+              "command": "test -f {{run.dir}}/article-1.md",
+              "message": "article-1.md was not saved."
+            },
+            {
+              "command": "test -f {{run.dir}}/article-5.md",
+              "message": "article-5.md was not saved."
             }
           ]
         },

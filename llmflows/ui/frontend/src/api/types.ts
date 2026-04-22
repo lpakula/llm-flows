@@ -61,7 +61,7 @@ export interface Flow {
   name: string;
   description: string;
   requirements: FlowRequirements;
-  variables: Record<string, string>;
+  variables: Record<string, { value: string; is_env: boolean }>;
   step_count: number;
   steps: FlowStep[];
   warnings?: FlowWarning[];

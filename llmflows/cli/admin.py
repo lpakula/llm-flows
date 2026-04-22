@@ -150,8 +150,8 @@ def space_var():
     """Manage space variables.
 
     Variables are available in flow step content, gates, and IFs as
-    {{space.<KEY>}} template placeholders. Also injected as environment
-    variables into the agent runtime.
+    {{space.<KEY>}} template placeholders. Pass --env to also inject the
+    variable as an environment variable at agent runtime.
     """
     pass
 
@@ -159,14 +159,15 @@ def space_var():
 @space_var.command("set")
 @click.argument("key")
 @click.argument("value")
+@click.option("--env", "is_env", is_flag=True, default=False, help="Also inject as agent env variable")
 @click.option("--id", "space_id", default=None, help="Space ID (defaults to current directory)")
-def var_set(key, value, space_id):
+def var_set(key, value, is_env, space_id):
     """Set a space variable.
 
     \b
     Examples:
-      llmflows space var set KM_KUBERNETES_REPOS_PATH /Users/me/repos
-      llmflows space var set AGENT_DEFAULT_ORG mycompany
+      llmflows space var set REPOS_PATH /Users/me/repos --env
+      llmflows space var set NOTES "for reference only"
     """
     import json
     session = get_session()
@@ -185,9 +186,10 @@ def var_set(key, value, space_id):
             raise SystemExit(1)
 
         variables = s.get_variables()
-        variables[key] = value
+        variables[key] = {"value": value, "is_env": is_env}
         space_svc.update(space_id, variables=json.dumps(variables))
-        click.echo(f"  {click.style(key, fg='cyan')} = {click.style(value, fg='white')}")
+        env_tag = click.style(" [env]", fg="green") if is_env else ""
+        click.echo(f"  {click.style(key, fg='cyan')} = {click.style(value, fg='white')}{env_tag}")
     finally:
         session.close()
 
@@ -217,8 +219,10 @@ def var_list(space_id):
             return
 
         key_w = max(len(k) for k in variables)
-        for k, v in sorted(variables.items()):
-            click.echo(f"  {click.style(k.ljust(key_w), fg='cyan')}  {v}")
+        for k, entry in sorted(variables.items()):
+            val = entry["value"]
+            env_tag = click.style(" [env]", fg="green") if entry.get("is_env") else ""
+            click.echo(f"  {click.style(k.ljust(key_w), fg='cyan')}  {val}{env_tag}")
     finally:
         session.close()
 

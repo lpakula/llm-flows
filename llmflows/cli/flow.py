@@ -508,6 +508,7 @@ def flow_var():
     """Manage flow-level variables.
 
     Flow variables are available as {{flow.KEY}} in step content, gates, and IFs.
+    Pass --env to also inject the variable as an environment variable at agent runtime.
     """
     pass
 
@@ -516,11 +517,14 @@ def flow_var():
 @click.argument("name")
 @click.argument("key")
 @click.argument("value")
-def flow_var_set(name, key, value):
+@click.option("--env", "is_env", is_flag=True, default=False, help="Also inject as agent env variable")
+def flow_var_set(name, key, value, is_env):
     """Set a flow variable.
 
     \b
-    Example: llmflows flow var set my-flow API_KEY sk-abc123
+    Examples:
+      llmflows flow var set my-flow API_KEY sk-abc123 --env
+      llmflows flow var set my-flow NOTES "for reference only"
     """
     session = _get_session()
     try:
@@ -532,9 +536,10 @@ def flow_var_set(name, key, value):
             raise SystemExit(1)
 
         variables = f.get_variables()
-        variables[key] = value
+        variables[key] = {"value": value, "is_env": is_env}
         flow_svc.update(f.id, variables=json.dumps(variables))
-        click.echo(f"  {click.style(key, fg='cyan')} = {click.style(value, fg='white')}")
+        env_tag = click.style(" [env]", fg="green") if is_env else ""
+        click.echo(f"  {click.style(key, fg='cyan')} = {click.style(value, fg='white')}{env_tag}")
     finally:
         session.close()
 
@@ -558,8 +563,10 @@ def flow_var_list(name):
             return
 
         key_w = max(len(k) for k in variables)
-        for k, v in sorted(variables.items()):
-            click.echo(f"  {click.style(k.ljust(key_w), fg='cyan')}  {v}")
+        for k, entry in sorted(variables.items()):
+            val = entry["value"]
+            env_tag = click.style(" [env]", fg="green") if entry.get("is_env") else ""
+            click.echo(f"  {click.style(k.ljust(key_w), fg='cyan')}  {val}{env_tag}")
     finally:
         session.close()
 

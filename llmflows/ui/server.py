@@ -605,6 +605,7 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
 
 class VariableUpdate(BaseModel):
     value: str
+    is_env: bool = False
 
 
 @app.get("/api/flows/{flow_id}/variables")
@@ -629,7 +630,7 @@ async def set_flow_variable(flow_id: str, key: str, body: VariableUpdate):
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
         variables = flow.get_variables()
-        variables[key] = body.value
+        variables[key] = {"value": body.value, "is_env": body.is_env}
         flow_svc.update(flow_id, variables=json.dumps(variables))
         return variables
     finally:

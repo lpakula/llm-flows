@@ -86,8 +86,8 @@ class Daemon:
         if flow_snapshot and isinstance(flow_snapshot, dict):
             flow_vars = flow_snapshot.get("variables", {})
         for k, v in flow_vars.items():
-            merged[f"flow.{k}"] = v
-            merged[f"space.{k}"] = v
+            merged[f"flow.{k}"] = v["value"]
+            merged[f"space.{k}"] = v["value"]
         return merged
 
     def _finalize_run(self, run_id: str) -> None:
@@ -284,6 +284,13 @@ class Daemon:
             return json.loads(run.flow_snapshot)
         except (json.JSONDecodeError, TypeError):
             return None
+
+    @staticmethod
+    def _env_variables_from_snapshot(snap: Optional[dict]) -> dict[str, str]:
+        """Extract only env-flagged variables from a snapshot as ``{KEY: value}``."""
+        if not snap:
+            return {}
+        return {k: v["value"] for k, v in snap.get("variables", {}).items() if v.get("is_env")}
 
     @staticmethod
     def _get_snapshot_steps(run) -> list[str]:
@@ -939,7 +946,7 @@ class Daemon:
             resume_prompt=resume_prompt,
             attempt=attempt,
             user_responses=user_responses,
-            space_variables=self._get_snapshot(run).get("variables", {}) if self._get_snapshot(run) else {},
+            space_variables=self._env_variables_from_snapshot(self._get_snapshot(run)),
             skills=skill_refs,
             extra_env=extra_env,
         )
@@ -1080,7 +1087,7 @@ class Daemon:
             flow_name=flow_label,
             model=resolved_model,
             agent=summary_agent,
-            space_variables=self._get_snapshot(run).get("variables", {}) if self._get_snapshot(run) else {},
+            space_variables=self._env_variables_from_snapshot(self._get_snapshot(run)),
         )
 
         if launched:

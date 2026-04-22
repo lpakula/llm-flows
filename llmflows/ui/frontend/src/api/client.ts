@@ -85,11 +85,11 @@ export const api = {
   updateSpaceSettings: (id: string, body: Partial<SpaceSettings>) =>
     patch<SpaceSettings>(`/api/spaces/${id}/settings`, body),
   getFlowVariables: (flowId: string) =>
-    get<Record<string, string>>(`/api/flows/${flowId}/variables`),
-  setFlowVariable: (flowId: string, key: string, value: string) =>
-    put<Record<string, string>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`, { value }),
+    get<Record<string, { value: string; is_env: boolean }>>(`/api/flows/${flowId}/variables`),
+  setFlowVariable: (flowId: string, key: string, value: string, is_env: boolean = false) =>
+    put<Record<string, { value: string; is_env: boolean }>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`, { value, is_env }),
   deleteFlowVariable: (flowId: string, key: string) =>
-    del<Record<string, string>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`),
+    del<Record<string, { value: string; is_env: boolean }>>(`/api/flows/${flowId}/variables/${encodeURIComponent(key)}`),
 
   // Agent Aliases (pre-defined, edit agent/model only)
   listAgentAliases: () => get<AgentAlias[]>("/api/agent-aliases"),

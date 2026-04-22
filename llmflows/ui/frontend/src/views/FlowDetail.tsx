@@ -63,7 +63,7 @@ export function FlowDetailView() {
   const [descValue, setDescValue] = useState("");
 
   // Variables
-  const [variables, setVariables] = useState<Record<string, string>>({});
+  const [variables, setVariables] = useState<Record<string, { value: string; is_env: boolean }>>({});
   const [newVarKey, setNewVarKey] = useState("");
   const [newVarValue, setNewVarValue] = useState("");
   const [maxSpendValue, setMaxSpendValue] = useState("");
@@ -171,16 +171,25 @@ export function FlowDetailView() {
   // Variables
   const addVariable = async () => {
     if (!flow || !newVarKey.trim()) return;
-    const updated = await api.setFlowVariable(flow.id, newVarKey.trim(), newVarValue);
+    const updated = await api.setFlowVariable(flow.id, newVarKey.trim(), newVarValue, false);
     setVariables(updated);
     setNewVarKey("");
     setNewVarValue("");
     load();
   };
 
-  const updateVariable = async (key: string, value: string) => {
+  const updateVariable = async (key: string, value: string, is_env?: boolean) => {
     if (!flow) return;
-    const updated = await api.setFlowVariable(flow.id, key, value);
+    const cur = variables[key];
+    const updated = await api.setFlowVariable(flow.id, key, value, is_env ?? cur?.is_env ?? true);
+    setVariables(updated);
+  };
+
+  const toggleVarEnv = async (key: string) => {
+    if (!flow) return;
+    const cur = variables[key];
+    if (!cur) return;
+    const updated = await api.setFlowVariable(flow.id, key, cur.value, !cur.is_env);
     setVariables(updated);
   };
 
@@ -345,7 +354,7 @@ export function FlowDetailView() {
     loadExpandedRun();
   };
 
-  const hasEmptyVariables = Object.entries(variables).some(([, v]) => !v);
+  const hasEmptyVariables = Object.entries(variables).some(([, v]) => !v.value);
   const stepMap = flow ? Object.fromEntries(flow.steps.map((s) => [s.id, s])) : {};
   const sortedSteps = localOrder.map((id) => stepMap[id]).filter(Boolean) as FlowStep[];
   const expandedRun = runs.find((r) => r.id === expandedRunId) || null;
@@ -438,19 +447,28 @@ export function FlowDetailView() {
               Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running.
             </p>
             <div className="space-y-2">
-              {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
+              {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => (
                 <div key={key} className="flex items-center gap-2">
                   <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate" title={key}>{key}</span>
                   <input
-                    value={value}
-                    onChange={(e) => setVariables((v) => ({ ...v, [key]: e.target.value }))}
-                    onBlur={() => updateVariable(key, variables[key])}
-                    onKeyDown={(e) => e.key === "Enter" && updateVariable(key, variables[key])}
-                    className={`w-1/2 bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                      !value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
+                    value={entry.value}
+                    onChange={(e) => setVariables((v) => ({ ...v, [key]: { ...v[key], value: e.target.value } }))}
+                    onBlur={() => updateVariable(key, variables[key].value)}
+                    onKeyDown={(e) => e.key === "Enter" && updateVariable(key, variables[key].value)}
+                    className={`flex-1 min-w-0 bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                      !entry.value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
                     }`}
-                    placeholder={!value ? "required — fill before running" : "value"}
+                    placeholder={!entry.value ? "required — fill before running" : "value"}
                   />
+                  <label className="flex items-center gap-1 shrink-0 cursor-pointer" title="Inject as environment variable at runtime">
+                    <input
+                      type="checkbox"
+                      checked={entry.is_env}
+                      onChange={() => toggleVarEnv(key)}
+                      className="accent-blue-500 w-3 h-3"
+                    />
+                    <span className="text-[10px] text-gray-500">env</span>
+                  </label>
                   <button onClick={() => removeVariable(key)}
                     className="text-xs text-red-400/60 hover:text-red-400 shrink-0">x</button>
                 </div>

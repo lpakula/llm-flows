@@ -184,18 +184,40 @@ Only useful when `max_gate_retries > 1`. Typically set on execute and test steps
 
 Gates have a configurable timeout (default: 60 seconds, set in system config under `daemon.gate_timeout_seconds`). If a gate command exceeds this timeout, it counts as a failure.
 
+### One command per gate
+
+Each gate must be exactly **one** check. Never chain multiple checks with `&&` in a single gate — split them into separate gates instead. This way the agent gets a precise failure message telling it exactly which check failed, rather than a vague "something in this chain broke."
+
+**Bad** — multiple checks crammed into one gate:
+```json
+"gates": [
+  {"command": "command -v ffmpeg >/dev/null 2>&1 && command -v yt-dlp >/dev/null 2>&1 && test -f output.mp3", "message": "Prerequisites not met."}
+]
+```
+
+**Good** — one check per gate:
+```json
+"gates": [
+  {"command": "command -v ffmpeg >/dev/null 2>&1", "message": "ffmpeg must be installed."},
+  {"command": "command -v yt-dlp >/dev/null 2>&1", "message": "yt-dlp must be installed."},
+  {"command": "test -f output.mp3", "message": "Output audio file must exist."}
+]
+```
+
 ### Good gates vs bad gates
 
-**Good gates** — deterministic, fast, objective:
+**Good gates** — deterministic, fast, objective, single-command:
 - `npm test -- --watchAll=false` — tests pass
 - `npm run build` — build succeeds
 - `test -f {{run.dir}}/report.md` — specific file was created
 - `python -m py_compile main.py` — syntax is valid
 - `ls {{run.dir}}/*.png 2>/dev/null | grep -q .` — screenshots exist
 - `git diff --cached --quiet || echo ok` — changes are staged
+- `command -v ffmpeg >/dev/null 2>&1` — tool is installed
 
-**Bad gates** — subjective, slow, unreliable:
+**Bad gates** — subjective, slow, unreliable, or compound:
 - `curl https://api.example.com/health` — external dependency, flaky
+- `command -v foo && command -v bar && test -f baz` — multiple checks in one gate, split them up
 - Complex scripts that might hang
 - Anything that takes more than a few seconds
 
@@ -585,8 +607,12 @@ When a step consumes output from a previous step, describe the format explicitly
           "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles and save each as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load the target URL\n2. Extract the 5 most recent article links\n3. For each, fetch the full article and extract content\n4. Save each article to `{{run.dir}}/article-N.md`\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully",
           "gates": [
             {
-              "command": "test -f {{run.dir}}/article-1.md && test -f {{run.dir}}/article-5.md",
-              "message": "Not all 5 article files were saved."
+              "command": "test -f {{run.dir}}/article-1.md",
+              "message": "article-1.md was not saved."
+            },
+            {
+              "command": "test -f {{run.dir}}/article-5.md",
+              "message": "article-5.md was not saved."
             }
           ]
         },

@@ -413,8 +413,9 @@ class FlowService:
         warnings: list[dict] = []
 
         flow_vars = flow.get_variables()
-        for var_name, var_value in flow_vars.items():
-            if not var_value:
+        for var_name, var_entry in flow_vars.items():
+            val = var_entry["value"] if isinstance(var_entry, dict) else var_entry
+            if not val:
                 warnings.append({
                     "step_name": "",
                     "warning_type": "missing_variable",
