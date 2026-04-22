@@ -77,7 +77,16 @@ def _ensure_daemon_running() -> None:
     # ── child process ────────────────────────────────────────────────────────
     os.setsid()
     write_pid_file(os.getpid())
-    sys.stdin.close()
+
+    # Redirect stdin/stdout/stderr to /dev/null so subprocesses spawned by
+    # the daemon always inherit valid file descriptors (prevents EBADF after
+    # the launching terminal closes).
+    _devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(_devnull, 0)
+    os.dup2(_devnull, 1)
+    os.dup2(_devnull, 2)
+    if _devnull > 2:
+        os.close(_devnull)
 
     fmt = "%(asctime)s %(name)s %(message)s"
     file_handler = logging.FileHandler(log_file)
@@ -130,10 +139,9 @@ def _run_dev_mode(host: str, port: int):
         click.echo(f"Error: frontend directory not found at {FRONTEND_DIR}", err=True)
         sys.exit(1)
 
-    node_modules = FRONTEND_DIR / "node_modules"
-    if not node_modules.exists():
-        click.echo("Installing frontend dependencies...")
-        subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True)
+    click.echo("  Frontend:        checking dependencies...")
+    subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True,
+                   stdout=subprocess.DEVNULL)
 
     vite_port = port
     api_port = port + 1

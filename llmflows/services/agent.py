@@ -193,6 +193,7 @@ class AgentService:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(directory),
+                stdin=subprocess.DEVNULL,
                 stdout=fh,
                 stderr=subprocess.STDOUT,
                 env=env,

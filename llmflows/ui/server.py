@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -1017,7 +1017,7 @@ def _filter_pi_event(event: dict, state: _PiLogState) -> dict | None:
 
 
 @app.get("/api/step-runs/{step_run_id}/logs")
-async def stream_step_run_logs(step_run_id: str):
+async def stream_step_run_logs(step_run_id: str, request: Request):
     """SSE endpoint that tails a StepRun's log file."""
     session, _ = _get_services()
     try:
@@ -1035,12 +1035,38 @@ async def stream_step_run_logs(step_run_id: str):
     if not log_path.exists():
         raise HTTPException(status_code=404, detail="Log file not found on disk")
 
+    def _read_all_events():
+        """Read completed log file in one pass — no polling needed."""
+        pi_state = _PiLogState()
+        with open(log_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    filtered = _filter_pi_event(event, pi_state)
+                    if filtered is None:
+                        continue
+                    yield f"data: {json.dumps(filtered)}\n\n"
+                except json.JSONDecodeError:
+                    yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    if is_completed:
+        return StreamingResponse(
+            _read_all_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     async def tail_log():
         pos = 0
         idle_count = 0
         pi_state = _PiLogState()
-        max_idle = 5 if is_completed else 120
-        while idle_count < max_idle:
+        while idle_count < 120:
+            if await request.is_disconnected():
+                break
             try:
                 size = log_path.stat().st_size
             except FileNotFoundError:
@@ -1078,7 +1104,7 @@ async def stream_step_run_logs(step_run_id: str):
 
 
 @app.get("/api/runs/{run_id}/logs")
-async def stream_run_logs(run_id: str):
+async def stream_run_logs(run_id: str, request: Request):
     """SSE endpoint that tails the agent's NDJSON log file for a FlowRun."""
     session, _ = _get_services()
     try:
@@ -1105,6 +1131,8 @@ async def stream_run_logs(run_id: str):
         pi_state = _PiLogState()
         max_idle = 120
         while idle_count < max_idle:
+            if await request.is_disconnected():
+                break
             try:
                 size = log_path.stat().st_size
             except FileNotFoundError:

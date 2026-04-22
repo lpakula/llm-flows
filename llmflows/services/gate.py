@@ -37,6 +37,7 @@ def evaluate_gates(
         try:
             result = subprocess.run(
                 command, shell=True, cwd=cwd,
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=timeout,
             )
             if result.returncode != 0:
@@ -83,6 +84,7 @@ def evaluate_ifs(
         try:
             result = subprocess.run(
                 command, shell=True, cwd=cwd,
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=timeout,
             )
             if result.returncode != 0:
