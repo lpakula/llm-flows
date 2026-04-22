@@ -136,6 +136,8 @@ export const api = {
   reorderSteps: (flowId: string, stepIds: string[]) =>
     post<Flow>(`/api/flows/${flowId}/reorder`, { step_ids: stepIds }),
   exportFlows: (spaceId: string) => post<unknown>(`/api/spaces/${spaceId}/flows/export`),
+  exportFlowToDisk: (flowId: string) =>
+    post<{ ok: boolean; path: string }>(`/api/flows/${flowId}/export`),
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);

@@ -67,18 +67,6 @@ export function SpaceFlowsView() {
     return 0;
   });
 
-  const exportFlows = async () => {
-    if (!spaceId) return;
-    const data = await api.exportFlows(spaceId);
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${space?.name || "flows"}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const importFlows = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!spaceId) return;
     const file = e.target.files?.[0];
@@ -95,12 +83,6 @@ export function SpaceFlowsView() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-semibold">Flows</h2>
         <div className="flex items-center gap-2">
-          <button
-            onClick={exportFlows}
-            className="border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white text-sm px-4 py-1.5 rounded-lg transition"
-          >
-            Export
-          </button>
           <label className="border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white text-sm px-4 py-1.5 rounded-lg transition cursor-pointer">
             Import
             <input type="file" accept=".json" onChange={importFlows} className="hidden" />

@@ -1592,6 +1592,27 @@ async def export_space_flows(space_id: str):
         session.close()
 
 
+@app.post("/api/flows/{flow_id}/export")
+async def export_flow_to_disk(flow_id: str):
+    """Export a single flow as JSON to the space's flows/ directory."""
+    session = get_session()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space_svc = SpaceService(session)
+        space = space_svc.get(flow.space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        file_path = flow_svc.export_flow_to_disk(flow_id, space.path)
+        return {"ok": True, "path": file_path}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        session.close()
+
+
 @app.post("/api/spaces/{space_id}/flows/import")
 async def import_space_flows(space_id: str, file: UploadFile = File(...)):
     session, space_svc = _get_services()

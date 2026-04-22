@@ -296,6 +296,16 @@ export function FlowDetailView() {
     }
   };
 
+  const exportFlow = async () => {
+    if (!flow) return;
+    try {
+      const result = await api.exportFlowToDisk(flow.id);
+      alert(`Exported to ${result.path}`);
+    } catch (e: unknown) {
+      alert("Export failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const duplicateFlow = async () => {
     if (!flow) return;
     const newName = prompt("Name for the copy:", flow.name + "-copy");
@@ -418,6 +428,7 @@ export function FlowDetailView() {
           )}
         </div>
         <div className="flex items-center gap-3 ml-4 shrink-0">
+          <button onClick={exportFlow} className="text-xs text-gray-400 hover:text-gray-200">Export</button>
           <button onClick={deleteFlow} className="text-xs text-red-500 hover:text-red-400">Delete</button>
         </div>
       </div>
@@ -445,7 +456,7 @@ export function FlowDetailView() {
           <div>
             <h3 className="text-sm font-medium text-gray-200 mb-1">Variables</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running. <br />Toggle <span className="text-emerald-400 font-medium">ENV</span> to also inject as an environment variable at agent runtime. 
+              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running. <br />Toggle <code className="text-gray-400">ENV</code> to also inject as an environment variable at agent runtime. 
             </p>
             <div className="space-y-2">
               {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => (

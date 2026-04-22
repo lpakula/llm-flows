@@ -264,6 +264,66 @@ class FlowService:
             ],
         }
 
+    def export_flow_to_disk(self, flow_id: str, space_path: str) -> str:
+        """Export a single flow as JSON to <space_path>/flows/<flow_name>.json.
+
+        Returns the written file path.
+        """
+        flow = self.get(flow_id)
+        if not flow:
+            raise ValueError(f"Flow {flow_id} not found")
+
+        flow_data: dict = {
+            "name": flow.name,
+            "description": flow.description,
+            "steps": [],
+        }
+        reqs = flow.get_requirements()
+        if reqs.get("tools"):
+            flow_data["requirements"] = reqs
+        flow_variables = flow.get_variables()
+        if flow_variables:
+            flow_data["variables"] = flow_variables
+        if flow.schedule_cron:
+            flow_data["schedule_cron"] = flow.schedule_cron
+            flow_data["schedule_timezone"] = flow.schedule_timezone or "UTC"
+            flow_data["schedule_enabled"] = bool(flow.schedule_enabled)
+        if flow.max_spend_usd:
+            flow_data["max_spend_usd"] = flow.max_spend_usd
+        if flow.max_concurrent_runs and flow.max_concurrent_runs != 1:
+            flow_data["max_concurrent_runs"] = flow.max_concurrent_runs
+
+        for s in sorted(flow.steps, key=lambda s: s.position):
+            step_data: dict = {"name": s.name, "position": s.position, "content": s.content}
+            gates = s.get_gates()
+            if gates:
+                step_data["gates"] = gates
+            ifs = s.get_ifs()
+            if ifs:
+                step_data["ifs"] = ifs
+            if s.agent_alias and s.agent_alias != "normal":
+                step_data["agent_alias"] = s.agent_alias
+            st = _normalize_step_type(s.step_type)
+            if st != "agent":
+                step_data["step_type"] = st
+            if s.allow_max:
+                step_data["allow_max"] = True
+            if s.max_gate_retries is not None and s.max_gate_retries != 5:
+                step_data["max_gate_retries"] = s.max_gate_retries
+            skills = s.get_skills()
+            if skills:
+                step_data["skills"] = skills
+            tools = s.get_tools()
+            if tools:
+                step_data["tools"] = tools
+            flow_data["steps"].append(step_data)
+
+        flows_dir = Path(space_path) / "flows"
+        flows_dir.mkdir(parents=True, exist_ok=True)
+        file_path = flows_dir / f"{flow.name}.json"
+        file_path.write_text(json.dumps(flow_data, indent=2))
+        return str(file_path)
+
     def export_flows(self, space_id: str, path: Optional[Path] = None) -> dict:
         """Export all flows for a space to a dict (optionally write to file)."""
         flows = self.list_by_space(space_id)

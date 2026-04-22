@@ -149,13 +149,21 @@ def flow_delete(name, yes):
 
 @flow.command("export")
 @click.option("--output", "-o", default=None, help="Output file path")
-def flow_export(output):
-    """Export all flows to JSON."""
+@click.option("--name", "-n", default=None, help="Export a single flow by name to flows/<name>.json")
+def flow_export(output, name):
+    """Export flows to JSON. Use --name to export a single flow to the flows/ directory."""
     session = _get_session()
     try:
         space = _resolve_space(session)
         flow_svc = FlowService(session)
-        if output:
+        if name:
+            f = flow_svc.get_by_name(name, space.id)
+            if not f:
+                click.echo(f"Flow '{name}' not found.", err=True)
+                raise SystemExit(1)
+            dest = flow_svc.export_flow_to_disk(f.id, space.path)
+            click.echo(f"Exported to {dest}")
+        elif output:
             flow_svc.export_flows(space.id, Path(output))
             click.echo(f"Exported to {output}")
         else:
