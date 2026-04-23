@@ -2215,6 +2215,9 @@ async def agents_status():
     session, _ = _get_services()
     try:
         result = {}
+        auth_futures: dict[str, tuple[str, asyncio.Task]] = {}
+        loop = asyncio.get_event_loop()
+
         for name, reg in AGENT_REGISTRY.items():
             if reg.get("type") != "code":
                 continue
@@ -2226,9 +2229,8 @@ async def agents_status():
                 if not has_key:
                     cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
                     has_key = bool(cfg and cfg.value)
-            auth_info = None
             if binary_path and not has_key:
-                auth_info = _check_cli_auth(reg["binary"])
+                auth_futures[name] = loop.run_in_executor(None, _check_cli_auth, reg["binary"])
             result[name] = {
                 "label": reg["label"],
                 "available": binary_path is not None,
@@ -2236,9 +2238,16 @@ async def agents_status():
                 "binary_path": binary_path,
                 "command": reg["command"],
                 "api_key_env": api_key_env,
-                "configured": has_key or (auth_info is not None),
-                "auth": auth_info,
+                "configured": has_key,
+                "auth": None,
             }
+
+        for name, future in auth_futures.items():
+            auth_info = await future
+            if auth_info:
+                result[name]["auth"] = auth_info
+                result[name]["configured"] = True
+
         return result
     finally:
         session.close()
