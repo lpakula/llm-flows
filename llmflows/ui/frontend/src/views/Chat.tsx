@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useSearchParams } from "react-router-dom";
 import { RotateCcw, Loader2, Workflow, Rocket, HelpCircle, ArrowUp, ChevronDown } from "lucide-react";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
@@ -157,6 +158,7 @@ const TIERS = ["mini", "normal", "max"] as const;
 type Tier = (typeof TIERS)[number];
 
 export function ChatView() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { selectedSpaceId, chatState, setChatState } = useApp();
   const messages = chatState.messages;
   const sessionId = chatState.sessionId;
@@ -280,6 +282,19 @@ export function ChatView() {
     },
     [streaming, selectedSpaceId, sessionId, tier],
   );
+
+  const promptHandled = useRef(false);
+  useEffect(() => {
+    const prompt = searchParams.get("prompt");
+    if (prompt && !streaming && !promptHandled.current) {
+      promptHandled.current = true;
+      setSearchParams({}, { replace: true });
+      sendMessage(prompt);
+    }
+    if (!searchParams.get("prompt")) {
+      promptHandled.current = false;
+    }
+  }, [searchParams, setSearchParams, sendMessage, streaming]);
 
   const handleNewChat = useCallback(() => {
     if (streaming && abortRef.current) {

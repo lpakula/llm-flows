@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -535,6 +536,10 @@ async def get_connector(server_id: str):
         session.close()
 
 
+GOOGLE_CONNECTOR_IDS = {"gmail", "gdrive", "gcalendar", "youtube"}
+GOOGLE_CREDENTIAL_KEYS = {"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"}
+
+
 @app.post("/api/connectors")
 async def create_connector(body: ConnectorCreateBody):
     from ..db.models import McpConnector
@@ -546,12 +551,26 @@ async def create_connector(body: ConnectorCreateBody):
         catalog_entry = next((c for c in MCP_CATALOG if c["server_id"] == body.server_id), None)
         name = body.name or (catalog_entry["name"] if catalog_entry else body.server_id)
         command = body.command or (catalog_entry["command"] if catalog_entry else "")
+
+        creds = dict(body.credentials or {})
+        if body.server_id in GOOGLE_CONNECTOR_IDS and not (creds.keys() & GOOGLE_CREDENTIAL_KEYS):
+            siblings = session.query(McpConnector).filter(
+                McpConnector.server_id.in_(GOOGLE_CONNECTOR_IDS - {body.server_id})
+            ).all()
+            for sib in siblings:
+                sib_creds = sib.get_credentials()
+                for k in GOOGLE_CREDENTIAL_KEYS:
+                    if k not in creds and sib_creds.get(k):
+                        creds[k] = sib_creds[k]
+                if all(creds.get(k) for k in GOOGLE_CREDENTIAL_KEYS):
+                    break
+
         connector = McpConnector(
             server_id=body.server_id,
             name=name,
             command=command,
             env=json.dumps(body.env or {}),
-            credentials=json.dumps(body.credentials or {}),
+            credentials=json.dumps(creds),
             enabled=False,
             builtin=False,
         )
@@ -2431,10 +2450,12 @@ async def chat(body: ChatBody):
 
     env = _build_pi_env()
 
+    _chat_stderr = (CHAT_SESSIONS_DIR / session_id / "stderr.log").open("w")
+    logging.getLogger("llmflows.chat").info("Chat command: %s", " ".join(cmd))
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=_chat_stderr,
         env=env,
         cwd=space.path if space else str(Path.home()),
     )

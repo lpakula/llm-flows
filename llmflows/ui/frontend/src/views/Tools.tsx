@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import type { ConnectorConfig, ConnectorConfigField, CatalogEntry } from "@/api/types";
-import { AlertCircle, X } from "lucide-react";
+import { AlertCircle, MessageCircle, X } from "lucide-react";
 
 const BUILTIN_IDS = new Set(["browser", "web_search"]);
 
@@ -56,11 +57,12 @@ function Modal({ open, onClose, children }: { open: boolean; onClose: () => void
 /* ---------- Config modal ---------- */
 
 function ConfigModal({
-  connector, open, onClose, onUpdate, isConnected,
+  connector, open, onClose, onUpdate, isConnected, onAskChat,
 }: {
   connector: ConnectorConfig; open: boolean; onClose: () => void;
   onUpdate: (c: ConnectorConfig) => void;
   isConnected?: boolean;
+  onAskChat?: (prompt: string) => void;
 }) {
   const [localConfig, setLocalConfig] = useState<Record<string, string>>(connector.config);
   const [dirty, setDirty] = useState(false);
@@ -162,9 +164,16 @@ function ConfigModal({
           </div>
         )}
 
-        {!isConnected && connector.config_fields.length > 0 && (
+        {!isConnected && connector.config_fields.length > 0 && onAskChat && (
           <p className="text-[11px] text-gray-600">
-            Not sure where to find these? Ask the chat <span className="text-gray-500 font-medium">"How do I setup {connector.name} connector"</span>
+            <button
+              type="button"
+              onClick={() => { onClose(); onAskChat(`Help me configure the ${connector.name} connector. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`); }}
+              className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition"
+            >
+              <MessageCircle className="w-3 h-3" />
+              Ask the agent to configure
+            </button>
           </p>
         )}
 
@@ -294,6 +303,7 @@ function ConnectorBox({ item, onClick, onConnect }: {
 /* ---------- Main view ---------- */
 
 export function ToolsView() {
+  const navigate = useNavigate();
   const [connectors, setConnectors] = useState<ConnectorConfig[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -421,6 +431,7 @@ export function ToolsView() {
           onClose={() => setModalItem(null)}
           onUpdate={handleUpdate}
           isConnected
+          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}`)}
         />
       )}
 
@@ -430,6 +441,7 @@ export function ToolsView() {
           open={!!modalItem}
           onClose={() => setModalItem(null)}
           onUpdate={handleUpdate}
+          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}`)}
         />
       )}
     </div>
