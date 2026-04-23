@@ -98,7 +98,10 @@ class McpService:
             "PORT": str(port),
         }
         for k, v in connector.get_env().items():
-            env_vars[k] = str(v)
+            val = str(v)
+            if val.startswith("~"):
+                val = os.path.expanduser(val)
+            env_vars[k] = val
         for k, v in connector.get_credentials().items():
             env_vars[k] = str(v)
 

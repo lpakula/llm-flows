@@ -124,7 +124,12 @@ async function getSession(sessionId: string): Promise<Session> {
     context = await b.newContext();
     await setupContext(context);
   }
-  const page = await context.newPage();
+
+  const existingPages = context.pages();
+  const blankPage = existingPages.find(
+    (p) => p.url() === "about:blank" || p.url() === "chrome://newtab/",
+  );
+  const page = blankPage && !blankPage.isClosed() ? blankPage : await context.newPage();
 
   const artifactsDir = join(baseArtifactsDir, sessionId);
   mkdirSync(artifactsDir, { recursive: true });
