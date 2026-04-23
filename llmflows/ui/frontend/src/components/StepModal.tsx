@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Gate, AgentAlias, SkillInfo, ToolConfig, StepType } from "@/api/types";
+import type { Gate, AgentAlias, SkillInfo, ConnectorConfig, StepType } from "@/api/types";
 
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
   { value: "agent", label: "Agent", desc: "Pi-powered LLM with read/write/shell tools" },
@@ -25,7 +25,7 @@ interface StepFormData {
   allow_max: boolean;
   max_gate_retries: number;
   skills: string[];
-  tools: string[];
+  connectors: string[];
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -150,37 +150,38 @@ function StepSkillPicker({
   );
 }
 
-function StepToolPicker({
-  tools,
+function StepConnectorPicker({
+  connectors,
   selected,
   onChange,
-}: { tools: ToolConfig[]; selected: string[]; onChange: (next: string[]) => void }) {
+}: { connectors: ConnectorConfig[]; selected: string[]; onChange: (next: string[]) => void }) {
   const toggle = (id: string) => {
     if (selected.includes(id)) onChange(selected.filter((t) => t !== id));
     else onChange([...selected, id]);
   };
-  if (tools.length === 0) return null;
+  if (connectors.length === 0) return null;
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-2">
-        <SectionLabel>Tools</SectionLabel>
+        <SectionLabel>Connectors</SectionLabel>
         <span className="text-[10px] text-gray-600 normal-case tracking-normal">Click to attach/detach</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {tools.map((t) => {
-          const active = selected.includes(t.id);
+        {connectors.map((c) => {
+          const cid = c.server_id || c.id;
+          const active = selected.includes(cid);
           return (
             <button
-              key={t.id}
-              onClick={() => toggle(t.id)}
+              key={cid}
+              onClick={() => toggle(cid)}
               className={`px-2.5 py-1 rounded-md text-xs font-mono border transition-all cursor-pointer ${
                 active
                   ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                   : "border-gray-700/60 text-gray-500 hover:border-gray-500 hover:text-gray-300"
               }`}
             >
-              {t.name}
-              {!t.enabled && active && (
+              {c.name}
+              {!c.enabled && active && (
                 <span className="ml-1 text-[10px] text-amber-400">(off)</span>
               )}
             </button>
@@ -229,7 +230,7 @@ export function StepModal({
   initialData,
   aliases,
   skills,
-  tools,
+  mcpConnectors,
   onSave,
   onClose,
 }: {
@@ -237,7 +238,7 @@ export function StepModal({
   initialData: StepFormData;
   aliases: AgentAlias[];
   skills: SkillInfo[];
-  tools: ToolConfig[];
+  mcpConnectors: ConnectorConfig[];
   onSave: (data: StepFormData) => void;
   onClose: () => void;
 }) {
@@ -330,8 +331,8 @@ export function StepModal({
           <div className="border-t border-gray-800" />
           <StepSkillPicker skills={skills} selected={form.skills} onChange={(s) => onChange({ skills: s })} />
 
-          {/* Tools */}
-          <StepToolPicker tools={tools} selected={form.tools} onChange={(t) => onChange({ tools: t })} />
+          {/* Connectors */}
+          <StepConnectorPicker connectors={mcpConnectors} selected={form.connectors} onChange={(c) => onChange({ connectors: c })} />
 
           {/* Divider */}
           <div className="border-t border-gray-800" />

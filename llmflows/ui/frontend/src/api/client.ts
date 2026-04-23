@@ -1,6 +1,13 @@
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
-  if (!res.ok) throw new Error(`${options?.method || "GET"} ${url}: ${res.status}`);
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail);
+  }
   return res.json();
 }
 
@@ -53,7 +60,7 @@ import type {
   AgentConfigEntry,
   ProviderInfo,
   GatewayConfig,
-  ToolConfig,
+  ConnectorConfig,
   SkillInfo,
 } from "./types";
 
@@ -123,7 +130,7 @@ export const api = {
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
   createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
     post<Flow>(`/api/spaces/${spaceId}/flows`, body),
-  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { tools: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean; schedule_cron: string; schedule_timezone: string; schedule_enabled: boolean }>) =>
+  updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { connectors: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean; schedule_cron: string; schedule_timezone: string; schedule_enabled: boolean }>) =>
     patch<Flow>(`/api/flows/${id}`, body),
   validateFlow: (id: string) => get<{ warnings: FlowWarning[] }>(`/api/flows/${id}/validate`),
   deleteFlow: (id: string) => del<{ ok: boolean }>(`/api/flows/${id}`),
@@ -173,10 +180,15 @@ export const api = {
   updateGatewayConfig: (body: Partial<GatewayConfig>) => patch<GatewayConfig>("/api/config/gateway", body),
   restartGateway: () => post<{ ok: boolean; message: string }>("/api/gateway/restart", {}),
 
-  // Tools
-  getToolsConfig: () => get<ToolConfig[]>("/api/config/tools"),
-  updateToolConfig: (toolId: string, body: { enabled?: boolean; config?: Record<string, string> }) =>
-    patch<ToolConfig>(`/api/config/tools/${toolId}`, body),
+  // Connectors
+  getConnectors: () => get<ConnectorConfig[]>("/api/connectors"),
+  getConnectorCatalog: () => get<import("./types").CatalogEntry[]>("/api/connectors/catalog"),
+  addConnector: (body: { server_id: string; name?: string; command?: string }) =>
+    post<ConnectorConfig>("/api/connectors", body),
+  updateConnector: (serverId: string, body: { name?: string; command?: string; env?: Record<string, string>; credentials?: Record<string, string>; config?: Record<string, string>; enabled?: boolean }) =>
+    patch<ConnectorConfig>(`/api/connectors/${serverId}`, body),
+  deleteConnector: (serverId: string) =>
+    del<{ ok: boolean }>(`/api/connectors/${serverId}`),
 
   // Chat
   sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string, flowName?: string | null) =>

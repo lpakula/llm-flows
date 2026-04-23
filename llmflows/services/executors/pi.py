@@ -4,13 +4,10 @@ Pi provides tool-use (read/write/edit/bash) on top of any LLM provider.
 This executor reuses AgentService to spawn Pi as a subprocess, identical
 to how CodeExecutor works for Cursor/Claude Code.
 
-When web search is enabled in config.toml ([web_search] enabled = true),
-the web-search extension is loaded, giving Pi runs access to web_search
-and web_fetch tools.
-
-When browser is enabled and BROWSER_WS_ENDPOINT is set in ctx.extra_env,
-the browser extension is loaded, giving Pi runs access to browser_navigate,
-browser_snapshot, browser_click, browser_fill, and browser_screenshot tools.
+All external tools (web search, browser, third-party connectors) are
+provided via MCP servers.  When the daemon passes MCP_SERVERS in
+ctx.extra_env, we load the mcp-bridge.ts extension which connects to
+the running SSE servers and registers their tools dynamically.
 """
 
 import logging
@@ -24,39 +21,7 @@ logger = logging.getLogger("llmflows.executor.pi")
 
 _TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
 _NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
-WEB_SEARCH_TOOL = _TOOLS_DIR / "web-search.ts"
-BROWSER_TOOL = _TOOLS_DIR / "browser.ts"
-
-
-def _load_web_search_config() -> dict:
-    """Read [web_search] section from config.toml."""
-    from ...config import load_system_config
-    return load_system_config().get("web_search", {})
-
-
-def _is_web_search_enabled() -> bool:
-    return _load_web_search_config().get("enabled", False)
-
-
-def _resolve_web_search_env() -> dict[str, str]:
-    """Return env vars for the web-search extension."""
-    ws = _load_web_search_config()
-    env: dict[str, str] = {}
-    provider = ws.get("provider", "duckduckgo")
-    env["LLMFLOWS_WEB_SEARCH_PROVIDER"] = provider
-    if provider == "brave":
-        key = ws.get("brave_api_key", "")
-        if key:
-            env["BRAVE_API_KEY"] = key
-    elif provider == "perplexity":
-        key = ws.get("perplexity_api_key", "")
-        if key:
-            env["PERPLEXITY_API_KEY"] = key
-    elif provider == "serpapi":
-        key = ws.get("serpapi_api_key", "")
-        if key:
-            env["SERPAPI_API_KEY"] = key
-    return env
+MCP_BRIDGE_TOOL = _TOOLS_DIR / "mcp-bridge.ts"
 
 
 class PiExecutor(StepExecutor):
@@ -64,18 +29,14 @@ class PiExecutor(StepExecutor):
     def launch(self, ctx: StepContext) -> LaunchResult:
         agent_svc = AgentService(ctx.space_dir, ctx.working_path)
 
-        extensions = []
+        extensions: list[str] = []
         extra_env: dict[str, str] = {}
-        if _is_web_search_enabled():
-            extensions.append(str(WEB_SEARCH_TOOL))
-            extra_env.update(_resolve_web_search_env())
 
         if ctx.extra_env:
             extra_env.update(ctx.extra_env)
-            if ctx.extra_env.get("BROWSER_WS_ENDPOINT"):
-                extensions.append(str(BROWSER_TOOL))
 
-        if extensions:
+        if extra_env.get("MCP_SERVERS"):
+            extensions.append(str(MCP_BRIDGE_TOOL))
             extra_env["NODE_PATH"] = str(_NODE_MODULES)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(

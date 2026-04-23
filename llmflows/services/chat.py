@@ -19,7 +19,7 @@ logger = logging.getLogger("llmflows.chat")
 CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
 _BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
 _NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
-CHAT_SKILLS = ["flows", "overview", "cli", "skills"]
+CHAT_SKILLS = ["flows", "overview", "cli", "skills", "connectors"]
 
 SYSTEM_PROMPT = """\
 # llm-flows Assistant
@@ -48,6 +48,14 @@ If they say yes, explain concisely: \
 - **Skills** — reusable prompt snippets that give agents domain knowledge; attach them to steps. \
 Keep it concise — short bullets, not paragraphs.
 
+## Your tools
+
+You have access to tools provided by enabled connectors. If the browser connector is enabled, \
+you can use `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` \
+directly in this chat to open web pages, click through forms, and help users with tasks that involve a web browser. \
+When a user asks you to help set up a connector or do something in the browser, use these tools directly — \
+do NOT tell them to create a flow or enable a connector. You already have the tools.
+
 ## Your role
 
 - Explain llm-flows concepts clearly and concisely — only when asked
@@ -57,6 +65,7 @@ Keep it concise — short bullets, not paragraphs.
 - Inspect run logs and diagnose failures
 - Help users create skills for their projects
 - Follow best practices from your loaded skills when creating flows
+- Use browser tools directly when users ask for browser-assisted help (e.g. setting up connectors)
 
 ## Building flows
 
@@ -265,22 +274,31 @@ def build_pi_command(
     for sp in (skill_paths or []):
         cmd.extend(["--skill", str(sp)])
 
-    from .executors.pi import WEB_SEARCH_TOOL, _is_web_search_enabled
+    from .executors.pi import MCP_BRIDGE_TOOL
+    from ..db.database import get_session as _get_db_session
+    from ..db.models import McpConnector
 
-    if _is_web_search_enabled() and WEB_SEARCH_TOOL.is_file():
-        cmd.extend(["--extension", str(WEB_SEARCH_TOOL)])
+    session = _get_db_session()
+    try:
+        enabled = session.query(McpConnector).filter_by(enabled=True).all()
+        endpoints = []
+        for c in enabled:
+            if c.port:
+                endpoints.append({"server_id": c.server_id, "url": f"http://localhost:{c.port}"})
+        if endpoints:
+            import json as _json
+            import os
+            os.environ["MCP_SERVERS"] = _json.dumps(endpoints)
+            cmd.extend(["--extension", str(MCP_BRIDGE_TOOL)])
+    finally:
+        session.close()
 
     return cmd
 
 
 def build_pi_env() -> dict[str, str]:
-    """Build the full environment for Pi, including web search vars."""
-    from .executors.pi import _is_web_search_enabled, _resolve_web_search_env
-
+    """Build the full environment for Pi, including MCP server URLs."""
     env = resolve_chat_env()
-    if _is_web_search_enabled():
-        for k, v in _resolve_web_search_env().items():
-            env[k] = v
     env["NODE_PATH"] = str(_NODE_MODULES)
     return env
 
