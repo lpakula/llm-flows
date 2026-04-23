@@ -1,262 +1,436 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
-import type { ToolConfig, ToolConfigField } from "@/api/types";
-import { ChevronRight } from "lucide-react";
+import type { ConnectorConfig, ConnectorConfigField, CatalogEntry } from "@/api/types";
+import { AlertCircle, X } from "lucide-react";
 
-function ToolCard({ tool, onUpdate }: { tool: ToolConfig; onUpdate: (t: ToolConfig) => void }) {
-  const [localConfig, setLocalConfig] = useState<Record<string, string>>(tool.config);
-  const [savingField, setSavingField] = useState<string | null>(null);
-  const [savedField, setSavedField] = useState<string | null>(null);
-  const [togglingEnabled, setTogglingEnabled] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+const BUILTIN_IDS = new Set(["browser", "web_search"]);
 
-  useEffect(() => {
-    setLocalConfig(tool.config);
-  }, [tool]);
+function sid(c: ConnectorConfig) { return c.server_id || c.id; }
 
-  const toggleEnabled = async () => {
-    setTogglingEnabled(true);
-    try {
-      const updated = await api.updateToolConfig(tool.id, { enabled: !tool.enabled });
-      onUpdate(updated);
-      if (!tool.enabled) setExpanded(true);
-    } catch (e) {
-      console.error("Failed to toggle tool:", e);
-    }
-    setTogglingEnabled(false);
-  };
+type UnifiedItem = {
+  id: string;
+  name: string;
+  description: string;
+  connected: boolean;
+  installed: boolean;
+  connector?: ConnectorConfig;
+  catalogEntry?: CatalogEntry;
+};
 
-  const [dirty, setDirty] = useState(false);
-  const [showErrors, setShowErrors] = useState(false);
+function buildItems(connectors: ConnectorConfig[], catalog: CatalogEntry[]): UnifiedItem[] {
+  const installedIds = new Set(connectors.map((c) => sid(c)));
+  const items: UnifiedItem[] = [];
+  for (const c of connectors) {
+    items.push({
+      id: sid(c), name: c.name, description: c.description,
+      connected: c.enabled,
+      installed: true, connector: c,
+    });
+  }
+  for (const entry of catalog) {
+    if (installedIds.has(entry.server_id)) continue;
+    items.push({
+      id: entry.server_id, name: entry.name, description: entry.description,
+      connected: false,
+      installed: false, catalogEntry: entry,
+    });
+  }
+  return items;
+}
 
-  const saveConfig = async () => {
-    if (hasInvalidRequiredFields()) {
-      setShowErrors(true);
-      return;
-    }
-    setShowErrors(false);
-    setSavingField("__all__");
-    try {
-      const updated = await api.updateToolConfig(tool.id, { config: localConfig });
-      onUpdate(updated);
-      setDirty(false);
-      setSavedField("__all__");
-      setTimeout(() => setSavedField((k) => (k === "__all__" ? null : k)), 2000);
-    } catch (e) {
-      console.error("Failed to save tool config:", e);
-    }
-    setSavingField(null);
-  };
+/* ---------- Modal shell ---------- */
 
-  const setField = (key: string, value: string) => {
-    setLocalConfig((prev) => ({ ...prev, [key]: value }));
-    setDirty(true);
-    setShowErrors(false);
-  };
-
-  const inlineFields = (selectKey: string, optionValue: string) =>
-    tool.config_fields.filter(
-      (f) => f.show_when && f.show_when[selectKey] === optionValue,
-    );
-
-  const isTopLevel = (field: ToolConfigField) => !field.show_when;
-
-  const hasInvalidRequiredFields = () => {
-    for (const field of tool.config_fields) {
-      if (!field.show_when) continue;
-      const visible = Object.entries(field.show_when).every(
-        ([k, v]) => localConfig[k] === v,
-      );
-      if (visible && (field.type === "secret" || field.type === "text") && !localConfig[field.key]?.trim()) {
-        return true;
-      }
-    }
-    return false;
-  };
-
+function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+  if (!open) return null;
   return (
-    <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
-      <div
-        className="flex items-center justify-between p-4 cursor-pointer"
-        onClick={() => tool.enabled && tool.config_fields.length > 0 && setExpanded((v) => !v)}
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {tool.enabled && tool.config_fields.length > 0 && (
-            <ChevronRight size={14} className={`text-gray-500 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`} />
-          )}
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">{tool.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
-          </div>
-        </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
-          disabled={togglingEnabled}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-            tool.enabled ? "bg-blue-500" : "bg-gray-700"
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              tool.enabled ? "translate-x-6" : "translate-x-1"
-            }`}
-          />
-        </button>
+    <div ref={backdropRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
+        {children}
       </div>
-
-      {tool.enabled && expanded && (tool.config_fields.length > 0 || tool.info) && (
-        <div className="border-t border-gray-800 p-4 space-y-4">
-          {tool.info && tool.info.map((item, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                item.status === "ok" ? "bg-green-400" : "bg-amber-400"
-              }`} />
-              <span className="text-xs text-gray-500 font-mono">{item.text}</span>
-            </div>
-          ))}
-          {tool.config_fields.filter(isTopLevel).map((field) => (
-            <div key={field.key}>
-              <label className="text-xs font-medium text-gray-400 mb-1.5 block">
-                {field.label}
-              </label>
-
-              {field.type === "select" ? (
-                <div className="space-y-1.5">
-                  {field.options?.map((opt) => {
-                    const isActive = localConfig[field.key] === opt.value;
-                    const nested = inlineFields(field.key, opt.value);
-
-                    return (
-                      <div
-                        key={opt.value}
-                        className={`flex items-center gap-2.5 rounded-lg border p-3 transition-colors ${
-                          isActive
-                            ? "border-blue-500/50 bg-blue-500/5"
-                            : "border-gray-800 bg-gray-900 hover:border-gray-700 cursor-pointer"
-                        }`}
-                        onClick={() => !isActive && setField(field.key, opt.value)}
-                      >
-                        <div
-                          className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                            isActive ? "border-blue-500" : "border-gray-600"
-                          }`}
-                        >
-                          {isActive && (
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                          )}
-                        </div>
-                        <span className="font-medium text-sm text-white whitespace-nowrap">
-                          {opt.label}
-                        </span>
-                        {opt.hint && !isActive && (
-                          <span className="text-[10px] text-gray-500">
-                            {opt.hint}
-                          </span>
-                        )}
-                        {isActive && nested.length > 0 && nested.map((nf) => {
-                          const missing = showErrors && !localConfig[nf.key]?.trim();
-                          return (
-                            <div key={nf.key} className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type={nf.type === "secret" ? "password" : "text"}
-                                value={localConfig[nf.key] ?? ""}
-                                onChange={(e) => setField(nf.key, e.target.value)}
-                                onKeyDown={(e) =>
-                                  e.key === "Enter" && !hasInvalidRequiredFields() && saveConfig()
-                                }
-                                placeholder={nf.label}
-                                className={`bg-gray-800 border rounded px-2 py-1 text-xs w-48 font-mono focus:outline-none ${
-                                  missing ? "border-amber-500/60" : "border-gray-700 focus:border-gray-500"
-                                }`}
-                              />
-                              {missing && (
-                                <span className="text-[11px] text-amber-400 whitespace-nowrap">Required</span>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {isActive && nested.length === 0 && opt.hint && (
-                          <span className="text-[10px] text-gray-500">
-                            {opt.hint}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <input
-                  type={field.type === "secret" ? "password" : "text"}
-                  value={localConfig[field.key] ?? ""}
-                  onChange={(e) => setField(field.key, e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && !hasInvalidRequiredFields() && saveConfig()
-                  }
-                  placeholder={field.placeholder}
-                  className="bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm w-72 font-mono focus:outline-none focus:border-gray-500"
-                />
-              )}
-            </div>
-          ))}
-
-          {dirty && (
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                onClick={saveConfig}
-                disabled={savingField === "__all__"}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {savingField === "__all__" ? "Saving..." : "Save"}
-              </button>
-              {savedField === "__all__" && (
-                <span className="text-xs text-green-400">Saved</span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-export function ToolsView() {
-  const [tools, setTools] = useState<ToolConfig[]>([]);
-  const [loading, setLoading] = useState(true);
+/* ---------- Config modal ---------- */
+
+function ConfigModal({
+  connector, open, onClose, onUpdate, isConnected,
+}: {
+  connector: ConnectorConfig; open: boolean; onClose: () => void;
+  onUpdate: (c: ConnectorConfig) => void;
+  isConnected?: boolean;
+}) {
+  const [localConfig, setLocalConfig] = useState<Record<string, string>>(connector.config);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      try {
-        setTools(await api.getToolsConfig());
-      } catch (e) {
-        console.error("Failed to load tools config:", e);
-      }
-      setLoading(false);
-    })();
-  }, []);
+    setLocalConfig(connector.config);
+    setDirty(false); setSaved(false); setShowErrors(false);
+  }, [connector]);
 
-  const handleUpdate = (updated: ToolConfig) => {
-    setTools((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  const setField = (key: string, value: string) => {
+    setLocalConfig((prev) => ({ ...prev, [key]: value }));
+    setDirty(true); setShowErrors(false);
+  };
+
+  const isTopLevel = (f: ConnectorConfigField) => !f.show_when;
+  const inlineFields = (sk: string, ov: string) =>
+    connector.config_fields.filter((f) => f.show_when && f.show_when[sk] === ov);
+
+  const hasInvalid = () => {
+    for (const f of connector.config_fields) {
+      if (!f.show_when) continue;
+      const vis = Object.entries(f.show_when).every(([k, v]) => localConfig[k] === v);
+      if (vis && (f.type === "secret" || f.type === "text") && !localConfig[f.key]?.trim()) return true;
+    }
+    return false;
+  };
+
+  const requiredKeys = new Set(connector.required_credentials ?? []);
+  const missingRequired = connector.config_fields
+    .filter((f) => requiredKeys.has(f.key))
+    .some((f) => !localConfig[f.key]?.trim());
+
+  const saveConfig = async () => {
+    if (hasInvalid()) { setShowErrors(true); return; }
+    setShowErrors(false); setSaving(true);
+    try {
+      const updated = await api.updateConnector(sid(connector), { config: localConfig, enabled: true });
+      onUpdate(updated);
+      onClose();
+    } catch (e) { console.error("Failed to save:", e); }
+    setSaving(false);
+  };
+
+  const doDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      const updated = await api.updateConnector(sid(connector), { enabled: false });
+      onUpdate(updated);
+      onClose();
+    } catch (e) { console.error("Disconnect failed:", e); }
+    setDisconnecting(false);
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <h2 className="text-xl font-semibold mb-2">Tools</h2>
-      <p className="text-xs text-gray-500 mb-6">
-        Enable tools to extend agent capabilities. Each tool adds new
-        functionality to all runs.
-      </p>
-
-      {loading && <div className="text-gray-500">Loading...</div>}
-
-      {!loading && (
-        <div className="space-y-3">
-          {tools.map((tool) => (
-            <ToolCard key={tool.id} tool={tool} onUpdate={handleUpdate} />
-          ))}
-          {tools.length === 0 && (
-            <p className="text-sm text-gray-500">No tools available.</p>
-          )}
+    <Modal open={open} onClose={onClose}>
+      <div className="p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">{connector.name}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 p-1"><X size={16} /></button>
         </div>
+
+        <p className="text-sm text-gray-500">{connector.description}</p>
+
+        {connector.info && connector.info.length > 0 && (
+          <div className="space-y-1.5">
+            {connector.info.map((item, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${item.status === "ok" ? "bg-green-400" : "bg-amber-400"}`} />
+                <span className="text-xs text-gray-500 font-mono">{item.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {connector.config_fields.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">Configuration</h3>
+            {connector.config_fields.filter(isTopLevel).map((field) => (
+              <div key={field.key}>
+                <label className="text-xs font-medium text-gray-400 mb-1.5 block">{field.label}</label>
+                {field.type === "select" ? (
+                  <SelectField field={field} localConfig={localConfig} setField={setField}
+                    inlineFields={inlineFields} showErrors={showErrors}
+                    hasInvalid={hasInvalid} saveConfig={saveConfig} />
+                ) : (
+                  <input type={field.type === "secret" ? "password" : "text"}
+                    value={localConfig[field.key] ?? ""}
+                    onChange={(e) => setField(field.key, e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !hasInvalid() && saveConfig()}
+                    placeholder={field.placeholder}
+                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-gray-500" />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!isConnected && connector.config_fields.length > 0 && (
+          <p className="text-[11px] text-gray-600">
+            Not sure where to find these? Ask the chat <span className="text-gray-500 font-medium">"How do I setup {connector.name} connector"</span>
+          </p>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+          {isConnected ? (
+            <button onClick={doDisconnect} disabled={disconnecting}
+              className="text-xs text-gray-500 hover:text-red-400 transition-colors">
+              {disconnecting ? "Disconnecting..." : "Disconnect"}
+            </button>
+          ) : <span />}
+          <div className="flex items-center gap-3">
+            {saved && <span className="text-xs text-green-400">Saved</span>}
+            <button onClick={saveConfig} disabled={saving || (!isConnected && missingRequired)}
+              className="px-4 py-2 text-xs font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              {saving ? "Saving..." : isConnected ? "Save" : "Connect"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Shared select field ---------- */
+
+function SelectField({
+  field, localConfig, setField, inlineFields, showErrors, hasInvalid, saveConfig,
+}: {
+  field: ConnectorConfigField; localConfig: Record<string, string>;
+  setField: (k: string, v: string) => void;
+  inlineFields: (sk: string, ov: string) => ConnectorConfigField[];
+  showErrors: boolean; hasInvalid: () => boolean; saveConfig: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {field.options?.map((opt) => {
+        const isActive = localConfig[field.key] === opt.value;
+        const nested = inlineFields(field.key, opt.value);
+        return (
+          <div key={opt.value}
+            className={`flex items-center gap-2.5 rounded-lg border p-3 transition-colors ${
+              isActive ? "border-blue-500/50 bg-blue-500/5" : "border-gray-800 bg-gray-900 hover:border-gray-700 cursor-pointer"
+            }`}
+            onClick={() => !isActive && setField(field.key, opt.value)}>
+            <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+              isActive ? "border-blue-500" : "border-gray-600"
+            }`}>
+              {isActive && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+            </div>
+            <span className="font-medium text-sm text-white whitespace-nowrap">{opt.label}</span>
+            {opt.hint && !isActive && <span className="text-[10px] text-gray-500">{opt.hint}</span>}
+            {isActive && nested.length > 0 && nested.map((nf) => {
+              const missing = showErrors && !localConfig[nf.key]?.trim();
+              return (
+                <div key={nf.key} className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <input type={nf.type === "secret" ? "password" : "text"}
+                    value={localConfig[nf.key] ?? ""}
+                    onChange={(e) => setField(nf.key, e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !hasInvalid() && saveConfig()}
+                    placeholder={nf.label}
+                    className={`bg-gray-800 border rounded px-2 py-1 text-xs w-48 font-mono focus:outline-none ${
+                      missing ? "border-amber-500/60" : "border-gray-700 focus:border-gray-500"
+                    }`} />
+                  {missing && <span className="text-[11px] text-amber-400 whitespace-nowrap">Required</span>}
+                </div>
+              );
+            })}
+            {isActive && nested.length === 0 && opt.hint && <span className="text-[10px] text-gray-500">{opt.hint}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- Connector card ---------- */
+
+function ConnectorBox({ item, onClick, onConnect }: {
+  item: UnifiedItem; onClick: () => void; onConnect?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const handleConnectClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onConnect) return;
+    setBusy(true);
+    await onConnect();
+    setBusy(false);
+  };
+
+  const status = item.connected ? "connected"
+    : onConnect ? "connect"
+    : !item.connected && BUILTIN_IDS.has(item.id) ? "disabled"
+    : null;
+
+  return (
+    <div onClick={item.connected ? onClick : undefined}
+      className={`text-left rounded-xl border border-gray-800 bg-gray-900 hover:border-gray-600 transition-colors p-5 flex items-center gap-4 ${item.connected ? "cursor-pointer" : ""}`}>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {status === "connected" && (
+            <span className="w-2 h-2 rounded-full shrink-0 bg-green-400" />
+          )}
+          <span className="text-sm font-medium text-white truncate">{item.name}</span>
+        </div>
+        <span className="text-[11px] text-gray-500 block truncate">{item.description}</span>
+      </div>
+      <div className="shrink-0">
+        {status === "connect" && (
+          <button onClick={handleConnectClick} disabled={busy}
+            className="text-[11px] font-medium text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1 rounded-lg transition-colors disabled:opacity-50">
+            {busy ? "Connecting..." : "Connect"}
+          </button>
+        )}
+        {status === "disabled" && (
+          <button onClick={(e) => { e.stopPropagation(); onClick(); }}
+            className="text-[11px] font-medium text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1 rounded-lg transition-colors">
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Main view ---------- */
+
+export function ToolsView() {
+  const [connectors, setConnectors] = useState<ConnectorConfig[]>([]);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalItem, setModalItem] = useState<UnifiedItem | null>(null);
+
+  const load = async () => {
+    try {
+      const [c, cat] = await Promise.all([api.getConnectors(), api.getConnectorCatalog()]);
+      setConnectors(c); setCatalog(cat);
+    } catch (e) { console.error("Failed to load connectors:", e); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const onFocus = () => { load(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  const handleUpdate = (updated: ConnectorConfig) => {
+    setConnectors((prev) => prev.map((c) => (sid(c) === sid(updated) ? updated : c)));
+  };
+
+  const handleInstall = async (item: UnifiedItem) => {
+    if (!item.installed && item.catalogEntry) {
+      try {
+        await api.addConnector({ server_id: item.catalogEntry.server_id });
+        await load();
+      } catch (e) { console.error("Failed to install:", e); }
+    }
+  };
+
+  const [connectError, setConnectError] = useState<{ id: string; msg: string } | null>(null);
+
+  const startApiKeyConnect = async (item: UnifiedItem) => {
+    if (!item.installed) await handleInstall(item);
+    await load();
+    const refreshed = (await api.getConnectors()).find((c) => (c.server_id || c.id) === item.id);
+    if (refreshed) {
+      setConnectors((prev) => {
+        const ids = new Set(prev.map((c) => sid(c)));
+        return ids.has(sid(refreshed)) ? prev.map((c) => sid(c) === sid(refreshed) ? refreshed : c) : [...prev, refreshed];
+      });
+      setModalItem({ ...item, installed: true, connector: refreshed });
+    }
+  };
+
+  const items = buildItems(connectors, catalog);
+  const connectedItems = items.filter((i) => i.connected);
+  const notConnectedServices = items.filter((i) => !i.connected && !BUILTIN_IDS.has(i.id));
+  const builtinTools = items.filter((i) => !i.connected && BUILTIN_IDS.has(i.id));
+
+  const freshModalItem = modalItem ? items.find((i) => i.id === modalItem.id) ?? modalItem : null;
+
+  const isConnectedModal = freshModalItem?.connected && freshModalItem?.connector;
+  const isSetupModal = freshModalItem && !freshModalItem.connected && freshModalItem.connector;
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="space-y-8">
+        <div>
+          <h2 className="text-xl font-semibold mb-1">Connectors</h2>
+          <p className="text-xs text-gray-500">
+            Connect services and configure tools for your flows.
+          </p>
+        </div>
+
+        {loading && <div className="text-gray-500">Loading...</div>}
+
+        {!loading && (
+          <>
+            {connectedItems.length > 0 && (
+              <section>
+                <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-3">Connected</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {connectedItems.map((i) => (
+                    <ConnectorBox key={i.id} item={i} onClick={() => setModalItem(i)} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {notConnectedServices.length > 0 && (
+              <section>
+                <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-3">Not Connected</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {notConnectedServices.map((i) => (
+                    <ConnectorBox key={i.id} item={i} onClick={() => setModalItem(i)}
+                      onConnect={() => startApiKeyConnect(i)} />
+                  ))}
+                </div>
+                {connectError && (
+                  <div className="flex items-start gap-2 mt-3 rounded-lg bg-red-500/5 border border-red-500/20 px-4 py-3">
+                    <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-red-400">{connectError.msg}</p>
+                    <button onClick={() => setConnectError(null)} className="ml-auto text-red-400/50 hover:text-red-400 shrink-0">
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {builtinTools.length > 0 && (
+              <section>
+                <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-3">Tools</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {builtinTools.map((i) => (
+                    <ConnectorBox key={i.id} item={i} onClick={() => setModalItem(i)} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+          </>
+        )}
+      </div>
+
+      {freshModalItem && isConnectedModal && (
+        <ConfigModal
+          connector={freshModalItem.connector!}
+          open={!!modalItem}
+          onClose={() => setModalItem(null)}
+          onUpdate={handleUpdate}
+          isConnected
+        />
+      )}
+
+      {freshModalItem && isSetupModal && (
+        <ConfigModal
+          connector={freshModalItem.connector!}
+          open={!!modalItem}
+          onClose={() => setModalItem(null)}
+          onUpdate={handleUpdate}
+        />
       )}
     </div>
   );

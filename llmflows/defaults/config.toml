@@ -6,13 +6,9 @@ summarizer_language = "English"
 [ui]
 port = 4300
 host = "localhost"
-[web_search]
+[mcp]
 enabled = true
-provider = "duckduckgo"
-[browser]
-enabled = false
-headless = false
-user_data_dir = "~/.llmflows/browser-profile"
+port_range_start = 19100
 [channels.telegram]
 enabled = false
 bot_token = ""

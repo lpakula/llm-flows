@@ -598,15 +598,15 @@ install_node_tools() {
 
     log_info "Installing Node tool dependencies to $tools_dir ..."
 
-    if run_quiet_step "Installing Node packages" npm install --prefix "$tools_dir" playwright "@sinclair/typebox" tsx; then
+    if run_quiet_step "Installing Node packages" npm install --prefix "$tools_dir" playwright "@sinclair/typebox" tsx "@modelcontextprotocol/sdk"; then
         log_success "Node tool dependencies installed"
     else
         log_warning "Failed to install Node tool dependencies"
-        log_muted "  Run manually: npm install --prefix ~/.llmflows playwright @sinclair/typebox tsx"
+        log_muted "  Run manually: npm install --prefix ~/.llmflows playwright @sinclair/typebox tsx @modelcontextprotocol/sdk"
         return 1
     fi
 
-    log_success "Browser tools ready (uses system Chrome by default)"
+    log_success "MCP tools ready (browser uses system Chrome by default)"
     return 0
 }
 

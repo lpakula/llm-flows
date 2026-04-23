@@ -110,7 +110,7 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
                     step === s ? "border-blue-500 text-blue-400" : "border-gray-600 text-gray-500"
                   }`}>{s}</span>
                 )}
-                {s === 1 ? "Agents" : "Tools"}
+                {s === 1 ? "Agents" : "Connectors"}
               </button>
             );
           })}
@@ -246,30 +246,30 @@ export function WelcomeView({ onComplete }: { onComplete: () => void }) {
           </div>
         )}
 
-        {/* Step 2: Tools */}
+        {/* Step 2: Connectors */}
         {step === 2 && (
-          <ToolsStep onComplete={onComplete} onBack={() => setStep(1)} />
+          <ConnectorsStep onComplete={onComplete} onBack={() => setStep(1)} />
         )}
       </div>
     </div>
   );
 }
 
-function WelcomeToolCard({ tool, onUpdate }: { tool: import("@/api/types").ToolConfig; onUpdate: (t: import("@/api/types").ToolConfig) => void }) {
-  const [localConfig, setLocalConfig] = useState<Record<string, string>>(tool.config);
+function WelcomeConnectorCard({ connector, onUpdate }: { connector: import("@/api/types").ConnectorConfig; onUpdate: (c: import("@/api/types").ConnectorConfig) => void }) {
+  const [localConfig, setLocalConfig] = useState<Record<string, string>>(connector.config);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
-  useEffect(() => { setLocalConfig(tool.config); }, [tool]);
+  useEffect(() => { setLocalConfig(connector.config); }, [connector]);
 
   const toggleEnabled = async () => {
     setTogglingEnabled(true);
     try {
-      const updated = await api.updateToolConfig(tool.id, { enabled: !tool.enabled });
+      const updated = await api.updateConnector(connector.server_id || connector.id, { enabled: !connector.enabled });
       onUpdate(updated);
-    } catch (e) { console.error("Failed to toggle tool:", e); }
+    } catch (e) { console.error("Failed to toggle connector:", e); }
     setTogglingEnabled(false);
   };
 
@@ -280,7 +280,7 @@ function WelcomeToolCard({ tool, onUpdate }: { tool: import("@/api/types").ToolC
   };
 
   const hasInvalidRequiredFields = () => {
-    for (const field of tool.config_fields) {
+    for (const field of connector.config_fields) {
       if (!field.show_when) continue;
       const visible = Object.entries(field.show_when).every(
         ([k, v]) => localConfig[k] === v,
@@ -300,43 +300,43 @@ function WelcomeToolCard({ tool, onUpdate }: { tool: import("@/api/types").ToolC
     setShowErrors(false);
     setSaving(true);
     try {
-      const updated = await api.updateToolConfig(tool.id, { config: localConfig });
+      const updated = await api.updateConnector(connector.server_id || connector.id, { config: localConfig });
       onUpdate(updated);
       setDirty(false);
-    } catch (e) { console.error("Failed to save tool config:", e); }
+    } catch (e) { console.error("Failed to save connector config:", e); }
     setSaving(false);
   };
 
   const inlineFields = (selectKey: string, optionValue: string) =>
-    tool.config_fields.filter((f) => f.show_when && f.show_when[selectKey] === optionValue);
+    connector.config_fields.filter((f) => f.show_when && f.show_when[selectKey] === optionValue);
 
-  const isTopLevel = (field: import("@/api/types").ToolConfigField) => !field.show_when;
+  const isTopLevel = (field: import("@/api/types").ConnectorConfigField) => !field.show_when;
 
   return (
     <div className={`rounded-xl border overflow-hidden transition-colors ${
-      tool.enabled ? "border-blue-500/30 bg-blue-500/5" : "border-gray-800 bg-gray-900/50"
+      connector.enabled ? "border-blue-500/30 bg-blue-500/5" : "border-gray-800 bg-gray-900/50"
     }`}>
       <div className="flex items-center justify-between p-3">
         <div className="min-w-0">
-          <span className="font-medium text-sm text-white">{tool.name}</span>
-          <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
+          <span className="font-medium text-sm text-white">{connector.name}</span>
+          <p className="text-xs text-gray-500 mt-0.5">{connector.description}</p>
         </div>
         <button
           onClick={toggleEnabled}
           disabled={togglingEnabled}
           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-            tool.enabled ? "bg-blue-500" : "bg-gray-700"
+            connector.enabled ? "bg-blue-500" : "bg-gray-700"
           }`}
         >
           <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-            tool.enabled ? "translate-x-6" : "translate-x-1"
+            connector.enabled ? "translate-x-6" : "translate-x-1"
           }`} />
         </button>
       </div>
 
-      {tool.enabled && tool.config_fields.length > 0 && (
+      {connector.enabled && connector.config_fields.length > 0 && (
         <div className="border-t border-gray-800/60 p-3 space-y-3">
-          {tool.config_fields.filter(isTopLevel).map((field) => (
+          {connector.config_fields.filter(isTopLevel).map((field) => (
             <div key={field.key}>
               <label className="text-xs font-medium text-gray-400 mb-1.5 block">{field.label}</label>
               {field.type === "select" ? (
@@ -420,32 +420,32 @@ function WelcomeToolCard({ tool, onUpdate }: { tool: import("@/api/types").ToolC
   );
 }
 
-function ToolsStep({ onComplete, onBack }: { onComplete: () => void; onBack: () => void }) {
-  const [tools, setTools] = useState<import("@/api/types").ToolConfig[]>([]);
+function ConnectorsStep({ onComplete, onBack }: { onComplete: () => void; onBack: () => void }) {
+  const [connectors, setConnectors] = useState<import("@/api/types").ConnectorConfig[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const loaded = await api.getToolsConfig();
+        const loaded = await api.getConnectors();
         const disabled = await Promise.all(
-          loaded.map(async (t) => {
-            if (t.enabled) {
-              try { return await api.updateToolConfig(t.id, { enabled: false }); } catch { /* ignore */ }
+          loaded.map(async (c) => {
+            if (c.enabled) {
+              try { return await api.updateConnector(c.server_id || c.id, { enabled: false }); } catch { /* ignore */ }
             }
-            return t;
+            return c;
           })
         );
-        setTools(disabled);
+        setConnectors(disabled);
       } catch (e) {
-        console.error("Failed to load tools:", e);
+        console.error("Failed to load connectors:", e);
       }
       setLoading(false);
     })();
   }, []);
 
-  const handleUpdate = (updated: import("@/api/types").ToolConfig) => {
-    setTools((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  const handleUpdate = (updated: import("@/api/types").ConnectorConfig) => {
+    setConnectors((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
   };
 
   return (
@@ -453,10 +453,10 @@ function ToolsStep({ onComplete, onBack }: { onComplete: () => void; onBack: () 
       <div className="mb-6">
         <div className="flex items-center gap-2.5 mb-2">
           <Wrench size={18} className="text-blue-400" />
-          <h2 className="text-lg font-semibold">Agent tools</h2>
+          <h2 className="text-lg font-semibold">Connectors</h2>
         </div>
         <p className="text-sm text-gray-500">
-          Tools extend agent capabilities. Toggle the ones you want available during runs.
+          Connectors extend agent capabilities. Toggle the ones you want available during runs.
         </p>
       </div>
 
@@ -464,14 +464,14 @@ function ToolsStep({ onComplete, onBack }: { onComplete: () => void; onBack: () 
 
       {!loading && (
         <div className="space-y-3">
-          {tools.map((tool) => (
-            <WelcomeToolCard key={tool.id} tool={tool} onUpdate={handleUpdate} />
+          {connectors.map((c) => (
+            <WelcomeConnectorCard key={c.id} connector={c} onUpdate={handleUpdate} />
           ))}
         </div>
       )}
 
       <p className="text-xs text-gray-600 pt-2">
-        You can reconfigure tools anytime on the Tools page.
+        You can reconfigure connectors anytime on the Connectors page.
       </p>
 
       <div className="flex justify-between pt-4">

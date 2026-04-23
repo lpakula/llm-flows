@@ -1,5 +1,6 @@
 """SQLAlchemy models for llmflows."""
 
+import json as _json
 import secrets
 import string
 from datetime import datetime, timezone
@@ -64,6 +65,66 @@ class AgentConfig(Base):
             "key": self.key,
             "value": self.value,
         }
+
+
+class McpConnector(Base):
+    __tablename__ = "mcp_connectors"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    server_id: str = Column(String(50), unique=True, nullable=False)
+    name: str = Column(String(100), nullable=False)
+    command: str = Column(Text, default="")
+    port: int = Column(Integer, nullable=True)
+    env: str = Column(Text, default="{}")
+    credentials: str = Column(Text, default="{}")
+    enabled: bool = Column(Boolean, default=False)
+    builtin: bool = Column(Boolean, default=False)
+    auth_status: str = Column(String(30), default="not_configured")
+    auth_error: str = Column(Text, nullable=True)
+    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                                  onupdate=lambda: datetime.now(timezone.utc))
+
+    def get_env(self) -> dict:
+        try:
+            return _json.loads(self.env or "{}")
+        except (_json.JSONDecodeError, TypeError):
+            return {}
+
+    def get_credentials(self) -> dict:
+        try:
+            return _json.loads(self.credentials or "{}")
+        except (_json.JSONDecodeError, TypeError):
+            return {}
+
+    def to_dict(self, mask_credentials: bool = True) -> dict:
+        creds = self.get_credentials()
+        if mask_credentials:
+            creds = {k: ("••••" if v else "") for k, v in creds.items()}
+        return {
+            "id": self.id,
+            "server_id": self.server_id,
+            "name": self.name,
+            "command": self.command,
+            "port": self.port,
+            "env": self.get_env(),
+            "credentials": creds,
+            "enabled": bool(self.enabled),
+            "builtin": bool(self.builtin),
+            "auth_status": self.auth_status or "not_configured",
+            "auth_error": self.auth_error,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+
+    state: str = Column(String(64), primary_key=True)
+    connector_id: str = Column(String(6), nullable=False)
+    redirect_uri: str = Column(Text, nullable=False)
+    created_at: datetime = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class Space(Base):
@@ -143,7 +204,7 @@ class Flow(Base):
         except (json.JSONDecodeError, TypeError):
             raw = {}
         return {
-            "tools": raw.get("tools", []),
+            "connectors": raw.get("connectors", []),
         }
 
     def get_variables(self) -> dict:
@@ -198,7 +259,7 @@ class FlowStep(Base):
     allow_max: bool = Column(Boolean, default=False)
     max_gate_retries: int = Column(Integer, default=5)
     skills: str = Column(Text, default="[]")
-    tools: str = Column(Text, default="[]")
+    connectors: str = Column(Text, default="[]")
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -229,11 +290,11 @@ class FlowStep(Base):
         except (json.JSONDecodeError, TypeError):
             return []
 
-    def get_tools(self) -> list[str]:
-        """Parse tools JSON into a list of tool names."""
+    def get_connectors(self) -> list[str]:
+        """Parse connectors JSON into a list of connector IDs."""
         import json
         try:
-            return json.loads(self.tools or "[]")
+            return json.loads(self.connectors or "[]")
         except (json.JSONDecodeError, TypeError):
             return []
 
@@ -251,7 +312,7 @@ class FlowStep(Base):
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
-            "tools": self.get_tools(),
+            "connectors": self.get_connectors(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

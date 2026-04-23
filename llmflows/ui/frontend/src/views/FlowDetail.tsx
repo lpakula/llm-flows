@@ -11,7 +11,7 @@ import { ImageLightbox } from "@/components/ImageLightbox";
 import { StepModal } from "@/components/StepModal";
 import type {
   Flow, FlowStep, FlowRun, FlowWarning, Gate, AgentAlias, SkillInfo,
-  ToolConfig, StepRunInfo, GateFailure,
+  ConnectorConfig, StepRunInfo, GateFailure,
 } from "@/api/types";
 import {
   statusBadge, displayStatus, formatSeconds, formatCost,
@@ -54,7 +54,7 @@ export function FlowDetailView() {
   const [runs, setRuns] = useState<FlowRun[]>([]);
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
   const [spaceSkills, setSpaceSkills] = useState<SkillInfo[]>([]);
-  const [tools, setTools] = useState<ToolConfig[]>([]);
+  const [mcpConnectors, setMcpConnectors] = useState<ConnectorConfig[]>([]);
 
   // Inline editing
   const [editingName, setEditingName] = useState(false);
@@ -111,10 +111,10 @@ export function FlowDetailView() {
 
   const load = useCallback(async () => {
     if (!flowId) return;
-    const [f, al, t] = await Promise.all([
+    const [f, al, mc] = await Promise.all([
       api.getFlow(flowId),
       api.listAgentAliases(),
-      api.getToolsConfig(),
+      api.getConnectors(),
     ]);
     setFlow(f);
     setSelectedSpaceId(f.space_id);
@@ -126,7 +126,7 @@ export function FlowDetailView() {
     setSchedTz(f.schedule_timezone || "UTC");
     setSchedEnabled(f.schedule_enabled || false);
     setAliases(al);
-    setTools(t);
+    setMcpConnectors(mc);
     setLocalOrder([...f.steps].sort((a, b) => a.position - b.position).map((s) => s.id));
     try {
       const sk = await api.listSkills(f.space_id);
@@ -226,7 +226,7 @@ export function FlowDetailView() {
 
   // Steps
   const saveStep = async (data: { name: string; content: string; gates: Gate[]; ifs: Gate[];
-    agent_alias: string; step_type: string; allow_max: boolean; max_gate_retries: number; skills: string[]; tools: string[] }) => {
+    agent_alias: string; step_type: string; allow_max: boolean; max_gate_retries: number; skills: string[]; connectors: string[] }) => {
     if (!flow || !stepModal) return;
     if (stepModal.mode === "edit" && stepModal.step) {
       await api.updateStep(flow.id, stepModal.step.id, {
@@ -235,7 +235,7 @@ export function FlowDetailView() {
         ifs: data.ifs.filter((g) => g.command.trim()),
         agent_alias: data.agent_alias, step_type: data.step_type,
         allow_max: data.allow_max, max_gate_retries: data.max_gate_retries,
-        skills: data.skills, tools: data.tools,
+        skills: data.skills, connectors: data.connectors,
       });
     } else {
       await api.addStep(flow.id, {
@@ -244,7 +244,7 @@ export function FlowDetailView() {
         ifs: data.ifs.filter((g) => g.command.trim()),
         agent_alias: data.agent_alias, step_type: data.step_type,
         allow_max: data.allow_max, max_gate_retries: data.max_gate_retries,
-        skills: data.skills, tools: data.tools,
+        skills: data.skills, connectors: data.connectors,
       });
     }
     setStepModal(null);
@@ -707,9 +707,9 @@ export function FlowDetailView() {
                         {step.skills.length} {step.skills.length === 1 ? "skill" : "skills"}
                       </span>
                     )}
-                    {step.tools && step.tools.length > 0 && (
+                    {step.connectors && step.connectors.length > 0 && (
                       <span className="text-[10px] text-emerald-400 shrink-0">
-                        {step.tools.length} {step.tools.length === 1 ? "tool" : "tools"}
+                        {step.connectors.length} {step.connectors.length === 1 ? "connector" : "connectors"}
                       </span>
                     )}
                     {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name) && (
@@ -1027,18 +1027,18 @@ export function FlowDetailView() {
                   allow_max: stepModal.step.allow_max || false,
                   max_gate_retries: stepModal.step.max_gate_retries ?? 3,
                   skills: stepModal.step.skills || [],
-                  tools: stepModal.step.tools || [],
+                  connectors: stepModal.step.connectors || [],
                 }
               : {
                   name: "", content: "", gates: [], ifs: [],
                   agent_alias: "normal", step_type: "agent",
                   allow_max: false, max_gate_retries: 3, skills: [],
-                  tools: [],
+                  connectors: [],
                 }
           }
           aliases={aliases}
           skills={spaceSkills}
-          tools={tools}
+          mcpConnectors={mcpConnectors}
           onSave={saveStep}
           onClose={() => setStepModal(null)}
         />

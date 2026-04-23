@@ -107,7 +107,7 @@ function AppInner() {
           <Route path="/space/:spaceId/settings" element={<SpaceSettingsView />} />
           <Route path="/agents" element={<AgentsView />} />
           <Route path="/gateway" element={<GatewayView />} />
-          <Route path="/tools" element={<ToolsView />} />
+          <Route path="/connectors" element={<ToolsView />} />
           <Route path="/settings" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

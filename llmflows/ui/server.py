@@ -69,7 +69,7 @@ class StepCreate(BaseModel):
     allow_max: bool = False
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
-    tools: Optional[list[str]] = None
+    connectors: Optional[list[str]] = None
 
 
 class StepUpdate(BaseModel):
@@ -83,7 +83,7 @@ class StepUpdate(BaseModel):
     allow_max: Optional[bool] = None
     max_gate_retries: Optional[int] = None
     skills: Optional[list[str]] = None
-    tools: Optional[list[str]] = None
+    connectors: Optional[list[str]] = None
 
 
 class StepRespondBody(BaseModel):
@@ -115,7 +115,19 @@ class GatewayConfigBody(BaseModel):
     slack_allowed_channel_ids: Optional[list[str]] = None
 
 
-class ToolConfigBody(BaseModel):
+class ConnectorCreateBody(BaseModel):
+    server_id: str
+    name: str = ""
+    command: str = ""
+    env: Optional[dict] = None
+    credentials: Optional[dict] = None
+
+
+class ConnectorUpdateBody(BaseModel):
+    name: Optional[str] = None
+    command: Optional[str] = None
+    env: Optional[dict] = None
+    credentials: Optional[dict] = None
     enabled: Optional[bool] = None
     config: Optional[dict] = None
 
@@ -270,17 +282,15 @@ async def restart_gateway():
     return {"ok": True, "message": "Gateway restart signal sent"}
 
 
-TOOL_REGISTRY: list[dict] = [
-    {
-        "id": "web_search",
-        "name": "Web Search",
+CONNECTOR_META: dict[str, dict] = {
+    "web_search": {
         "description": "Allow agents to search the web and fetch page content.",
-        "defaults": {"provider": "duckduckgo", "brave_api_key": "", "perplexity_api_key": "", "serpapi_api_key": ""},
         "config_fields": [
             {
-                "key": "provider",
+                "key": "WEB_SEARCH_PROVIDER",
                 "label": "Search Provider",
                 "type": "select",
+                "target": "env",
                 "options": [
                     {"value": "duckduckgo", "label": "DuckDuckGo", "hint": "No API key required"},
                     {"value": "brave", "label": "Brave Search", "hint": "Requires API key"},
@@ -289,38 +299,39 @@ TOOL_REGISTRY: list[dict] = [
                 ],
             },
             {
-                "key": "brave_api_key",
+                "key": "BRAVE_API_KEY",
                 "label": "Brave API Key",
                 "type": "secret",
+                "target": "credentials",
                 "placeholder": "BSA...",
-                "show_when": {"provider": "brave"},
+                "show_when": {"WEB_SEARCH_PROVIDER": "brave"},
             },
             {
-                "key": "perplexity_api_key",
+                "key": "PERPLEXITY_API_KEY",
                 "label": "Perplexity API Key",
                 "type": "secret",
+                "target": "credentials",
                 "placeholder": "pplx-...",
-                "show_when": {"provider": "perplexity"},
+                "show_when": {"WEB_SEARCH_PROVIDER": "perplexity"},
             },
             {
-                "key": "serpapi_api_key",
+                "key": "SERPAPI_API_KEY",
                 "label": "SerpAPI Key",
                 "type": "secret",
+                "target": "credentials",
                 "placeholder": "Your SerpAPI key...",
-                "show_when": {"provider": "serpapi"},
+                "show_when": {"WEB_SEARCH_PROVIDER": "serpapi"},
             },
         ],
     },
-    {
-        "id": "browser",
-        "name": "Browser",
+    "browser": {
         "description": "Allow agents to control a real browser — navigate pages, click, fill forms, take screenshots. Requires Google Chrome.",
-        "defaults": {"headless": "false"},
         "config_fields": [
             {
-                "key": "headless",
+                "key": "BROWSER_HEADLESS",
                 "label": "Headless Mode",
                 "type": "select",
+                "target": "env",
                 "options": [
                     {"value": "true", "label": "Headless (no visible window)"},
                     {"value": "false", "label": "Headed (visible browser window)"},
@@ -328,68 +339,310 @@ TOOL_REGISTRY: list[dict] = [
             },
         ],
     },
+}
+
+MCP_CATALOG: list[dict] = [
+    {
+        "server_id": "gmail",
+        "name": "Gmail",
+        "command": "npx @anthropic/mcp-gmail",
+        "category": "Google Workspace",
+        "description": "Read, send, and manage emails via the Gmail API.",
+        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+        "config_fields": [
+            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
+             "target": "credentials"},
+            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
+             "target": "credentials"},
+            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
+             "target": "credentials"},
+        ],
+        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gmail",
+    },
+    {
+        "server_id": "gdrive",
+        "name": "Google Drive",
+        "command": "npx @anthropic/mcp-gdrive",
+        "category": "Google Workspace",
+        "description": "Search, read, and manage files in Google Drive.",
+        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+        "config_fields": [
+            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
+             "target": "credentials"},
+            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
+             "target": "credentials"},
+            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
+             "target": "credentials"},
+        ],
+        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gdrive",
+    },
+    {
+        "server_id": "gcalendar",
+        "name": "Google Calendar",
+        "command": "npx @anthropic/mcp-gcalendar",
+        "category": "Google Workspace",
+        "description": "View and manage calendar events.",
+        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+        "config_fields": [
+            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
+             "target": "credentials"},
+            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
+             "target": "credentials"},
+            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
+             "target": "credentials"},
+        ],
+        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gcalendar",
+    },
+    {
+        "server_id": "youtube",
+        "name": "YouTube",
+        "command": "npx @mrsknetwork/ytmcp@latest",
+        "category": "Google Workspace",
+        "description": "Search videos, list playlists, get transcripts, and access private YouTube data.",
+        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+        "config_fields": [
+            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
+             "target": "credentials"},
+            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
+             "target": "credentials"},
+            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
+             "target": "credentials"},
+        ],
+        "docs_url": "https://github.com/mrsknetwork/ytmcp",
+    },
+    {
+        "server_id": "notion",
+        "name": "Notion",
+        "command": "npx @modelcontextprotocol/server-notion",
+        "category": "Productivity",
+        "description": "Search, read, and update Notion pages and databases.",
+        "required_credentials": ["NOTION_API_KEY"],
+        "config_fields": [
+            {"key": "NOTION_API_KEY", "label": "Notion API Key", "type": "secret", "target": "credentials",
+             "placeholder": "ntn_..."},
+        ],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/notion",
+    },
+    {
+        "server_id": "github",
+        "name": "GitHub",
+        "command": "npx @modelcontextprotocol/server-github",
+        "category": "Developer",
+        "description": "Manage repositories, issues, pull requests, and more.",
+        "required_credentials": ["GITHUB_TOKEN"],
+        "config_fields": [
+            {"key": "GITHUB_TOKEN", "label": "GitHub Personal Access Token", "type": "secret",
+             "target": "credentials", "placeholder": "ghp_..."},
+        ],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+    },
+    {
+        "server_id": "slack_mcp",
+        "name": "Slack",
+        "command": "npx @modelcontextprotocol/server-slack",
+        "category": "Productivity",
+        "description": "Read and send messages in Slack channels.",
+        "required_credentials": ["SLACK_BOT_TOKEN"],
+        "config_fields": [
+            {"key": "SLACK_BOT_TOKEN", "label": "Slack Bot Token", "type": "secret", "target": "credentials",
+             "placeholder": "xoxb-..."},
+        ],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack",
+    },
+    {
+        "server_id": "linear",
+        "name": "Linear",
+        "command": "npx @modelcontextprotocol/server-linear",
+        "category": "Developer",
+        "description": "Manage issues and projects in Linear.",
+        "required_credentials": ["LINEAR_API_KEY"],
+        "config_fields": [
+            {"key": "LINEAR_API_KEY", "label": "Linear API Key", "type": "secret", "target": "credentials"},
+        ],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/linear",
+    },
+    {
+        "server_id": "postgres",
+        "name": "PostgreSQL",
+        "command": "npx @modelcontextprotocol/server-postgres",
+        "category": "Database",
+        "description": "Query and explore PostgreSQL databases.",
+        "required_credentials": ["DATABASE_URL"],
+        "config_fields": [
+            {"key": "DATABASE_URL", "label": "Database URL", "type": "secret", "target": "credentials",
+             "placeholder": "postgresql://user:pass@host:5432/db"},
+        ],
+        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+    },
 ]
 
 
-def _tool_info(tool_id: str, config: dict) -> list[dict] | None:
-    """Return list of {"text": ..., "status": "ok"|"warning"} or None."""
-    if tool_id == "browser":
-        from ..services.browser import find_chrome
-        items: list[dict] = []
-        path = find_chrome()
-        if path:
-            items.append({"text": f"Chrome: {path}", "status": "ok"})
-        else:
-            items.append({"text": "Google Chrome not found — install from https://google.com/chrome", "status": "warning"})
-        profile = config.get("browser", {}).get("user_data_dir", "~/.llmflows/browser-profile")
-        items.append({"text": f"Profile: {profile}", "status": "ok"})
-        return items
-    return None
+def _connector_response(connector, meta: dict | None = None) -> dict:
+    """Build API response for a connector, enriching with metadata."""
+    data = connector.to_dict()
+    catalog_entry = next((c for c in MCP_CATALOG if c["server_id"] == connector.server_id), None)
+    source = meta or catalog_entry or {}
+    data["description"] = source.get("description", "")
+    data["config_fields"] = source.get("config_fields", [])
+    data["required_credentials"] = source.get("required_credentials", [])
+    config = {**data.get("env", {}), **data.get("credentials", {})}
+    data["config"] = config
+    return data
 
 
-def _tool_response(tool_def: dict, config: dict) -> dict:
-    tool_id = tool_def["id"]
-    stored = config.get(tool_id, {})
-    defaults = tool_def.get("defaults", {})
-    resp: dict = {
-        "id": tool_id,
-        "name": tool_def["name"],
-        "description": tool_def["description"],
-        "enabled": stored.get("enabled", False),
-        "config": {
-            k: str(val).lower() if isinstance(val, bool) else val
-            for k, v in defaults.items()
-            for val in [stored.get(k, v)]
-        },
-        "config_fields": tool_def.get("config_fields", []),
-    }
-    info = _tool_info(tool_id, config)
-    if info:
-        resp["info"] = info
-    return resp
+@app.get("/api/connectors")
+async def list_connectors():
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        connectors = session.query(McpConnector).order_by(
+            McpConnector.builtin.desc(), McpConnector.server_id
+        ).all()
+        return [
+            _connector_response(c, CONNECTOR_META.get(c.server_id))
+            for c in connectors
+        ]
+    finally:
+        session.close()
 
 
-@app.get("/api/config/tools")
-async def get_tools_config():
-    config = load_system_config()
-    return [_tool_response(t, config) for t in TOOL_REGISTRY]
+@app.get("/api/connectors/catalog")
+async def get_connector_catalog():
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        installed_ids = {
+            r.server_id for r in session.query(McpConnector.server_id).all()
+        }
+        return [
+            {**entry, "installed": entry["server_id"] in installed_ids}
+            for entry in MCP_CATALOG
+        ]
+    finally:
+        session.close()
 
 
-@app.patch("/api/config/tools/{tool_id}")
-async def update_tool_config(tool_id: str, body: ToolConfigBody):
-    tool_def = next((t for t in TOOL_REGISTRY if t["id"] == tool_id), None)
-    if not tool_def:
-        raise HTTPException(status_code=404, detail="Tool not found")
-    config = load_system_config()
-    if tool_id not in config:
-        config[tool_id] = {}
-    if body.enabled is not None:
-        config[tool_id]["enabled"] = body.enabled
-    if body.config is not None:
-        for key, value in body.config.items():
-            config[tool_id][key] = value
-    save_system_config(config)
-    return _tool_response(tool_def, config)
+@app.get("/api/connectors/{server_id}")
+async def get_connector(server_id: str):
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        connector = session.query(McpConnector).filter_by(server_id=server_id).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        return _connector_response(connector, CONNECTOR_META.get(server_id))
+    finally:
+        session.close()
+
+
+@app.post("/api/connectors")
+async def create_connector(body: ConnectorCreateBody):
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        existing = session.query(McpConnector).filter_by(server_id=body.server_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Connector '{body.server_id}' already exists")
+        catalog_entry = next((c for c in MCP_CATALOG if c["server_id"] == body.server_id), None)
+        name = body.name or (catalog_entry["name"] if catalog_entry else body.server_id)
+        command = body.command or (catalog_entry["command"] if catalog_entry else "")
+        connector = McpConnector(
+            server_id=body.server_id,
+            name=name,
+            command=command,
+            env=json.dumps(body.env or {}),
+            credentials=json.dumps(body.credentials or {}),
+            enabled=False,
+            builtin=False,
+        )
+        session.add(connector)
+        session.commit()
+        session.refresh(connector)
+        return _connector_response(connector, CONNECTOR_META.get(body.server_id))
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@app.patch("/api/connectors/{server_id}")
+async def update_connector(server_id: str, body: ConnectorUpdateBody):
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        connector = session.query(McpConnector).filter_by(server_id=server_id).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        if body.name is not None:
+            connector.name = body.name
+        if body.command is not None and not connector.builtin:
+            connector.command = body.command
+        if body.config is not None:
+            meta = CONNECTOR_META.get(server_id)
+            if not meta:
+                catalog_entry = next((c for c in MCP_CATALOG if c["server_id"] == server_id), None)
+                if catalog_entry:
+                    meta = {"config_fields": catalog_entry.get("config_fields", [])}
+            env = connector.get_env()
+            creds = connector.get_credentials()
+            for field in (meta or {}).get("config_fields", []):
+                key = field["key"]
+                if key in body.config:
+                    val = body.config[key]
+                    if field.get("type") == "secret" and val == "••••":
+                        continue
+                    if field.get("target") == "credentials":
+                        creds[key] = val
+                    else:
+                        env[key] = val
+            connector.env = json.dumps(env)
+            connector.credentials = json.dumps(creds)
+        if body.env is not None:
+            connector.env = json.dumps(body.env)
+        if body.credentials is not None:
+            existing_creds = connector.get_credentials()
+            for k, v in body.credentials.items():
+                if v != "••••":
+                    existing_creds[k] = v
+            connector.credentials = json.dumps(existing_creds)
+        if body.enabled is not None:
+            connector.enabled = body.enabled
+
+        session.commit()
+        session.refresh(connector)
+        return _connector_response(connector, CONNECTOR_META.get(server_id))
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@app.delete("/api/connectors/{server_id}")
+async def delete_connector(server_id: str):
+    from ..db.models import McpConnector
+    session = get_session()
+    try:
+        connector = session.query(McpConnector).filter_by(server_id=server_id).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        if connector.builtin:
+            raise HTTPException(status_code=400, detail="Cannot delete built-in connectors")
+        session.delete(connector)
+        session.commit()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @app.post("/api/daemon/stop")
@@ -1788,7 +2041,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             allow_max=body.allow_max,
             max_gate_retries=body.max_gate_retries,
             skills=body.skills,
-            tools=body.tools,
+            connectors=body.connectors,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -1823,8 +2076,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["max_gate_retries"] = body.max_gate_retries
         if body.skills is not None:
             updates["skills"] = json.dumps(body.skills)
-        if body.tools is not None:
-            updates["tools"] = json.dumps(body.tools)
+        if body.connectors is not None:
+            updates["connectors"] = json.dumps(body.connectors)
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
@@ -2188,6 +2441,7 @@ async def chat(body: ChatBody):
 
     async def stream():
         total_cost = 0.0
+        agent_done = False
         try:
             assert proc.stdout is not None
             buf = b""
@@ -2224,7 +2478,18 @@ async def chat(body: ChatBody):
                         usage = msg.get("usage", {})
                         cost = usage.get("cost", {})
                         total_cost += cost.get("total", 0) or 0
-            await proc.wait()
+                    elif ev_type == "agent_end":
+                        agent_done = True
+                        break
+                if agent_done:
+                    break
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
         except asyncio.CancelledError:
             if proc.returncode is None:
                 proc.terminate()

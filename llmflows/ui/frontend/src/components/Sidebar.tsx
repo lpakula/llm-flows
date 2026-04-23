@@ -337,9 +337,9 @@ export function Sidebar() {
             <Bot size={14} className="flex-shrink-0" />
             Agents
           </NavLink>
-          <NavLink to="/tools" className={navClass}>
+          <NavLink to="/connectors" className={navClass}>
             <Wrench size={14} className="flex-shrink-0" />
-            Tools
+            Connectors
           </NavLink>
           <NavLink to="/gateway" className={navClass}>
             <Radio size={14} className="flex-shrink-0" />

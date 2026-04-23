@@ -322,23 +322,23 @@ The agent's prompt is built by the system and automatically includes (flow autho
 
 ---
 
-## Step Tools
+## Step Connectors
 
-Tools are declared **per step** via the `tools` field. Each step declares which optional tools it needs. The daemon starts/stops tool services (like the browser) based on step transitions — if consecutive steps share a tool, the session persists; when a step without the tool runs, the service is cleaned up.
+Connectors are declared **per step** via the `connectors` field. Each step declares which connectors it needs. The daemon manages connector lifecycle based on step transitions — if consecutive steps share a connector, the session persists; when a step without the connector runs, the service is cleaned up.
 
-Pi always has `read`, `write`, `edit`, and `shell` tools available — these do not need to be declared. The following optional tools can be declared per step:
+Pi always has `read`, `write`, `edit`, and `shell` tools available — these do not need to be declared. The following connectors can be declared per step:
 
 - `"web_search"` — gives the step access to `web_search` and `web_fetch` tools for searching the web and fetching page content.
 - `"browser"` — gives the step access to `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot` tools for controlling a real Chrome browser. The browser session persists across consecutive steps that declare `"browser"`, so login state, cookies, and page context carry over. A persistent profile in `~/.llmflows/browser-profile/` preserves login sessions across runs.
 
-If any step declares a tool that is not enabled in Settings > Tools, a `missing_tool` warning is shown in the UI.
+If any step declares a connector that is not enabled in Settings > Connectors, a `missing_connector` warning is shown in the UI.
 
 ```json
 {
   "name": "step-with-browser",
   "position": 0,
   "content": "...",
-  "tools": ["browser"]
+  "connectors": ["browser"]
 }
 ```
 
@@ -402,7 +402,7 @@ Variable values are intentionally left empty in exports — the user fills them 
 | `gates` | array | `[]` | Shell commands that must pass to advance. See Gates section. |
 | `ifs` | array | `[]` | Shell commands that must pass to enter the step. See IF section. |
 | `skills` | array | `[]` | Skill identifiers to load for this step. |
-| `tools` | array | `[]` | Optional tool names for this step: `"browser"`, `"web_search"`. |
+| `connectors` | array | `[]` | Connector IDs for this step: `"browser"`, `"web_search"`. |
 
 ### Agent aliases
 
@@ -461,7 +461,7 @@ The export/import format. One file can contain multiple flows.
           "allow_max": false,
           "max_gate_retries": 5,
           "skills": [],
-          "tools": []
+          "connectors": []
         }
       ]
     }
@@ -475,7 +475,7 @@ Fields at their default values can be omitted — see the Step Fields Reference 
 
 ## Browser Automation
 
-Steps can control a real Chrome browser by declaring `"browser"` in their `tools` array. The browser session is managed by the daemon and persists across **consecutive steps** that declare `"browser"` — login state, cookies, and open pages carry over, including across `hitl` pauses. When a step without `"browser"` runs, the daemon cleans up the browser session.
+Steps can control a real Chrome browser by declaring `"browser"` in their `connectors` array. The browser session is managed by the daemon and persists across **consecutive steps** that declare `"browser"` — login state, cookies, and open pages carry over, including across `hitl` pauses. When a step without `"browser"` runs, the daemon cleans up the browser session.
 
 The browser uses the system Google Chrome (not Playwright's bundled Chromium) with a persistent profile stored in `~/.llmflows/browser-profile/`. This means:
 - **Login sessions persist across runs** — log in to Google/GitHub/etc. once, and future runs reuse the session via saved cookies
@@ -484,7 +484,7 @@ The browser uses the system Google Chrome (not Playwright's bundled Chromium) wi
 
 ### How it works
 
-1. When a step with `"browser"` in its `tools` is launched, the daemon starts a Chrome browser server (or reuses an existing one for the run)
+1. When a step with `"browser"` in its `connectors` is launched, the daemon starts a Chrome browser server (or reuses an existing one for the run)
 2. The step's agent receives browser tools that connect to the running browser
 3. The agent interacts with pages using a **snapshot-and-ref model**: `browser_snapshot` returns a text representation of the page where interactive elements are tagged with `[ref=N]`, and the agent targets elements by ref number
 4. When the next step does not declare `"browser"`, the daemon kills the browser. When the run completes (or fails/times out), the daemon also kills the browser as a safety net
@@ -521,21 +521,21 @@ The agent then uses ref numbers to interact: `browser_fill(ref=1, value="user@ex
 - **Use `browser_snapshot`** at the start of a continuation step to see where the browser is, then interact from there. No need to re-navigate or re-login
 - **Use `browser_screenshot`** to capture visual confirmation and save to artifacts (useful for gates and for `hitl` steps where the user needs to see the page)
 - **Browser state persists across consecutive browser steps** — if step 1 logs in and step 2 also declares `"browser"`, step 2 sees the authenticated session with the same page still open. The daemon manages one browser server per run and reuses it across consecutive steps that declare `"browser"`. If a step without `"browser"` runs in between, the session is cleaned up
-- **`hitl` steps work naturally with browser** — the browser stays alive while waiting for user input, as long as the `hitl` step declares `"browser"` in its tools. This is a key design pattern: use one step to navigate to a page, a `hitl` step (with browser) to ask the user for input (e.g., MFA code, CAPTCHA, manual approval), then continue in a subsequent step with the same browser session. The page the user sees is the same page the previous step left open
-- **Split browser workflows across steps** — don't try to do everything in one step. Use separate steps for navigation/login, user interaction (`hitl`), and the actual task. Make sure each step that needs the browser declares `"browser"` in its `tools`. Each step picks up exactly where the last one left off
+- **`hitl` steps work naturally with browser** — the browser stays alive while waiting for user input, as long as the `hitl` step declares `"browser"` in its `connectors`. This is a key design pattern: use one step to navigate to a page, a `hitl` step (with browser) to ask the user for input (e.g., MFA code, CAPTCHA, manual approval), then continue in a subsequent step with the same browser session. The page the user sees is the same page the previous step left open
+- **Split browser workflows across steps** — don't try to do everything in one step. Use separate steps for navigation/login, user interaction (`hitl`), and the actual task. Make sure each step that needs the browser declares `"browser"` in its `connectors`. Each step picks up exactly where the last one left off
 
-### Browser step tools
+### Browser step example
 
 ```json
 {
   "name": "login",
   "position": 0,
-  "tools": ["browser"],
+  "connectors": ["browser"],
   "content": "..."
 }
 ```
 
-The `"browser"` tool must be enabled in Settings > Tools. Space variables are available in step content via `{{space.USERNAME}}`.
+The `"browser"` connector must be enabled in Settings > Connectors. Space variables are available in step content via `{{space.USERNAME}}`.
 
 ---
 
@@ -603,7 +603,7 @@ When a step consumes output from a previous step, describe the format explicitly
           "name": "Fetch articles",
           "position": 0,
           "step_type": "agent",
-          "tools": ["web_search"],
+          "connectors": ["web_search"],
           "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent articles and save each as a separate artifact.\n\n## WORKFLOW\n\n1. Use `web_fetch` to load the target URL\n2. Extract the 5 most recent article links\n3. For each, fetch the full article and extract content\n4. Save each article to `{{run.dir}}/article-N.md`\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully",
           "gates": [
             {
@@ -697,7 +697,7 @@ When a step consumes output from a previous step, describe the format explicitly
     {
       "name": "login",
       "position": 0,
-      "tools": ["browser"],
+      "connectors": ["browser"],
       "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{run.dir}}/login.png`\n6. Write the current page state to `{{run.dir}}/_result.md`",
       "gates": [
         {"command": "test -f {{run.dir}}/login.png", "message": "Login screenshot must exist."}
@@ -707,13 +707,13 @@ When a step consumes output from a previous step, describe the format explicitly
       "name": "get-mfa-code",
       "position": 1,
       "step_type": "hitl",
-      "tools": ["browser"],
+      "connectors": ["browser"],
       "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/_result.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it"
     },
     {
       "name": "submit-mfa",
       "position": 2,
-      "tools": ["browser"],
+      "connectors": ["browser"],
       "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code provided by the user and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.get-mfa-code.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{run.dir}}/_result.md`",
       "gates": [
         {"command": "test -f {{run.dir}}/screenshot.png", "message": "Confirmation screenshot must exist."}
@@ -722,7 +722,7 @@ When a step consumes output from a previous step, describe the format explicitly
     {
       "name": "perform-action",
       "position": 3,
-      "tools": ["browser"],
+      "connectors": ["browser"],
       "content": "# PERFORM ACTION\n\n## PURPOSE\n\nExecute the target action in the authenticated browser session.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or `browser_snapshot` to find the target page/form\n2. Fill in any required fields and submit\n3. Take a `browser_screenshot` to confirm the action\n4. Write a summary of what was done to `{{run.dir}}/_result.md`"
     }
   ]

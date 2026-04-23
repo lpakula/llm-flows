@@ -71,7 +71,7 @@ class FlowService:
                     allow_max=step_data.get("allow_max", False),
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
-                    tools=_serialize_json_list(step_data.get("tools")),
+                    connectors=_serialize_json_list(step_data.get("connectors")),
                 )
                 self.session.add(step)
 
@@ -126,7 +126,7 @@ class FlowService:
         agent_alias: str = "normal", step_type: str = "agent",
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
-        tools: Optional[list] = None,
+        connectors: Optional[list] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -144,7 +144,7 @@ class FlowService:
             step_type=_normalize_step_type(step_type),
             allow_max=allow_max, max_gate_retries=max_gate_retries,
             skills=_serialize_json_list(skills),
-            tools=_serialize_json_list(tools),
+            connectors=_serialize_json_list(connectors),
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -224,7 +224,7 @@ class FlowService:
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
              "skills": s.get_skills(),
-             "tools": s.get_tools()}
+             "connectors": s.get_connectors()}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -258,7 +258,7 @@ class FlowService:
                     "allow_max": bool(s.allow_max),
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
-                    "tools": s.get_tools(),
+                    "connectors": s.get_connectors(),
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
@@ -279,7 +279,7 @@ class FlowService:
             "steps": [],
         }
         reqs = flow.get_requirements()
-        if reqs.get("tools"):
+        if reqs.get("connectors"):
             flow_data["requirements"] = reqs
         flow_variables = flow.get_variables()
         if flow_variables:
@@ -313,9 +313,9 @@ class FlowService:
             skills = s.get_skills()
             if skills:
                 step_data["skills"] = skills
-            tools = s.get_tools()
-            if tools:
-                step_data["tools"] = tools
+            conns = s.get_connectors()
+            if conns:
+                step_data["connectors"] = conns
             flow_data["steps"].append(step_data)
 
         flows_dir = Path(space_path) / "flows"
@@ -339,7 +339,7 @@ class FlowService:
                 "description": flow.description,
                 "steps": [],
             }
-            if reqs.get("tools"):
+            if reqs.get("connectors"):
                 flow_data["requirements"] = reqs
             flow_variables = flow.get_variables()
             if flow_variables:
@@ -364,9 +364,9 @@ class FlowService:
                 skills = s.get_skills()
                 if skills:
                     step_data["skills"] = skills
-                tools = s.get_tools()
-                if tools:
-                    step_data["tools"] = tools
+                conns = s.get_connectors()
+                if conns:
+                    step_data["connectors"] = conns
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -417,7 +417,7 @@ class FlowService:
                         allow_max=step_data.get("allow_max", False),
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
-                        tools=_serialize_json_list(step_data.get("tools")),
+                        connectors=_serialize_json_list(step_data.get("connectors")),
                     )
                     self.session.add(step)
             else:
@@ -463,7 +463,7 @@ class FlowService:
 
     def validate_flow(self, flow_id: str, space_id: Optional[str] = None) -> list[dict]:
         """Validate a flow's configuration. Returns a list of warning dicts."""
-        from ..config import AGENT_REGISTRY, load_system_config
+        from ..config import AGENT_REGISTRY
         from ..db.models import AgentAlias, AgentConfig
 
         flow = self.get(flow_id)
@@ -482,19 +482,21 @@ class FlowService:
                     "message": f"Variable '{var_name}' has no value. Fill it in on the flow page before running.",
                 })
 
-        sys_config = load_system_config()
-        warned_tools: set[str] = set()
+        from ..db.models import McpConnector
+        enabled_connectors = {
+            c.server_id
+            for c in self.session.query(McpConnector).filter_by(enabled=True).all()
+        }
+        warned_connectors: set[str] = set()
         for step in flow.steps:
-            for tool in step.get_tools():
-                if tool not in warned_tools:
-                    tool_config = sys_config.get(tool, {})
-                    if not tool_config.get("enabled", False):
-                        warnings.append({
-                            "step_name": step.name,
-                            "warning_type": "missing_tool",
-                            "message": f"Required tool '{tool}' is not enabled. Enable it in Settings > Tools.",
-                        })
-                        warned_tools.add(tool)
+            for connector in step.get_connectors():
+                if connector not in warned_connectors and connector not in enabled_connectors:
+                    warnings.append({
+                        "step_name": step.name,
+                        "warning_type": "missing_connector",
+                        "message": f"Connector '{connector}' is not enabled. Enable it in Settings > Connectors.",
+                    })
+                    warned_connectors.add(connector)
 
         for step in flow.steps:
             st = _normalize_step_type(step.step_type)

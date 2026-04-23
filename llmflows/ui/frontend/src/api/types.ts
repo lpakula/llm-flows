@@ -52,7 +52,7 @@ export interface FlowWarning {
 }
 
 export interface FlowRequirements {
-  tools: string[];
+  connectors: string[];
 }
 
 export interface Flow {
@@ -93,7 +93,7 @@ export interface FlowStep {
   allow_max: boolean;
   max_gate_retries: number;
   skills: string[];
-  tools: string[];
+  connectors: string[];
 }
 
 export interface Gate {
@@ -123,7 +123,7 @@ export interface GatewayConfig {
   slack_allowed_channel_ids: string[];
 }
 
-export interface ToolConfigField {
+export interface ConnectorConfigField {
   key: string;
   label: string;
   type: "select" | "secret" | "text";
@@ -132,14 +132,29 @@ export interface ToolConfigField {
   show_when?: Record<string, string>;
 }
 
-export interface ToolConfig {
+export interface ConnectorConfig {
   id: string;
+  server_id: string;
   name: string;
   description: string;
   enabled: boolean;
   config: Record<string, string>;
-  config_fields: ToolConfigField[];
+  config_fields: ConnectorConfigField[];
+  required_credentials?: string[];
   info?: { text: string; status: "ok" | "warning" }[];
+}
+
+export interface CatalogEntry {
+  server_id: string;
+  name: string;
+  command: string;
+  category: string;
+  description: string;
+  required_credentials: string[];
+  config_fields: ConnectorConfigField[];
+  docs_url?: string;
+  setup_flow?: string;
+  installed: boolean;
 }
 
 export interface DashboardEntry {

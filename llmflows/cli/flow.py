@@ -411,18 +411,18 @@ def flow_schedule(name, cron, tz, enable, disable, clear):
         session.close()
 
 
-# ── flow tools ───────────────────────────────────────────────────────────────
+# ── flow connectors ──────────────────────────────────────────────────────────
 
-@flow.group("tools")
-def flow_tools():
-    """Manage tool requirements for a flow."""
+@flow.group("connectors")
+def flow_connectors():
+    """Manage connector requirements for a flow."""
     pass
 
 
-@flow_tools.command("list")
+@flow_connectors.command("list")
 @click.argument("name")
-def flow_tools_list(name):
-    """List tools enabled for a flow."""
+def flow_connectors_list(name):
+    """List connectors enabled for a flow."""
     session = _get_session()
     try:
         space = _resolve_space(session)
@@ -433,27 +433,27 @@ def flow_tools_list(name):
             raise SystemExit(1)
 
         reqs = f.get_requirements()
-        tools = reqs.get("tools", [])
-        if not tools:
-            click.echo(f"No tools enabled for {click.style(name, fg='cyan')}.")
+        connectors = reqs.get("connectors", [])
+        if not connectors:
+            click.echo(f"No connectors enabled for {click.style(name, fg='cyan')}.")
             return
 
-        click.secho(f"Tools for {name}:", bold=True)
-        for t in tools:
-            click.echo(f"  • {click.style(t, fg='cyan')}")
+        click.secho(f"Connectors for {name}:", bold=True)
+        for c in connectors:
+            click.echo(f"  • {click.style(c, fg='cyan')}")
     finally:
         session.close()
 
 
-@flow_tools.command("add")
+@flow_connectors.command("add")
 @click.argument("name")
-@click.argument("tool")
-def flow_tools_add(name, tool):
-    """Enable a tool for a flow.
+@click.argument("connector")
+def flow_connectors_add(name, connector):
+    """Enable a connector for a flow.
 
     \b
-    Available tools: web_search, browser
-    Example: llmflows flow tools add my-flow web_search
+    Available connectors: web_search, browser
+    Example: llmflows flow connectors add my-flow web_search
     """
     session = _get_session()
     try:
@@ -465,26 +465,26 @@ def flow_tools_add(name, tool):
             raise SystemExit(1)
 
         reqs = f.get_requirements()
-        tools = reqs.get("tools", [])
-        if tool in tools:
-            click.echo(f"Tool '{tool}' is already enabled for {click.style(name, fg='cyan')}.")
+        connectors = reqs.get("connectors", [])
+        if connector in connectors:
+            click.echo(f"Connector '{connector}' is already enabled for {click.style(name, fg='cyan')}.")
             return
 
-        tools.append(tool)
-        reqs["tools"] = tools
+        connectors.append(connector)
+        reqs["connectors"] = connectors
         flow_svc.update(f.id, requirements=json.dumps(reqs))
-        click.echo(f"Added {click.style(tool, fg='cyan')} to {click.style(name, fg='cyan')}")
+        click.echo(f"Added {click.style(connector, fg='cyan')} to {click.style(name, fg='cyan')}")
     finally:
         session.close()
 
 
-@flow_tools.command("remove")
+@flow_connectors.command("remove")
 @click.argument("name")
-@click.argument("tool")
-def flow_tools_remove(name, tool):
-    """Remove a tool from a flow.
+@click.argument("connector")
+def flow_connectors_remove(name, connector):
+    """Remove a connector from a flow.
 
-    Example: llmflows flow tools remove my-flow browser
+    Example: llmflows flow connectors remove my-flow browser
     """
     session = _get_session()
     try:
@@ -496,15 +496,15 @@ def flow_tools_remove(name, tool):
             raise SystemExit(1)
 
         reqs = f.get_requirements()
-        tools = reqs.get("tools", [])
-        if tool not in tools:
-            click.echo(f"Tool '{tool}' is not enabled for {click.style(name, fg='cyan')}.")
+        connectors = reqs.get("connectors", [])
+        if connector not in connectors:
+            click.echo(f"Connector '{connector}' is not enabled for {click.style(name, fg='cyan')}.")
             return
 
-        tools.remove(tool)
-        reqs["tools"] = tools
+        connectors.remove(connector)
+        reqs["connectors"] = connectors
         flow_svc.update(f.id, requirements=json.dumps(reqs))
-        click.echo(f"Removed {click.style(tool, fg='cyan')} from {click.style(name, fg='cyan')}")
+        click.echo(f"Removed {click.style(connector, fg='cyan')} from {click.style(name, fg='cyan')}")
     finally:
         session.close()
 

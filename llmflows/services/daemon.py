@@ -16,7 +16,7 @@ from .context import ContextService
 from .executors import get_executor, StepContext
 from .flow import FlowService, _normalize_step_type
 from .gate import evaluate_gates, evaluate_ifs
-from .browser import BrowserService
+from .mcp import McpService
 from .space import SpaceService
 from .run import RunService
 
@@ -76,7 +76,7 @@ class Daemon:
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
-        self.browser_service = BrowserService()
+        self.mcp_service = McpService()
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
@@ -91,8 +91,8 @@ class Daemon:
         return merged
 
     def _finalize_run(self, run_id: str) -> None:
-        """Cleanup run-scoped resources (browser, etc.)."""
-        self.browser_service.cleanup(run_id)
+        """Cleanup run-scoped resources (MCP sessions)."""
+        self.mcp_service.release_session(run_id)
 
     def _check_max_spend(
         self, run, space, step_run,
@@ -136,11 +136,11 @@ class Daemon:
         return True
 
     @staticmethod
-    def _step_requires_tool(snap_step: dict | None, tool: str) -> bool:
-        """Check if a snapshot step declares a specific tool requirement."""
+    def _step_requires_connector(snap_step: dict | None, connector: str) -> bool:
+        """Check if a snapshot step declares a specific connector requirement."""
         if not snap_step:
             return False
-        return tool in snap_step.get("tools", [])
+        return connector in snap_step.get("connectors", snap_step.get("mcp", snap_step.get("tools", [])))
 
     def _build_channels(self) -> list:
         """Build channel instances from config (lazy import, only if enabled)."""
@@ -183,6 +183,8 @@ class Daemon:
             self.notifications.register(ch)
         self.notifications.start_all()
 
+        self.mcp_service.start_all_enabled()
+
         logger.info("Daemon started (poll every %ds)", self.poll_interval)
 
         while self.running:
@@ -192,7 +194,7 @@ class Daemon:
                 logger.exception("Error in daemon tick")
             self._stop_event.wait(self.poll_interval)
 
-        self.browser_service.cleanup_all()
+        self.mcp_service.stop_all()
         self.notifications.stop_all()
         logger.info("Daemon stopped")
 
@@ -909,24 +911,14 @@ class Daemon:
                 skill_refs.append({"name": info.name, "description": info.description, "path": info.path})
 
         extra_env: dict[str, str] = {}
-        browser_config = load_system_config().get("browser", {})
-        if self._step_requires_tool(snap_step, "browser") and browser_config.get("enabled", False):
-            headless = browser_config.get("headless", True)
-            user_data_dir = browser_config.get("user_data_dir", "~/.llmflows/browser-profile")
-            try:
-                ws = self.browser_service.ensure_browser(
-                    run.id,
-                    headless=headless,
-                    user_data_dir=user_data_dir,
-                )
-                extra_env["BROWSER_WS_ENDPOINT"] = ws
+        _ss = snap_step or {}
+        needed_connectors = _ss.get("connectors", _ss.get("mcp", _ss.get("tools", [])))
+        if needed_connectors:
+            endpoints = self.mcp_service.get_endpoints(needed_connectors)
+            if endpoints:
+                extra_env["MCP_SERVERS"] = json.dumps(endpoints)
+                extra_env["MCP_SESSION_ID"] = str(run.id)
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
-            except Exception:
-                logger.exception("Failed to start browser for run %s", run.id)
-        elif not self._step_requires_tool(snap_step, "browser"):
-            if self.browser_service.get_ws_endpoint(run.id):
-                logger.info("Step '%s' does not need browser, cleaning up for run %s", step_name, run.id)
-                self.browser_service.cleanup(run.id)
 
         space_dir = Path(space.path) / ".llmflows"
         executor = get_executor(step_type)
