@@ -13,8 +13,16 @@
           "content": "# FIND POLAND AI NEWS\n\n## PURPOSE\n\nFind the most recent AI news related to Poland and save up to 5 high-quality news items as artifacts for the next step.\n\n## WORKFLOW\n\n1. Use `web_search` to search broadly for recent AI news from Poland. Use multiple targeted searches if needed, such as Polish AI news, Poland artificial intelligence news, AI startups or AI policy in Poland, and major Polish tech/media coverage of AI.\n\n2. Select up to 5 of the most recent and clearly relevant news items. Relevance means the news must be about AI and meaningfully connected to Poland, for example Polish companies, institutions, research, regulation, investments, launches, or events.\n\n3. For each selected item, use `web_fetch` to read the source page and extract:\n   - headline\n   - publication date if available\n   - source name\n   - canonical link\n   - a short factual description of the news\n   - the key details needed for a later summary\n\n4. Save each item as a separate file in `{{run.dir}}/article-N.md` where N starts at 1.\n\n5. Also write `{{run.dir}}/_result.md` containing a short research log with the selected items, their dates if known, and links.\n\n## RULES\n\n- Save between 1 and 5 items\n- Prioritize recency first, then quality and relevance\n- Prefer original reporting or credible publications\n- Avoid duplicate stories covering the exact same announcement unless necessary\n- Do not invent dates, facts, or links\n- Keep the article files factual and source-grounded\n\n## OUTPUT FORMAT\n\nEach `article-N.md` file must use this format:\n\n```\n# Headline\n**Source:** Publication name\n**Date:** YYYY-MM-DD or Unknown\n**URL:** https://...\n\n## Short Description\n\n2-4 sentences describing the news item factually.\n\n## Key Details\n\n- Bullet 1\n- Bullet 2\n- Bullet 3\n```",
           "gates": [
             {
-              "command": "count=$(find '{{run.dir}}' -maxdepth 1 -name 'article-*.md' | wc -l | tr -d ' '); test -f '{{run.dir}}/_result.md' && [ \"$count\" -ge 1 ] && [ \"$count\" -le 5 ]",
-              "message": "The step must create {{run.dir}}/_result.md and between 1 and 5 article-N.md files."
+              "command": "test -f '{{run.dir}}/_result.md'",
+              "message": "The step must create {{run.dir}}/_result.md."
+            },
+            {
+              "command": "[ \"$(find '{{run.dir}}' -maxdepth 1 -name 'article-*.md' | wc -l | tr -d ' ')\" -ge 1 ]",
+              "message": "The step must create at least 1 article-N.md file in {{run.dir}}."
+            },
+            {
+              "command": "[ \"$(find '{{run.dir}}' -maxdepth 1 -name 'article-*.md' | wc -l | tr -d ' ')\" -le 5 ]",
+              "message": "The step must create no more than 5 article-N.md files in {{run.dir}}."
             }
           ]
         },

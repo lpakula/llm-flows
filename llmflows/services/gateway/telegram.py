@@ -8,11 +8,13 @@ import asyncio
 import logging
 import re
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
+from ..chat import ChatService
 from ..context import ContextService
 from ..flow import FlowService
 from ..run import RunService
@@ -31,6 +33,15 @@ except ImportError:
 logger = logging.getLogger("llmflows.telegram")
 
 _MD_TABLE_RE = re.compile(r"((?:^\|.+\|$\n?)+)", re.MULTILINE)
+
+
+@dataclass
+class _ChatSession:
+    session_id: str
+    space_id: str
+    space_name: str
+    anchor_message_id: int
+    flow_name: str | None = None
 _TG_MAX_LEN = 4096
 
 
@@ -129,6 +140,9 @@ class TelegramBot:
         self._active_chats: set[int] = set()
         self._awaiting_response: dict[int, str] = {}  # chat_id -> step_run_id
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
+        self._chat_sessions: dict[int, _ChatSession] = {}  # chat_id -> session
+        self._chat_pending_space: dict[int, str] = {}  # chat_id -> space_id (mid-selection)
+        self._chat_service = ChatService(session_factory)
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -169,6 +183,8 @@ class TelegramBot:
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
+        app.add_handler(CommandHandler("chat", self._handle_chat_command))
+        app.add_handler(CommandHandler("chatend", self._handle_chat_end_command))
         app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -197,6 +213,8 @@ class TelegramBot:
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
             BotCommand("inbox", "Show inbox items"),
+            BotCommand("chat", "Chat with the assistant"),
+            BotCommand("chatend", "End chat session"),
             BotCommand("help", "Show commands & chat ID"),
         ])
         logger.info("Telegram bot commands registered")
@@ -358,6 +376,11 @@ class TelegramBot:
     async def _handle_help_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         self._active_chats.add(chat_id)
+        chat_status = ""
+        session = self._chat_sessions.get(chat_id)
+        if session:
+            label = session.flow_name or session.space_name
+            chat_status = f"\n\n<i>Active chat: {label}</i>"
         await update.message.reply_text(
             f"<b>llmflows bot</b>\n\n"
             f"Chat ID: <code>{chat_id}</code>\n\n"
@@ -365,11 +388,14 @@ class TelegramBot:
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
             f"/inbox — Show inbox items\n"
-            f"/help — Show this message",
+            f"/chat — Chat with the assistant\n"
+            f"/chatend — End chat session\n"
+            f"/help — Show this message"
+            f"{chat_status}",
             parse_mode="HTML",
         )
 
-    # ── Message handler (prompt responses) ───────────────────────────────────
+    # ── Message handler (prompt responses + chat) ──────────────────────────
 
     async def _handle_message(self, update, context) -> None:
         chat_id = update.effective_chat.id
@@ -377,26 +403,32 @@ class TelegramBot:
             return
         self._active_chats.add(chat_id)
 
+        # HITL takes priority over chat
         step_run_id = self._awaiting_response.pop(chat_id, None)
-        if not step_run_id:
-            await update.message.reply_text(
-                "No pending prompt to respond to. "
-                "Responses are collected when a step is awaiting your input."
-            )
+        if step_run_id:
+            response_text = update.message.text or ""
+            session = self.session_factory()
+            try:
+                run_svc = RunService(session)
+                sr = run_svc.respond_to_step(step_run_id, response_text)
+                if sr:
+                    await update.message.reply_text("Response recorded. Step will continue.")
+                else:
+                    await update.message.reply_text("Step not found or no longer awaiting response.")
+            finally:
+                session.close()
             return
 
-        response_text = update.message.text or ""
+        # Chat session
+        chat_session = self._chat_sessions.get(chat_id)
+        if chat_session:
+            await self._chat_reply(update, chat_id, chat_session)
+            return
 
-        session = self.session_factory()
-        try:
-            run_svc = RunService(session)
-            sr = run_svc.respond_to_step(step_run_id, response_text)
-            if sr:
-                await update.message.reply_text("Response recorded. Step will continue.")
-            else:
-                await update.message.reply_text("Step not found or no longer awaiting response.")
-        finally:
-            session.close()
+        await update.message.reply_text(
+            "No pending prompt to respond to. "
+            "Use /chat to start a chat session."
+        )
 
     # ── Callback handler ─────────────────────────────────────────────────────
 
@@ -429,6 +461,14 @@ class TelegramBot:
 
         if data.startswith("inbox_detail:"):
             await self._cb_inbox_detail(query, data[len("inbox_detail:"):])
+            return
+
+        if data.startswith("chatspace:"):
+            await self._cb_chat_select_space(query, chat_id, data[len("chatspace:"):])
+            return
+
+        if data.startswith("chatflow:"):
+            await self._cb_chat_select_flow(query, chat_id, data[len("chatflow:"):])
             return
 
         if data.startswith("respond:"):
@@ -477,6 +517,163 @@ class TelegramBot:
                     await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
                 except Exception:
                     logger.debug("Failed to delete message %s", message_id)
+
+    # ── /chat command — start a chat session ─────────────────────────────────
+
+    async def _handle_chat_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        if chat_id in self._chat_sessions:
+            session = self._chat_sessions[chat_id]
+            label = session.flow_name or session.space_name
+            await update.message.reply_text(
+                f"Chat session already active (<b>{label}</b>). "
+                f"Use /chatend to stop it first.",
+                parse_mode="HTML",
+            )
+            return
+
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            if not spaces:
+                await update.message.reply_text("No spaces registered.")
+                return
+            buttons = [
+                [InlineKeyboardButton(s.name, callback_data=f"chatspace:{s.id}")]
+                for s in spaces
+            ]
+            await update.message.reply_text(
+                "Select a space for chat:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        finally:
+            session.close()
+
+    async def _handle_chat_end_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        session = self._chat_sessions.pop(chat_id, None)
+        self._chat_pending_space.pop(chat_id, None)
+        if not session:
+            await update.message.reply_text("No active chat session.")
+            return
+
+        self._chat_service.end_session(session.session_id)
+        try:
+            await self._app.bot.send_message(
+                chat_id=chat_id,
+                text="━━━ Chat ended ━━━",
+                reply_to_message_id=session.anchor_message_id,
+            )
+        except Exception:
+            await update.message.reply_text("━━━ Chat ended ━━━")
+
+    # ── /chat callback helpers ─────────────────────────────────────────────
+
+    async def _cb_chat_select_space(self, query, chat_id: int, space_id: str) -> None:
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                await query.edit_message_text("Space not found.")
+                return
+            self._chat_pending_space[chat_id] = space_id
+            flows = FlowService(session).list_by_space(space_id)
+            buttons = [
+                [InlineKeyboardButton(f.name, callback_data=f"chatflow:{space_id}:{f.id}")]
+                for f in flows
+            ]
+            buttons.append([InlineKeyboardButton("Skip (no flow)", callback_data=f"chatflow:{space_id}:skip")])
+            await query.edit_message_text(
+                f"<b>{space.name}</b> — select a flow (or skip):",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        finally:
+            session.close()
+
+    async def _cb_chat_select_flow(self, query, chat_id: int, payload: str) -> None:
+        parts = payload.split(":", 1)
+        if len(parts) != 2:
+            await query.edit_message_text("Invalid selection.")
+            return
+        space_id, flow_id = parts
+
+        self._chat_pending_space.pop(chat_id, None)
+
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                await query.edit_message_text("Space not found.")
+                return
+
+            flow_name = None
+            if flow_id != "skip":
+                flow = FlowService(session).get(flow_id)
+                flow_name = flow.name if flow else None
+
+            label = flow_name or space.name
+            anchor_text = f"━━━ Chat: {label} ({space.name}) ━━━\nSend messages to chat. /chatend to stop."
+            await query.edit_message_text(anchor_text)
+            anchor_message_id = query.message.message_id
+
+            session_id = self._chat_service.new_session_id()
+            self._chat_sessions[chat_id] = _ChatSession(
+                session_id=session_id,
+                space_id=space_id,
+                space_name=space.name,
+                anchor_message_id=anchor_message_id,
+                flow_name=flow_name,
+            )
+        finally:
+            session.close()
+
+    # ── Chat reply handler ─────────────────────────────────────────────────
+
+    async def _chat_reply(self, update, chat_id: int, session: _ChatSession) -> None:
+        """Send user message to Pi and relay the response."""
+        message_text = update.message.text or ""
+
+        typing_task = asyncio.ensure_future(self._keep_typing(chat_id))
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._chat_service.send_message(
+                    session_id=session.session_id,
+                    message=message_text,
+                    space_id=session.space_id,
+                    flow_name=session.flow_name,
+                    channel_name="Telegram",
+                ),
+            )
+        finally:
+            typing_task.cancel()
+
+        html = _to_telegram_html(response)
+        chunks = _split_message(html)
+        for chunk in chunks:
+            await self._send_message_safe(
+                chat_id, chunk,
+                reply_to_message_id=session.anchor_message_id,
+            )
+
+    async def _keep_typing(self, chat_id: int) -> None:
+        """Send 'typing...' indicator every 4 seconds until cancelled."""
+        try:
+            while True:
+                await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
 
     # ── /run callback helpers ────────────────────────────────────────────────
 
@@ -643,12 +840,16 @@ class TelegramBot:
             except Exception:
                 logger.warning("Failed to send notification to chat %s", chat_id)
 
-    async def _send_message_safe(self, chat_id: int, text: str, markup=None) -> Any:
+    async def _send_message_safe(
+        self, chat_id: int, text: str, markup=None,
+        reply_to_message_id: int | None = None,
+    ) -> Any:
         """Send a message with HTML, falling back to plain text on failure."""
         try:
             return await self._app.bot.send_message(
                 chat_id=chat_id, text=text,
                 parse_mode="HTML", reply_markup=markup,
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception:
             logger.debug("HTML send failed, retrying as plain text", exc_info=True)
@@ -656,6 +857,7 @@ class TelegramBot:
             plain = re.sub(r"<[^>]+>", "", text)
             return await self._app.bot.send_message(
                 chat_id=chat_id, text=plain, reply_markup=markup,
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception:
             logger.warning("Failed to send message to chat %s", chat_id, exc_info=True)

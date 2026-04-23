@@ -18,6 +18,15 @@ from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
 from ..services.agent import AgentService
+from ..services.chat import (
+    CHAT_SESSIONS_DIR,
+    SYSTEM_PROMPT as _CHAT_SYSTEM_PROMPT,
+    build_flow_context as _build_flow_context,
+    build_pi_env as _build_pi_env,
+    build_space_context as _build_space_context,
+    get_skill_paths as _get_skill_paths,
+    resolve_chat_model as _resolve_chat_model,
+)
 from ..services.flow import FlowService
 from ..services.space import SpaceService
 from ..services.run import RunService
@@ -2123,11 +2132,6 @@ async def list_models(agent: Optional[str] = None):
 
 # --- Chat endpoints ---
 
-CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
-_BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
-_NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
-CHAT_SKILLS = ["flows", "overview", "cli", "skills"]
-
 
 class ChatBody(BaseModel):
     message: str
@@ -2137,175 +2141,11 @@ class ChatBody(BaseModel):
     flow_name: Optional[str] = None
 
 
-_CHAT_SYSTEM_PROMPT = """\
-# llm-flows Assistant
-
-You are the llm-flows assistant — a friendly, knowledgeable guide for the llm-flows platform. \
-You help users understand how llm-flows works and build automations using flows.
-
-## Style
-
-- Be concise. Short paragraphs, bullet points when useful. Avoid walls of text.
-- llm-flows is already installed — never explain installation.
-- Do NOT explain flow concepts, step types, gates, artifacts, or flow-building details \
-unless the user explicitly asks about them. Assume the user wants actionable answers, not tutorials.
-- When asked "how to get started", the user has already configured API keys and tools \
-during the welcome screen — do NOT mention those steps again. Start with the setup steps: \
-1) **Register a space** — click "Select space" → "Register Space", pick the project folder. \
-2) **Start the daemon** — check the status indicator in the bottom-left corner; if it's not running, click it to start. \
-3) **Create your first flow** — offer to help build one together. \
-Then offer to explain the key concepts if they want to learn more. Say something like: \
-"Want me to explain how flows, steps, gates, and skills work?" \
-If they say yes, explain concisely: \
-- **Flows & steps** — a flow is a sequence of steps; each step has a markdown prompt that tells the AI agent what to do. \
-- **Gates** — quality checks after a step; if the output isn't good enough, the step retries. \
-- **IFs** — conditional branches that skip or include steps based on conditions. \
-- **Tools** — agents can use web_search and browser; enable per-flow in flow settings. \
-- **Skills** — reusable prompt snippets that give agents domain knowledge; attach them to steps. \
-Keep it concise — short bullets, not paragraphs. \
-Always guide users through the UI rather than CLI commands — they're already in the UI.
-
-## Your role
-
-- Explain llm-flows concepts clearly and concisely — only when asked
-- Help users design and plan automation workflows
-- Build flows by writing flow JSON files and importing them via the CLI
-- Review and improve existing flows when asked
-- Help users create skills for their projects
-- Follow best practices from your loaded skills when creating flows
-
-## Building flows
-
-When a user wants to build a flow, start by asking one simple question: \
-**"What do you want to automate?"**
-
-Then ask follow-up questions to understand the goal better — the more you know, the better the flow. \
-Ask about things like: where the data comes from, what the final output should look like, \
-whether it should pause for human review, how often it will run, etc.
-
-Keep questions short and conversational. Ask one or two at a time, not a big list.
-
-When you have enough context, present the planned flow to the user before creating it:
-1. Show a short summary of each step — name, what it does, and why
-2. Ask the user to confirm or adjust ("Does this look good? Want to change anything?")
-3. Only after the user confirms, write the flow and import it
-
-NEVER ask about implementation details like steps, tools, gates, agent aliases, or step types. \
-You are the expert — figure those out yourself. The user describes the goal, you design the automation.
-
-### How to create and update flows
-
-1. Write the flow JSON file to the `flows/` directory in the space root (create the directory if needed)
-2. The file must follow the llmflows flow JSON format (see your loaded skills for the schema)
-3. Show the user what you wrote and ask for confirmation before importing
-4. When the user confirms, run: `llmflows flow import flows/<flow-name>.json`
-5. The flow is now loaded and visible in the UI
-
-To iterate on a flow, edit the JSON file in `flows/` and re-import. \
-The import command upserts by name — it will update an existing flow if one with the same name exists.
-
-### How to review and improve existing flows
-
-You can inspect any flow the user has. To review a flow:
-1. Run `llmflows flow export` to get all flows, or export a specific flow
-2. Analyze the steps, gates, IFs, and overall structure
-3. Suggest improvements — better gates, missing IFs, step content improvements, \
-agent alias optimization, or structural changes
-
-When the user is on a flow page and asks for help, the flow name is provided in the context below. \
-Export that specific flow, review it, and suggest concrete improvements.
-
-
-"""
-
-
-def _build_flow_context(flow_name: str, space_id: str) -> str:
-    """Build rich flow context for the chat system prompt."""
-    import json as _json
-    from ..services.flow import FlowService
-    from ..db.database import get_session as _gs
-
-    db = _gs()
-    try:
-        flow_svc = FlowService(db)
-        flow = flow_svc.get_by_name(flow_name, space_id=space_id)
-        if not flow:
-            return f"\n## Active flow\n\nThe user is viewing flow **{flow_name}** but it was not found.\n"
-
-        parts = [f"\n## Active flow: {flow_name}\n"]
-        parts.append("The user is chatting from this flow's page. They want help with this specific flow.\n")
-
-        # Flow definition
-        snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=space_id)
-        if snapshot:
-            parts.append("### Flow definition\n```json\n" + _json.dumps(snapshot, indent=2) + "\n```\n")
-
-        # Warnings
-        warnings = flow_svc.validate_flow(flow.id, space_id=space_id)
-        if warnings:
-            parts.append("### Configuration warnings\n")
-            for w in warnings:
-                prefix = f"**{w['step_name']}**: " if w.get("step_name") else ""
-                parts.append(f"- {prefix}{w['message']}")
-            parts.append("")
-
-        # Recent runs
-        from ..db.models import FlowRun
-        runs = (
-            db.query(FlowRun)
-            .filter_by(flow_id=flow.id)
-            .order_by(FlowRun.created_at.desc())
-            .limit(3)
-            .all()
-        )
-        if runs:
-            parts.append("### Recent runs\n")
-            for run in runs:
-                status = "completed" if run.completed_at else ("running" if run.started_at else "queued")
-                if run.outcome:
-                    status = run.outcome
-                line = f"- **{run.id}** — {status}"
-                if run.duration_seconds is not None:
-                    line += f", {run.duration_seconds:.0f}s"
-                if run.cost_usd:
-                    line += f", ${run.cost_usd:.4f}"
-                if run.summary:
-                    summary_preview = run.summary[:300].replace("\n", " ")
-                    line += f"\n  > {summary_preview}"
-                parts.append(line)
-            parts.append("")
-            parts.append("For deeper investigation, use `llmflows run logs <run-id>` or `llmflows run show <run-id>`.\n")
-
-        return "\n".join(parts)
-    except Exception:
-        return f"\n## Active flow: {flow_name}\n\nCould not load flow details.\n"
-    finally:
-        db.close()
-
-
-def _resolve_chat_env() -> dict[str, str]:
-    """Build environment with LLM provider API keys for Pi."""
-    env = os.environ.copy()
-    from ..db.database import get_session
-    from ..db.models import AgentConfig
-    from ..config import KNOWN_LLM_PROVIDERS
-    session = get_session()
-    try:
-        for cfg in session.query(AgentConfig).filter_by(agent="pi").all():
-            env[cfg.key] = cfg.value
-        for provider in KNOWN_LLM_PROVIDERS:
-            for cfg in session.query(AgentConfig).filter_by(agent=provider).all():
-                if cfg.key not in env or not env[cfg.key]:
-                    env[cfg.key] = cfg.value
-    finally:
-        session.close()
-    return env
-
-
 @app.post("/api/chat")
 async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
     import shutil as _shutil
+    from ..services.chat import build_pi_command
 
     if not _shutil.which("pi"):
         raise HTTPException(status_code=503, detail="Pi binary not found in PATH")
@@ -2317,74 +2157,26 @@ async def chat(body: ChatBody):
     session_file = session_dir / "session"
     system_file = session_dir / "system.md"
 
-    # Resolve space context
-    space = None
-    space_context = "\nNo space is currently selected. You can answer questions but cannot create flows — ask the user to select a space first.\n"
+    space, space_context = _build_space_context(body.space_id)
 
-    if body.space_id:
-        db_session, space_svc = _get_services()
-        try:
-            space = space_svc.get(body.space_id)
-        finally:
-            db_session.close()
-
-    if space:
-        flows_dir = Path(space.path) / "flows"
-        space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n- Flows directory: {flows_dir}\n\nWrite flow JSON files to the flows/ directory and import them with `llmflows flow import`.\n"
-
-    # Build flow context when the user is chatting from a flow page
     flow_context = ""
     if body.flow_name and space:
         flow_context = _build_flow_context(body.flow_name, space.id)
 
-    skill_paths: list[Path] = []
-    for skill_name in CHAT_SKILLS:
-        candidate = _BUNDLED_SKILLS_DIR / skill_name
-        if candidate.is_dir():
-            skill_paths.append(candidate)
-
+    skill_paths = _get_skill_paths()
     system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context + flow_context)
 
-    # Resolve the pi alias for model selection (tier defaults to "max")
-    from ..config import resolve_alias, KNOWN_LLM_PROVIDERS
-    from ..db.database import get_session as _get_db_session
-    chat_model = ""
-    tier = body.tier or "max"
-    try:
-        _db = _get_db_session()
-        chat_agent, chat_model = resolve_alias(_db, "pi", tier)
-        if chat_agent in KNOWN_LLM_PROVIDERS:
-            if "/" not in chat_model:
-                chat_model = f"{chat_agent}/{chat_model}"
-        _db.close()
-    except (ValueError, Exception):
-        pass
+    chat_model = _resolve_chat_model(body.tier or "max")
 
-    # Build Pi command — JSON mode for token-level streaming
-    cmd = [
-        "pi", "-p", body.message,
-        "--mode", "json",
-        "--session", str(session_file),
-        "--append-system-prompt", str(system_file),
-    ]
+    cmd = build_pi_command(
+        message=body.message,
+        session_file=session_file,
+        system_file=system_file,
+        model=chat_model,
+        skill_paths=skill_paths,
+    )
 
-    if chat_model:
-        cmd.extend(["--model", chat_model])
-
-    for skill_path in skill_paths:
-        cmd.extend(["--skill", str(skill_path)])
-
-    # Web search extension (if enabled)
-    from ..services.executors.pi import WEB_SEARCH_TOOL, _is_web_search_enabled, _resolve_web_search_env
-
-    env = _resolve_chat_env()
-
-    if _is_web_search_enabled() and WEB_SEARCH_TOOL.is_file():
-        cmd.extend(["--extension", str(WEB_SEARCH_TOOL)])
-        for k, v in _resolve_web_search_env().items():
-            env[k] = v
-
-    env["NODE_PATH"] = str(_NODE_MODULES)
+    env = _build_pi_env()
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
