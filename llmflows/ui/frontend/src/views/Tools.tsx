@@ -113,7 +113,10 @@ function ConfigModal({
   const doDisconnect = async () => {
     setDisconnecting(true);
     try {
-      const updated = await api.updateConnector(sid(connector), { enabled: false });
+      const emptyConfig: Record<string, string> = {};
+      for (const f of connector.config_fields) emptyConfig[f.key] = "";
+      const updated = await api.updateConnector(sid(connector), { config: emptyConfig, enabled: false });
+      setLocalConfig(emptyConfig);
       onUpdate(updated);
       onClose();
     } catch (e) { console.error("Disconnect failed:", e); }
