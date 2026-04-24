@@ -270,25 +270,14 @@ def ensure_pi_ollama_provider(ollama_host: str) -> None:
     fetches the list of pulled models from ``/api/tags``.
     """
     import json
+    import logging
     import urllib.request
+
+    log = logging.getLogger("llmflows.ollama")
 
     if not ollama_host.startswith("http"):
         ollama_host = f"http://{ollama_host}"
     ollama_host = ollama_host.rstrip("/")
-
-    models_list: list[dict] = []
-    try:
-        with urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=5) as resp:
-            data = json.loads(resp.read())
-        for m in data.get("models", []):
-            name = m.get("name", "")
-            if name:
-                models_list.append({"id": name})
-    except Exception:
-        pass
-
-    if not models_list:
-        return
 
     pi_dir = Path.home() / ".pi" / "agent"
     pi_dir.mkdir(parents=True, exist_ok=True)
@@ -301,14 +290,30 @@ def ensure_pi_ollama_provider(ollama_host: str) -> None:
         except (json.JSONDecodeError, OSError):
             pass
 
-    existing["ollama"] = {
+    models_list: list[dict] = []
+    try:
+        with urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            if name:
+                models_list.append({"id": name})
+        log.info("Fetched %d models from Ollama at %s", len(models_list), ollama_host)
+    except Exception as exc:
+        log.warning("Cannot reach Ollama at %s: %s", ollama_host, exc)
+        if "ollama" in existing:
+            return
+        models_list = []
+
+    provider_entry: dict = {
         "api": "openai-completions",
         "apiKey": "ollama",
         "baseUrl": f"{ollama_host}/v1",
         "models": models_list,
     }
-
+    existing["ollama"] = provider_entry
     models_file.write_text(json.dumps(existing, indent=2) + "\n")
+    log.info("Wrote Pi models.json with %d Ollama models", len(models_list))
 
     # Remove Ollama's web-search extension — it requires `ollama signin`
     # and conflicts with llmflows' own web_search MCP connector.
