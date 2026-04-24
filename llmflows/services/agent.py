@@ -184,6 +184,9 @@ class AgentService:
             finally:
                 session.close()
 
+            if agent == "pi" and env.get("GEMINI_API_KEY"):
+                env.pop("GOOGLE_API_KEY", None)
+
             for k, v in (space_variables or {}).items():
                 env[k] = str(v)
             for k, v in (extra_env or {}).items():

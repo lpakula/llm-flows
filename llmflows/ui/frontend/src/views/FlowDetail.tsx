@@ -126,7 +126,7 @@ export function FlowDetailView() {
     setSchedTz(f.schedule_timezone || "UTC");
     setSchedEnabled(f.schedule_enabled || false);
     setAliases(al);
-    setMcpConnectors(mc);
+    setMcpConnectors(mc.filter((c) => c.enabled));
     setLocalOrder([...f.steps].sort((a, b) => a.position - b.position).map((s) => s.id));
     try {
       const sk = await api.listSkills(f.space_id);
