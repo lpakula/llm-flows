@@ -363,6 +363,12 @@ def build_pi_env() -> dict[str, str]:
     """Build the full environment for Pi, including MCP server URLs."""
     env = resolve_chat_env()
     env["NODE_PATH"] = str(_NODE_MODULES)
+
+    ollama_host = env.get("OLLAMA_HOST")
+    if ollama_host:
+        from ..config import ensure_pi_ollama_provider
+        ensure_pi_ollama_provider(ollama_host)
+
     return env
 
 

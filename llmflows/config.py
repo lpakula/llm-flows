@@ -259,6 +259,72 @@ def resolve_alias(session, alias_type: str, alias_name: str = "normal") -> tuple
     raise ValueError(f"Alias '{alias_name}' not found for type '{alias_type}'. Configure it on the Agents page.")
 
 
+def ensure_pi_ollama_provider(ollama_host: str) -> None:
+    """Register a local Ollama instance as a Pi provider in ``models.json``.
+
+    Pi needs ``"api": "openai-completions"`` (Chat Completions) to talk to
+    Ollama — the default ``openai-responses`` endpoint hangs or errors out.
+
+    This writes/updates ``~/.pi/agent/models.json`` with an ``ollama``
+    provider entry pointing at the given host's ``/v1`` endpoint and
+    fetches the list of pulled models from ``/api/tags``.
+    """
+    import json
+    import urllib.request
+
+    if not ollama_host.startswith("http"):
+        ollama_host = f"http://{ollama_host}"
+    ollama_host = ollama_host.rstrip("/")
+
+    models_list: list[dict] = []
+    try:
+        with urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            if name:
+                models_list.append({"id": name})
+    except Exception:
+        pass
+
+    if not models_list:
+        return
+
+    pi_dir = Path.home() / ".pi" / "agent"
+    pi_dir.mkdir(parents=True, exist_ok=True)
+    models_file = pi_dir / "models.json"
+
+    existing: dict = {}
+    if models_file.exists():
+        try:
+            existing = json.loads(models_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    existing["ollama"] = {
+        "api": "openai-completions",
+        "apiKey": "ollama",
+        "baseUrl": f"{ollama_host}/v1",
+        "models": models_list,
+    }
+
+    models_file.write_text(json.dumps(existing, indent=2) + "\n")
+
+    # Remove Ollama's web-search extension — it requires `ollama signin`
+    # and conflicts with llmflows' own web_search MCP connector.
+    settings_file = pi_dir / "settings.json"
+    if settings_file.exists():
+        try:
+            settings = json.loads(settings_file.read_text())
+            pkgs = settings.get("packages", [])
+            ollama_pkgs = [p for p in pkgs if "ollama" in p.lower() and "web" in p.lower()]
+            if ollama_pkgs:
+                settings["packages"] = [p for p in pkgs if p not in ollama_pkgs]
+                settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
 def infer_step_type(agent: str) -> str:
     """Derive step_type from agent's registry type. Returns 'code' or 'agent'."""
     reg = AGENT_REGISTRY.get(agent, {})

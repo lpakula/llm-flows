@@ -1557,6 +1557,14 @@ async def setup_configure_provider(provider: str):
                 alias.agent = provider
                 alias.model = f"{provider}/{model}"
         session.commit()
+
+        if provider == "ollama":
+            from ..db.models import AgentConfig
+            from ..config import ensure_pi_ollama_provider
+            cfg = session.query(AgentConfig).filter_by(agent="ollama", key="OLLAMA_HOST").first()
+            if cfg:
+                ensure_pi_ollama_provider(cfg.value)
+
         return {"ok": True, "provider": provider}
     finally:
         session.close()
@@ -2344,6 +2352,11 @@ async def set_agent_config(agent_name: str, body: AgentConfigBody):
         else:
             session.add(AgentConfig(agent=agent_name, key=body.key, value=body.value))
         session.commit()
+
+        if agent_name == "ollama" and body.key == "OLLAMA_HOST":
+            from ..config import ensure_pi_ollama_provider
+            ensure_pi_ollama_provider(body.value)
+
         configs = session.query(AgentConfig).filter_by(agent=agent_name).all()
         return [c.to_dict() for c in configs]
     finally:
