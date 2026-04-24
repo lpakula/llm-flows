@@ -9,58 +9,26 @@ How to obtain API keys and tokens for each connector in llm-flows.
 
 ## Agent behavior
 
-1. When the user asks to set up a connector, **first check for existing credentials** (see "Reusing existing Google credentials" below).
-2. **Always default to browser automation.** Navigate directly to the **external service portal** — NOT the llm-flows UI. Follow the steps from the guide below, clicking through the portal pages for the user. When you hit a login/auth screen, tell the user: "Please log in in the browser window, then tell me when you're done." Wait for their reply before continuing.
+1. **Always default to browser automation.** Navigate directly to the **external service portal** — NOT the llm-flows UI. Follow the steps from the guide below, clicking through the portal pages for the user. When you hit a login/auth screen, tell the user: "Please log in in the browser window, then tell me when you're done." Wait for their reply before continuing.
 3. **Do NOT offer manual steps** unless the user explicitly asks for them. You know all the steps — use them to drive the browser. If the user asks "how does this work?" or "show me the steps", then print the relevant section.
-4. When you have the keys/tokens, **configure the connector via CLI** — do NOT ask the user to paste values manually. Use these commands:
+4. **NEVER fabricate or invent credential values.** Only use values you actually read from the browser page or received from a curl/API response. If you cannot read a value from the page, tell the user to copy it manually.
+5. When you have the keys/tokens, **print them for the user to copy-paste** into the connector config in the llm-flows UI. Format them clearly:
 
-```bash
-llmflows connectors add <server_id>                     # install from catalog (if not already installed)
-llmflows connectors config <server_id> <KEY> <value>     # set each credential
-llmflows connectors enable <server_id>                   # enable the connector
+```
+Here are your credentials — paste these into the connector config in llm-flows:
+
+Client ID: <actual value from the page>
+Client Secret: <actual value from the page>
+Refresh Token: <actual value from curl response>
 ```
 
-Example for Gmail:
-```bash
-llmflows connectors add gmail
-llmflows connectors config gmail GOOGLE_CLIENT_ID "xxx.apps.googleusercontent.com"
-llmflows connectors config gmail GOOGLE_CLIENT_SECRET "GOCSPX-xxx"
-llmflows connectors config gmail GOOGLE_REFRESH_TOKEN "1//0xxx"
-llmflows connectors enable gmail
-```
-
-### Reusing existing Google credentials
-
-All Google connectors (Gmail, Google Drive, Google Calendar, YouTube) share the same **Client ID** and **Client Secret**. Before running the full setup:
-
-1. Run `llmflows connectors list` to see which connectors are already installed.
-2. If another Google connector is already configured (e.g. Calendar has credentials and the user wants to add Gmail), **reuse the Client ID and Client Secret** — copy them to the new connector via CLI.
-3. The only extra steps the user needs are:
-   - **Enable the additional API** in Google Cloud Console (e.g. Gmail API).
-   - **Add the new scope** to the OAuth consent screen.
-   - **Generate a new Refresh Token** that includes all needed scopes (old + new) via OAuth Playground.
-4. Then configure the new connector with the same Client ID / Client Secret and the new Refresh Token.
-
-Example — user already has Google Calendar, wants to add Gmail:
-```bash
-# Client ID and Secret are the same — copy from the existing connector
-llmflows connectors add gmail
-llmflows connectors config gmail GOOGLE_CLIENT_ID "<same as calendar>"
-llmflows connectors config gmail GOOGLE_CLIENT_SECRET "<same as calendar>"
-# Only the Refresh Token needs to be regenerated with the additional gmail scope
-llmflows connectors config gmail GOOGLE_REFRESH_TOKEN "<new token with both scopes>"
-llmflows connectors enable gmail
-```
-Also update the Calendar connector's Refresh Token to the new one so both connectors use the same multi-scope token.
+Do NOT run `llmflows connectors config` commands automatically. Let the user paste the values themselves.
 
 ---
 
 ## Google Services (Gmail, Google Drive, Google Calendar, YouTube)
 
-All Google connectors need three values: **Client ID**, **Client Secret**, and **Refresh Token**.
-They all share the same Google Cloud project and OAuth credentials.
-
-> **If another Google connector is already configured**, skip Steps 1–4. You only need to enable the new API (Step 2), add the new scope to the consent screen (Step 3), and generate a new Refresh Token that covers all scopes (Step 5). Then copy the same Client ID and Client Secret to the new connector. See "Reusing existing Google credentials" in Agent behavior above.
+All Google connectors need three values: **Client ID**, **Client Secret**, and **Refresh Token**. Follow all steps below for each connector.
 
 ### Scopes reference
 
@@ -136,7 +104,7 @@ Navigate directly to: `https://console.cloud.google.com/apis/credentials/oauthcl
 2. **Name**: "llm-flows" (or leave default)
 3. Under **Authorized redirect URIs**, click **Add URI** and enter: `https://developers.google.com/oauthplayground`
 4. Click **Create**
-5. A dialog will show the **Client ID** and **Client Secret** — copy both. These are reused across all Google connectors.
+5. A dialog will show the **Client ID** and **Client Secret** — copy both.
 
 **Save these values** — you'll need them for the next step and for CLI configuration.
 
@@ -192,7 +160,7 @@ Navigate to: `https://developers.google.com/oauthplayground`
 
 ### Step 6 — Configure in llm-flows
 
-Use the CLI to add the connector and set the credentials (see Agent behavior above). If adding a second/third Google connector, copy the Client ID and Client Secret from the existing one and only set the new Refresh Token.
+Print the three values (Client ID, Client Secret, Refresh Token) for the user to paste into the connector config in the llm-flows UI.
 
 ---
 
@@ -203,7 +171,7 @@ Use the CLI to add the connector and set the credentials (see Agent behavior abo
 3. Name it (e.g. "llm-flows"), select the workspace, and click **Submit**.
 4. Copy the **Internal Integration Secret** (starts with `ntn_`).
 5. In Notion, open the pages/databases you want the integration to access → click **⋯** → **Connect to** → select your integration.
-6. Configure via CLI: `llmflows connectors add notion && llmflows connectors config notion NOTION_API_KEY "ntn_xxx" && llmflows connectors enable notion`
+6. Print the API key for the user to paste into the Notion connector config in the llm-flows UI.
 
 ---
 
@@ -214,7 +182,7 @@ Use the CLI to add the connector and set the credentials (see Agent behavior abo
 3. For fine-grained tokens: select the repositories and permissions you need.
    For classic tokens: select scopes like `repo`, `read:org` as needed.
 4. Copy the token.
-5. Configure via CLI: `llmflows connectors add github && llmflows connectors config github GITHUB_TOKEN "ghp_xxx" && llmflows connectors enable github`
+5. Print the token for the user to paste into the GitHub connector config in the llm-flows UI.
 
 ---
 
@@ -225,7 +193,7 @@ Use the CLI to add the connector and set the credentials (see Agent behavior abo
 3. Under **OAuth & Permissions**, add the Bot Token Scopes you need (e.g. `channels:read`, `chat:write`, `users:read`).
 4. Click **Install to Workspace** and authorize.
 5. Copy the **Bot User OAuth Token** (starts with `xoxb-`).
-6. Configure via CLI: `llmflows connectors add slack && llmflows connectors config slack SLACK_BOT_TOKEN "xoxb-xxx" && llmflows connectors enable slack`
+6. Print the token for the user to paste into the Slack connector config in the llm-flows UI.
 
 ---
 
@@ -234,7 +202,7 @@ Use the CLI to add the connector and set the credentials (see Agent behavior abo
 1. Go to `https://linear.app/settings/api`.
 2. Under **Personal API keys**, click **Create key**.
 3. Copy the key.
-4. Configure via CLI: `llmflows connectors add linear && llmflows connectors config linear LINEAR_API_KEY "lin_api_xxx" && llmflows connectors enable linear`
+4. Print the key for the user to paste into the Linear connector config in the llm-flows UI.
 
 ---
 
@@ -244,4 +212,4 @@ No external setup needed — just provide your connection string.
 
 Format: `postgresql://user:password@host:port/database`
 
-Configure via CLI: `llmflows connectors add postgres && llmflows connectors config postgres DATABASE_URL "postgresql://..." && llmflows connectors enable postgres`
+Ask the user for their connection string and tell them to paste it into the PostgreSQL connector config in the llm-flows UI.
