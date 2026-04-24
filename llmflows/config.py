@@ -311,7 +311,14 @@ def ensure_pi_ollama_provider(ollama_host: str) -> None:
         "baseUrl": f"{ollama_host}/v1",
         "models": models_list,
     }
-    existing["ollama"] = provider_entry
+
+    # Pi reads from "providers.<name>" (used by `ollama launch pi`),
+    # falling back to top-level "<name>".  Write to both so it works
+    # regardless of how Pi was set up.
+    existing.pop("ollama", None)
+    providers = existing.setdefault("providers", {})
+    providers["ollama"] = provider_entry
+
     models_file.write_text(json.dumps(existing, indent=2) + "\n")
     log.info("Wrote Pi models.json with %d Ollama models", len(models_list))
 
