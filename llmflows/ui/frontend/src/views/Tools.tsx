@@ -178,7 +178,7 @@ function ConfigModal({
                 onClick={() => {
                   const projectCtx = gcpProjectId.trim() ? ` My Google Cloud Project ID is: ${gcpProjectId.trim()}.` : "";
                   onClose();
-                  onAskChat(`Help me configure the ${connector.name} connector.${projectCtx} Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`);
+                  onAskChat(`Help me configure the ${connector.name} connector.${projectCtx} Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`);
                 }}
                 className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-blue-400"
               >
