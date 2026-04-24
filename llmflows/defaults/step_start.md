@@ -39,25 +39,6 @@ You are an autonomous AI agent executing a step of a larger workflow.
 {%- endfor %}
 {%- endfor %}
 {%- endif %}
-{%- if gate_failures %}
-
----
-
-## Previous Attempt Failed
-
-This step was attempted before but the following gate checks failed. Fix these issues.
-{%- for failure in gate_failures %}
-
-### Gate: {{ failure.command }}
-**Message:** {{ failure.message }}
-{%- if failure.output %}
-**Output:**
-```
-{{ failure.output }}
-```
-{%- endif %}
-{%- endfor %}
-{%- endif %}
 
 {%- if space_variables %}
 
@@ -149,6 +130,26 @@ These are responses from the user to previous human-in-the-loop steps. The most 
 ### {{ ur.step_name }}
 
 > {{ ur.user_response or "✓ Done" }}
+{%- endfor %}
+{%- endif %}
+
+{%- if gate_failures %}
+
+---
+
+## ⚠️ IMPORTANT: Previous Attempt Failed
+
+A previous attempt at this step **failed the following gate checks**. Repeat the step instructions above and make sure these checks pass this time.
+{%- for failure in gate_failures %}
+
+### FAILED: {{ failure.message }}
+**Command:** `{{ failure.command }}`
+{%- if failure.output %}
+**Output:**
+```
+{{ failure.output }}
+```
+{%- endif %}
 {%- endfor %}
 {%- endif %}
 
