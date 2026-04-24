@@ -191,7 +191,7 @@ export const api = {
     del<{ ok: boolean }>(`/api/connectors/${serverId}`),
 
   // Chat
-  sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string, flowName?: string | null) =>
+  sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string, flowName?: string | null, connectors?: string[]) =>
     fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -201,6 +201,7 @@ export const api = {
         session_id: sessionId || undefined,
         tier: tier || undefined,
         flow_name: flowName || undefined,
+        connectors: connectors?.length ? connectors : undefined,
       }),
     }),
   deleteChatSession: (sessionId: string) => del<{ ok: boolean }>(`/api/chat/sessions/${sessionId}`),

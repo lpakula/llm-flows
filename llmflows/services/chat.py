@@ -50,13 +50,7 @@ Keep it concise — short bullets, not paragraphs.
 
 ## Your tools
 
-You have access to tools provided by enabled connectors. You have browser automation tools available: \
-`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_fill`, and `browser_screenshot`. \
-These let you open web pages, read page content, click buttons/links, fill forms, and take screenshots. \
-When a user asks you to do something in the browser or says "browser automation", \
-start by calling `browser_navigate` with the target URL immediately — do NOT ask for URLs, \
-do NOT say you can't do it, do NOT tell the user to do it manually. Just navigate and act. \
-You already have the tools and they are working.
+{tools_section}
 
 ## Your role
 
@@ -67,7 +61,6 @@ You already have the tools and they are working.
 - Inspect run logs and diagnose failures
 - Help users create skills for their projects
 - Follow best practices from your loaded skills when creating flows
-- Use browser tools directly when users ask for browser-assisted help (e.g. setting up connectors)
 
 ## Building flows
 
@@ -119,6 +112,80 @@ Use these CLI commands to investigate:
 
 
 """
+
+CONNECTOR_TOOL_HINTS: dict[str, str] = {
+    "browser": (
+        "**Browser** — `browser_navigate`, `browser_snapshot`, `browser_click`, "
+        "`browser_fill`, `browser_screenshot`. Open web pages, read page content, "
+        "click buttons/links, fill forms, and take screenshots. "
+        "When asked to open a page, call `browser_navigate` immediately — do NOT "
+        "ask for URLs, do NOT say you can't, do NOT use shell `open` commands."
+    ),
+    "web_search": (
+        "**Web Search** — `web_search`, `web_fetch`. Search the web for information "
+        "and fetch/read web page content as text."
+    ),
+    "gmail": "**Gmail** — read, search, send, and manage emails via the Gmail API.",
+    "gdrive": "**Google Drive** — search, read, and manage files in Google Drive.",
+    "gcalendar": "**Google Calendar** — view and manage calendar events.",
+    "youtube": "**YouTube** — search videos, list playlists, get transcripts.",
+    "notion": "**Notion** — search, read, and update Notion pages and databases.",
+    "github": "**GitHub** — manage repositories, issues, pull requests, and more.",
+    "slack_mcp": "**Slack** — read and send messages in Slack channels.",
+    "linear": "**Linear** — manage issues and projects in Linear.",
+    "postgres": "**PostgreSQL** — query and explore PostgreSQL databases.",
+}
+
+_NO_TOOLS_SECTION = """\
+No tools are enabled for this chat session. \
+Do NOT attempt to use any tool calls (browser, web search, etc.) or shell commands \
+like `open` to open URLs. If the user asks for something that requires tools, \
+tell them to add tools using the + tool button next to the Agent selector.\
+"""
+
+
+def get_enabled_connector_ids() -> list[str]:
+    """Return server_ids of all enabled MCP connectors."""
+    from ..db.database import get_session
+    from ..db.models import McpConnector
+
+    session = get_session()
+    try:
+        rows = session.query(McpConnector).filter_by(enabled=True).all()
+        return [r.server_id for r in rows]
+    finally:
+        session.close()
+
+
+def build_tools_section(connector_ids: list[str]) -> str:
+    """Build the tools section of the system prompt for the given connectors."""
+    if not connector_ids:
+        return _NO_TOOLS_SECTION
+
+    lines = ["You have the following tools available for this session:\n"]
+    for cid in connector_ids:
+        hint = CONNECTOR_TOOL_HINTS.get(cid)
+        if hint:
+            lines.append(f"- {hint}")
+        else:
+            lines.append(f"- **{cid}** — third-party connector (tools registered dynamically).")
+    lines.append("")
+    lines.append(
+        "Use these tools directly when the user asks. Do NOT tell the user to do things "
+        "manually when you have the tools to do it. Do NOT use shell commands like `open` "
+        "to open URLs — use browser tools instead if available."
+    )
+    return "\n".join(lines)
+
+
+def build_system_prompt(connector_ids: list[str] | None = None) -> str:
+    """Build the full system prompt with a dynamic tools section.
+
+    connector_ids: the connectors selected for this chat session.
+    None means no connectors selected (no tools).
+    """
+    section = build_tools_section(connector_ids or [])
+    return SYSTEM_PROMPT.replace("{tools_section}", section)
 
 
 def resolve_chat_env() -> dict[str, str]:
@@ -263,8 +330,13 @@ def build_pi_command(
     model: str = "",
     skill_paths: list[Path] | None = None,
     mode: str = "json",
+    connector_ids: list[str] | None = None,
 ) -> list[str]:
-    """Build the pi CLI command."""
+    """Build the pi CLI command.
+
+    connector_ids: if provided, only include these connectors (must also be
+    enabled in DB).  None means include all enabled connectors.
+    """
     cmd = [
         "pi", "-p", message,
         "--mode", mode,
@@ -283,9 +355,10 @@ def build_pi_command(
     session = _get_db_session()
     try:
         enabled = session.query(McpConnector).filter_by(enabled=True).all()
+        filter_set = set(connector_ids) if connector_ids is not None else None
         endpoints = []
         for c in enabled:
-            if c.port:
+            if c.port and (filter_set is None or c.server_id in filter_set):
                 endpoints.append({"server_id": c.server_id, "url": f"http://localhost:{c.port}"})
         if endpoints:
             import json as _json
@@ -340,7 +413,8 @@ class ChatService:
         channel_context = ""
         if channel_name:
             channel_context = f"\n## Channel\n\nThe user is chatting through {channel_name}. Keep responses concise — messaging platforms have length limits.\n"
-        system_file.write_text(SYSTEM_PROMPT + channel_context + space_context + flow_context)
+        system_prompt = build_system_prompt(connector_ids=get_enabled_connector_ids())
+        system_file.write_text(system_prompt + channel_context + space_context + flow_context)
 
         model = resolve_chat_model(tier)
         skill_paths = get_skill_paths()
