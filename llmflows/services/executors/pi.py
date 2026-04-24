@@ -6,8 +6,8 @@ to how CodeExecutor works for Cursor/Claude Code.
 
 All external tools (web search, browser, third-party connectors) are
 provided via MCP servers.  When the daemon passes MCP_SERVERS in
-ctx.extra_env, we load the mcp-bridge.ts extension which connects to
-the running SSE servers and registers their tools dynamically.
+ctx.extra_env, we load the mcp-bridge.ts extension which spawns MCP
+servers as stdio subprocesses and registers their tools dynamically.
 """
 
 import logging

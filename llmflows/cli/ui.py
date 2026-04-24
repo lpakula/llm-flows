@@ -89,11 +89,15 @@ def _ensure_daemon_running() -> None:
         os.close(_devnull)
 
     fmt = "%(asctime)s %(name)s %(message)s"
-    file_handler = logging.FileHandler(log_file)
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2)
     file_handler.setFormatter(logging.Formatter(fmt))
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(file_handler)
+
+    for noisy in ("httpx", "httpcore", "telegram", "telegram.ext"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:
         Daemon().start()

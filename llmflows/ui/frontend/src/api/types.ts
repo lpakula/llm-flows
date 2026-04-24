@@ -141,7 +141,7 @@ export interface ConnectorConfig {
   config: Record<string, string>;
   config_fields: ConnectorConfigField[];
   required_credentials?: string[];
-  info?: { text: string; status: "ok" | "warning" }[];
+  info?: { text: string; status: "ok" | "error" }[];
 }
 
 export interface CatalogEntry {
@@ -155,6 +155,7 @@ export interface CatalogEntry {
   docs_url?: string;
   setup_flow?: string;
   installed: boolean;
+  info?: { text: string; status: "ok" | "error" }[];
 }
 
 export interface DashboardEntry {

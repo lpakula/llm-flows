@@ -16,7 +16,7 @@ from .context import ContextService
 from .executors import get_executor, StepContext
 from .flow import FlowService, _normalize_step_type
 from .gate import evaluate_gates, evaluate_ifs
-from .mcp import McpService
+from .mcp import get_mcp_servers
 from .space import SpaceService
 from .run import RunService
 
@@ -74,9 +74,9 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
+        self._browser_active_runs: set[str] = set()
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
-        self.mcp_service = McpService()
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
@@ -91,8 +91,31 @@ class Daemon:
         return merged
 
     def _finalize_run(self, run_id: str) -> None:
-        """Cleanup run-scoped resources (MCP sessions)."""
-        self.mcp_service.release_session(run_id)
+        """Cleanup run-scoped resources."""
+        if run_id in self._browser_active_runs:
+            self._browser_active_runs.discard(run_id)
+            if not self._browser_active_runs:
+                self._kill_cdp_browser()
+
+    def _track_browser_run(self, run_id: str) -> None:
+        """Mark a run as actively using the browser."""
+        self._browser_active_runs.add(run_id)
+
+    @staticmethod
+    def _kill_cdp_browser() -> None:
+        """Kill the detached Chrome process listening on CDP port 9222."""
+        import subprocess
+        try:
+            out = subprocess.check_output(
+                ["lsof", "-ti", "tcp:9222"], text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            for pid in out.splitlines():
+                pid = pid.strip()
+                if pid:
+                    subprocess.call(["kill", pid], stderr=subprocess.DEVNULL)
+            logger.debug("Killed idle CDP browser (pids: %s)", out.replace("\n", ", "))
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
 
     def _check_max_spend(
         self, run, space, step_run,
@@ -183,8 +206,6 @@ class Daemon:
             self.notifications.register(ch)
         self.notifications.start_all()
 
-        self.mcp_service.start_all_enabled()
-
         logger.info("Daemon started (poll every %ds)", self.poll_interval)
 
         while self.running:
@@ -194,7 +215,6 @@ class Daemon:
                 logger.exception("Error in daemon tick")
             self._stop_event.wait(self.poll_interval)
 
-        self.mcp_service.stop_all()
         self.notifications.stop_all()
         logger.info("Daemon stopped")
 
@@ -914,10 +934,11 @@ class Daemon:
         _ss = snap_step or {}
         needed_connectors = _ss.get("connectors", _ss.get("mcp", _ss.get("tools", [])))
         if needed_connectors:
-            endpoints = self.mcp_service.get_endpoints(needed_connectors)
-            if endpoints:
-                extra_env["MCP_SERVERS"] = json.dumps(endpoints)
-                extra_env["MCP_SESSION_ID"] = str(run.id)
+            if "browser" in (needed_connectors or []):
+                self._track_browser_run(run.id)
+            servers = get_mcp_servers(needed_connectors)
+            if servers:
+                extra_env["MCP_SERVERS"] = json.dumps(servers)
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
 
         space_dir = Path(space.path) / ".llmflows"

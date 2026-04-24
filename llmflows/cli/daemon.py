@@ -30,15 +30,18 @@ def daemon_start(foreground):
     init_db()
 
     log_file = os.path.expanduser("~/.llmflows/daemon.log")
-    # Truncate log on each start so the UI always shows the current session
     open(log_file, "w").close()
 
     fmt = "%(asctime)s %(name)s %(message)s"
-    file_handler = logging.FileHandler(log_file)
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2)
     file_handler.setFormatter(logging.Formatter(fmt))
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(file_handler)
+
+    for noisy in ("httpx", "httpcore", "telegram", "telegram.ext"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     if foreground:
         # Also mirror to stdout when running in foreground

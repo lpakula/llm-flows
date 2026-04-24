@@ -125,10 +125,8 @@ CONNECTOR_TOOL_HINTS: dict[str, str] = {
         "**Web Search** — `web_search`, `web_fetch`. Search the web for information "
         "and fetch/read web page content as text."
     ),
-    "gmail": "**Gmail** — read, search, send, and manage emails via the Gmail API.",
-    "gdrive": "**Google Drive** — search, read, and manage files in Google Drive.",
-    "gcalendar": "**Google Calendar** — view and manage calendar events.",
-    "youtube": "**YouTube** — search videos, list playlists, get transcripts.",
+    "google_workspace": "**Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts.",
+    "youtube": "**YouTube** — search videos, list playlists, get transcripts, and access private data.",
     "notion": "**Notion** — search, read, and update Notion pages and databases.",
     "github": "**GitHub** — manage repositories, issues, pull requests, and more.",
     "slack_mcp": "**Slack** — read and send messages in Slack channels.",
@@ -349,24 +347,14 @@ def build_pi_command(
         cmd.extend(["--skill", str(sp)])
 
     from .executors.pi import MCP_BRIDGE_TOOL
-    from ..db.database import get_session as _get_db_session
-    from ..db.models import McpConnector
+    from .mcp import get_mcp_servers
 
-    session = _get_db_session()
-    try:
-        enabled = session.query(McpConnector).filter_by(enabled=True).all()
-        filter_set = set(connector_ids) if connector_ids is not None else None
-        endpoints = []
-        for c in enabled:
-            if c.port and (filter_set is None or c.server_id in filter_set):
-                endpoints.append({"server_id": c.server_id, "url": f"http://localhost:{c.port}"})
-        if endpoints:
-            import json as _json
-            import os
-            os.environ["MCP_SERVERS"] = _json.dumps(endpoints)
-            cmd.extend(["--extension", str(MCP_BRIDGE_TOOL)])
-    finally:
-        session.close()
+    servers = get_mcp_servers(connector_ids)
+    if servers:
+        import json as _json
+        import os
+        os.environ["MCP_SERVERS"] = _json.dumps(servers)
+        cmd.extend(["--extension", str(MCP_BRIDGE_TOOL)])
 
     return cmd
 
