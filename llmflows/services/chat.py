@@ -363,6 +363,8 @@ def build_pi_env() -> dict[str, str]:
     """Build the full environment for Pi, including MCP server URLs."""
     env = resolve_chat_env()
     env["NODE_PATH"] = str(_NODE_MODULES)
+    if env.get("GEMINI_API_KEY"):
+        env.pop("GOOGLE_API_KEY", None)
 
     ollama_host = env.get("OLLAMA_HOST")
     if ollama_host:
