@@ -444,7 +444,7 @@ _GOOGLE_CONNECTOR_IDS = {"google_workspace", "youtube"}
 
 def _google_connector_info(server_id: str) -> list[dict]:
     """Return setup status checks for Google connectors."""
-    if server_id not in _GOOGLE_CONNECTOR_IDS:
+    if server_id != "google_workspace":
         return []
     if _GWS_CREDENTIALS.exists():
         return [{"text": "credentials.json found", "status": "ok"}]
