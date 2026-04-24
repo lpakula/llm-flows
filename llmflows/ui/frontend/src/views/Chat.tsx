@@ -313,7 +313,7 @@ export function ChatView() {
   }, [tierOpen]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, overrides?: { connectors?: string[]; sessionId?: string | null }) => {
       if (!text.trim() || streaming) return;
 
       const userMsg: Message = { role: "user", content: text.trim() };
@@ -327,13 +327,15 @@ export function ChatView() {
       abortRef.current = abort;
 
       try {
+        const connectors = overrides?.connectors ?? selectedConnectors;
+        const sid = overrides?.sessionId !== undefined ? overrides.sessionId : sessionId;
         const response = await api.sendChat(
           text.trim(),
           selectedSpaceId,
-          sessionId,
+          sid,
           tier,
           undefined,
-          selectedConnectors.length > 0 ? selectedConnectors : undefined,
+          connectors.length > 0 ? connectors : undefined,
         );
 
         if (!response.ok) {
@@ -394,22 +396,28 @@ export function ChatView() {
   );
 
   const promptHandled = useRef(false);
+
   useEffect(() => {
     const prompt = searchParams.get("prompt");
     const tools = searchParams.get("tools");
-    if (tools && !promptHandled.current) {
-      const ids = tools.split(",").filter(Boolean);
-      if (ids.length) setSelectedConnectors(ids);
-    }
     if (prompt && !streaming && !promptHandled.current) {
       promptHandled.current = true;
       setSearchParams({}, { replace: true });
-      sendMessage(prompt);
+
+      const ids = tools ? tools.split(",").filter(Boolean) : [];
+
+      if (abortRef.current) abortRef.current.abort();
+      if (sessionId) api.deleteChatSession(sessionId).catch(() => {});
+      setChatState({ messages: [], sessionId: null });
+      setTotalCost(0);
+      setSelectedConnectors(ids);
+
+      sendMessage(prompt, { connectors: ids, sessionId: null });
     }
     if (!searchParams.get("prompt")) {
       promptHandled.current = false;
     }
-  }, [searchParams, setSearchParams, sendMessage, streaming]);
+  }, [searchParams, setSearchParams, sendMessage, streaming, sessionId, setChatState]);
 
   const handleNewChat = useCallback(() => {
     if (streaming && abortRef.current) {
