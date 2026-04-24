@@ -70,6 +70,8 @@ function ConfigModal({
   const [saved, setSaved] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [gcpProjectId, setGcpProjectId] = useState("");
+  const isGoogle = connector.config_fields.some((f) => f.key === "GOOGLE_CLIENT_ID");
 
   useEffect(() => {
     setLocalConfig(connector.config);
@@ -168,16 +170,34 @@ function ConfigModal({
         )}
 
         {!isConnected && connector.config_fields.length > 0 && onAskChat && (
-          <p className="text-[11px] text-gray-600">
-            <button
-              type="button"
-              onClick={() => { onClose(); onAskChat(`Help me configure the ${connector.name} connector. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`); }}
-              className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition"
-            >
-              <MessageCircle className="w-3 h-3" />
-              Ask the agent to configure
-            </button>
-          </p>
+          <div className="space-y-3 pt-3 border-t border-gray-800">
+            <p className="text-[11px] text-gray-600">
+              <button
+                type="button"
+                disabled={isGoogle && !gcpProjectId.trim()}
+                onClick={() => {
+                  const projectCtx = gcpProjectId.trim() ? ` My Google Cloud Project ID is: ${gcpProjectId.trim()}.` : "";
+                  onClose();
+                  onAskChat(`Help me configure the ${connector.name} connector.${projectCtx} Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`);
+                }}
+                className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-blue-400"
+              >
+                <MessageCircle className="w-3 h-3" />
+                Ask the agent to configure
+              </button>
+            </p>
+            {isGoogle && (
+              <div>
+                <label className="text-[11px] text-gray-500 mb-1 block">Google Cloud Project ID</label>
+                <p className="text-[11px] text-gray-600 mb-1.5">To enable agent-assisted setup, create a project at <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">console.cloud.google.com</a> and paste the Project ID below.</p>
+                <input type="text"
+                  value={gcpProjectId}
+                  onChange={(e) => setGcpProjectId(e.target.value)}
+                  placeholder="e.g. my-project-442309"
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs w-full font-mono focus:outline-none focus:border-gray-500" />
+              </div>
+            )}
+          </div>
         )}
 
         {/* Footer */}

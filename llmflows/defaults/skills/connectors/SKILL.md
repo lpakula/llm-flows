@@ -73,13 +73,13 @@ They all share the same Google Cloud project and OAuth credentials.
 
 ### Step 1 — Google Cloud project
 
-**Ask the user** which Google Cloud project to use. Example:
+The user's **Project ID** is provided in their message (e.g. "My Google Cloud Project ID is: my-project-442309"). Use it in all subsequent URLs as `?project=PROJECT_ID`.
 
-> "Do you have a Google Cloud project I should use? If so, give me the **Project ID** (e.g. `my-project-442309`). If not, create one at https://console.cloud.google.com/projectcreate and paste the Project ID here."
+If the Project ID is NOT in the message, ask the user:
 
-**Do NOT navigate to the Cloud Console to create or find projects yourself.** Wait for the user to provide the Project ID, then use `?project=PROJECT_ID` in all subsequent URLs.
+> "What's your Google Cloud Project ID? You can find it at https://console.cloud.google.com/cloud-resource-manager — it's the ID column (e.g. `my-project-442309`). If you don't have a project yet, create one at https://console.cloud.google.com/projectcreate and paste the Project ID here."
 
-**Important**: The Project ID is not the display name — it's the lowercase slug with numbers that Google assigns (e.g. "llm-flows-442309"), visible in the project settings or the URL bar.
+**Do NOT navigate to the Cloud Console to create or find projects yourself.** Wait for the user to provide the Project ID.
 
 ### Step 2 — Enable APIs
 
