@@ -479,33 +479,63 @@ export function ToolsView() {
         />
       )}
 
-      {freshModalItem && !freshModalItem.connector && freshModalItem.catalogEntry && (
-        <Modal open={!!modalItem} onClose={() => setModalItem(null)}>
-          <div className="p-6 space-y-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">{freshModalItem.name}</h2>
-              <button onClick={() => setModalItem(null)} className="text-gray-500 hover:text-gray-300 p-1"><X size={16} /></button>
-            </div>
-            <p className="text-sm text-gray-500">{freshModalItem.description}</p>
-            {freshModalItem.info && freshModalItem.info.length > 0 && (
-              <div className="space-y-1.5">
-                {freshModalItem.info.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${item.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
-                    <span className={`text-xs font-mono ${item.status === "ok" ? "text-gray-500" : "text-red-400/80"}`}>{item.text}</span>
-                  </div>
-                ))}
+      {freshModalItem && !freshModalItem.connector && freshModalItem.catalogEntry && (() => {
+        const catIsGoogle = new Set(["google_workspace", "youtube"]).has(freshModalItem.id);
+        return (
+          <Modal open={!!modalItem} onClose={() => setModalItem(null)}>
+            <div className="p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white">{freshModalItem.name}</h2>
+                <button onClick={() => setModalItem(null)} className="text-gray-500 hover:text-gray-300 p-1"><X size={16} /></button>
               </div>
-            )}
-            <div className="flex justify-end pt-2 border-t border-gray-800">
-              <button onClick={() => setModalItem(null)}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-gray-800 text-white hover:bg-gray-700 transition-colors">
-                Close
-              </button>
+              <p className="text-sm text-gray-500">{freshModalItem.description}</p>
+              {freshModalItem.info && freshModalItem.info.length > 0 && (
+                <div className="space-y-1.5">
+                  {freshModalItem.info.map((item, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${item.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
+                      <span className={`text-xs font-mono ${item.status === "ok" ? "text-gray-500" : "text-red-400/80"}`}>{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-3 pt-3 border-t border-gray-800">
+                <p className="text-[11px] text-gray-600">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalItem(null);
+                      if (catIsGoogle) {
+                        navigate(`/chat?prompt=${encodeURIComponent(`Help me configure the ${freshModalItem.name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`)}&tools=browser`);
+                      } else {
+                        navigate(`/chat?prompt=${encodeURIComponent(`Help me configure the ${freshModalItem.name} connector. Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`)}&tools=browser`);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition"
+                  >
+                    <MessageCircle className="w-3 h-3" />
+                    Ask the agent to configure
+                  </button>
+                </p>
+                {catIsGoogle && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2.5">
+                    <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
+                    <p className="text-[11px] text-amber-400/80 leading-relaxed">
+                      Agent assistant requires <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noopener noreferrer" className="text-amber-300 hover:text-amber-200 underline">gcloud CLI</a> — install it and run <code className="text-[10px] bg-amber-500/10 px-1.5 py-0.5 rounded text-amber-300">gcloud auth login</code> before starting.
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end pt-2 border-t border-gray-800">
+                <button onClick={() => setModalItem(null)}
+                  className="px-4 py-2 text-xs font-medium rounded-lg bg-gray-800 text-white hover:bg-gray-700 transition-colors">
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
-        </Modal>
-      )}
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
