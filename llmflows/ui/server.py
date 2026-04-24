@@ -275,6 +275,8 @@ def _signal_gateway_restart() -> bool:
         return False
 
 
+
+
 @app.post("/api/gateway/restart")
 async def restart_gateway():
     """Signal the daemon to restart all gateway channels."""
@@ -344,55 +346,14 @@ CONNECTOR_META: dict[str, dict] = {
 
 MCP_CATALOG: list[dict] = [
     {
-        "server_id": "gmail",
-        "name": "Gmail",
-        "command": "npx @anthropic/mcp-gmail",
+        "server_id": "google_workspace",
+        "name": "Google Workspace",
+        "command": "npx @alanxchen/google-workspace-mcp",
         "category": "Google Workspace",
-        "description": "Read, send, and manage emails via the Gmail API.",
-        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
-        "config_fields": [
-            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
-             "target": "credentials"},
-            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
-             "target": "credentials"},
-            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
-             "target": "credentials"},
-        ],
-        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gmail",
-    },
-    {
-        "server_id": "gdrive",
-        "name": "Google Drive",
-        "command": "npx @anthropic/mcp-gdrive",
-        "category": "Google Workspace",
-        "description": "Search, read, and manage files in Google Drive.",
-        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
-        "config_fields": [
-            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
-             "target": "credentials"},
-            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
-             "target": "credentials"},
-            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
-             "target": "credentials"},
-        ],
-        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gdrive",
-    },
-    {
-        "server_id": "gcalendar",
-        "name": "Google Calendar",
-        "command": "npx @anthropic/mcp-gcalendar",
-        "category": "Google Workspace",
-        "description": "View and manage calendar events.",
-        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
-        "config_fields": [
-            {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
-             "target": "credentials"},
-            {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
-             "target": "credentials"},
-            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
-             "target": "credentials"},
-        ],
-        "docs_url": "https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-gcalendar",
+        "description": "Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts.",
+        "required_credentials": [],
+        "config_fields": [],
+        "docs_url": "https://github.com/alanxchen/google-workspace-mcp",
     },
     {
         "server_id": "youtube",
@@ -400,13 +361,11 @@ MCP_CATALOG: list[dict] = [
         "command": "npx @mrsknetwork/ytmcp@latest",
         "category": "Google Workspace",
         "description": "Search videos, list playlists, get transcripts, and access private YouTube data.",
-        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+        "required_credentials": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
         "config_fields": [
             {"key": "GOOGLE_CLIENT_ID", "label": "Client ID", "type": "text",
              "target": "credentials"},
             {"key": "GOOGLE_CLIENT_SECRET", "label": "Client Secret", "type": "secret",
-             "target": "credentials"},
-            {"key": "GOOGLE_REFRESH_TOKEN", "label": "Refresh Token", "type": "secret",
              "target": "credentials"},
         ],
         "docs_url": "https://github.com/mrsknetwork/ytmcp",
@@ -478,6 +437,20 @@ MCP_CATALOG: list[dict] = [
 ]
 
 
+_GWS_CREDENTIALS = Path.home() / ".google-workspace-mcp" / "credentials.json"
+
+_GOOGLE_CONNECTOR_IDS = {"google_workspace", "youtube"}
+
+
+def _google_connector_info(server_id: str) -> list[dict]:
+    """Return setup status checks for Google connectors."""
+    if server_id not in _GOOGLE_CONNECTOR_IDS:
+        return []
+    if _GWS_CREDENTIALS.exists():
+        return [{"text": "credentials.json found", "status": "ok"}]
+    return [{"text": f"credentials.json not found at {_GWS_CREDENTIALS}", "status": "error"}]
+
+
 def _connector_response(connector, meta: dict | None = None) -> dict:
     """Build API response for a connector, enriching with metadata."""
     data = connector.to_dict()
@@ -488,6 +461,9 @@ def _connector_response(connector, meta: dict | None = None) -> dict:
     data["required_credentials"] = source.get("required_credentials", [])
     config = {**data.get("env", {}), **data.get("credentials", {})}
     data["config"] = config
+    info = _google_connector_info(connector.server_id)
+    if info:
+        data["info"] = info
     return data
 
 
@@ -499,10 +475,7 @@ async def list_connectors():
         connectors = session.query(McpConnector).order_by(
             McpConnector.builtin.desc(), McpConnector.server_id
         ).all()
-        return [
-            _connector_response(c, CONNECTOR_META.get(c.server_id))
-            for c in connectors
-        ]
+        return [_connector_response(c, CONNECTOR_META.get(c.server_id)) for c in connectors]
     finally:
         session.close()
 
@@ -515,10 +488,14 @@ async def get_connector_catalog():
         installed_ids = {
             r.server_id for r in session.query(McpConnector.server_id).all()
         }
-        return [
-            {**entry, "installed": entry["server_id"] in installed_ids}
-            for entry in MCP_CATALOG
-        ]
+        def _enrich(entry: dict) -> dict:
+            out = {**entry, "installed": entry["server_id"] in installed_ids}
+            info = _google_connector_info(entry["server_id"])
+            if info:
+                out["info"] = info
+            return out
+
+        return [_enrich(entry) for entry in MCP_CATALOG]
     finally:
         session.close()
 
@@ -536,10 +513,6 @@ async def get_connector(server_id: str):
         session.close()
 
 
-GOOGLE_CONNECTOR_IDS = {"gmail", "gdrive", "gcalendar", "youtube"}
-GOOGLE_CREDENTIAL_KEYS = {"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"}
-
-
 @app.post("/api/connectors")
 async def create_connector(body: ConnectorCreateBody):
     from ..db.models import McpConnector
@@ -553,17 +526,6 @@ async def create_connector(body: ConnectorCreateBody):
         command = body.command or (catalog_entry["command"] if catalog_entry else "")
 
         creds = dict(body.credentials or {})
-        if body.server_id in GOOGLE_CONNECTOR_IDS and not (creds.keys() & GOOGLE_CREDENTIAL_KEYS):
-            siblings = session.query(McpConnector).filter(
-                McpConnector.server_id.in_(GOOGLE_CONNECTOR_IDS - {body.server_id})
-            ).all()
-            for sib in siblings:
-                sib_creds = sib.get_credentials()
-                for k in GOOGLE_CREDENTIAL_KEYS:
-                    if k not in creds and sib_creds.get(k):
-                        creds[k] = sib_creds[k]
-                if all(creds.get(k) for k in GOOGLE_CREDENTIAL_KEYS):
-                    break
 
         connector = McpConnector(
             server_id=body.server_id,

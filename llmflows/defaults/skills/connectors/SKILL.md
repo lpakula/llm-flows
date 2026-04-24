@@ -1,6 +1,6 @@
 ---
 name: llmflows-connectors
-description: Set up and configure connectors (Gmail, Google Drive, Calendar, YouTube, Notion, GitHub, Slack, Linear, Postgres). Use when the user wants to connect a service, configure OAuth, add API keys, or troubleshoot a connector.
+description: Set up and configure connectors (Google Workspace, YouTube, Notion, GitHub, Slack, Linear, Postgres). Use when the user wants to connect a service, configure OAuth, add API keys, or troubleshoot a connector.
 ---
 
 # Connector Setup Guide
@@ -9,62 +9,54 @@ How to obtain API keys and tokens for each connector in llm-flows.
 
 ## Agent behavior
 
-1. **Always default to browser automation.** Navigate directly to the **external service portal** — NOT the llm-flows UI. Follow the steps from the guide below, clicking through the portal pages for the user. When you hit a login/auth screen, tell the user: "Please log in in the browser window, then tell me when you're done." Wait for their reply before continuing.
-3. **Do NOT offer manual steps** unless the user explicitly asks for them. You know all the steps — use them to drive the browser. If the user asks "how does this work?" or "show me the steps", then print the relevant section.
-4. **NEVER fabricate or invent credential values.** Only use values you actually read from the browser page or received from a curl/API response. If you cannot read a value from the page, tell the user to copy it manually.
-5. When you have the keys/tokens, **print them for the user to copy-paste** into the connector config in the llm-flows UI. Format them clearly:
-
-```
-Here are your credentials — paste these into the connector config in llm-flows:
-
-Client ID: <actual value from the page>
-Client Secret: <actual value from the page>
-Refresh Token: <actual value from curl response>
-```
+1. **Prefer `gcloud` CLI for Google connectors.** Use shell commands (`gcloud projects list`, `gcloud services enable`, etc.) whenever possible. Fall back to browser automation only for steps that `gcloud` cannot handle (OAuth consent screen, credential creation).
+2. **For non-Google connectors, use browser automation.** Navigate directly to the **external service portal** — NOT the llm-flows UI. Follow the steps from the guide below, clicking through the portal pages for the user. When you hit a login/auth screen, tell the user: "Please log in in the browser window, then tell me when you're done." Wait for their reply before continuing.
+3. **Do NOT offer manual steps** unless the user explicitly asks for them.
+4. **NEVER fabricate or invent credential values.** Only use values you actually read from the browser page or received from a CLI/API response.
+5. When you have the keys/tokens, **print them for the user to copy-paste** into the connector config in the llm-flows UI.
 
 Do NOT run `llmflows connectors config` commands automatically. Let the user paste the values themselves.
 
 ---
 
-## Google Services (Gmail, Google Drive, Google Calendar, YouTube)
+## Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts)
 
-All Google connectors need three values: **Client ID**, **Client Secret**, and **Refresh Token**. Follow all steps below for each connector.
+The Google Workspace connector uses `@alanxchen/google-workspace-mcp`. It handles OAuth automatically — on first use it opens a browser for consent. You only need to set up a Google Cloud project and create OAuth Desktop credentials once.
 
-### Scopes reference
+### Prerequisites
 
-| Connector        | API to enable          | OAuth scope                                              |
-|------------------|------------------------|----------------------------------------------------------|
-| Gmail            | Gmail API              | `https://www.googleapis.com/auth/gmail.modify`           |
-| Google Drive     | Google Drive API       | `https://www.googleapis.com/auth/drive`                  |
-| Google Calendar  | Google Calendar API    | `https://www.googleapis.com/auth/calendar`               |
-| YouTube          | YouTube Data API v3    | `https://www.googleapis.com/auth/youtube.readonly`       |
+- `gcloud` CLI installed and authenticated (`gcloud auth login`)
 
-### Step 1 — Google Cloud project
+### Step 1 — Select a Google Cloud project
 
-The user's **Project ID** is provided in their message (e.g. "My Google Cloud Project ID is: my-project-442309"). Use it in all subsequent URLs as `?project=PROJECT_ID`.
+Run `gcloud projects list --format="table(projectId,name)"` and show the user the list. Ask them to pick one, or create a new project:
 
-If the Project ID is NOT in the message, ask the user:
+```bash
+gcloud projects create llm-flows-mcp --name="llm-flows MCP"
+```
 
-> "What's your Google Cloud Project ID? You can find it at https://console.cloud.google.com/cloud-resource-manager — it's the ID column (e.g. `my-project-442309`). If you don't have a project yet, create one at https://console.cloud.google.com/projectcreate and paste the Project ID here."
+Set the selected project:
 
-**Do NOT navigate to the Cloud Console to create or find projects yourself.** Wait for the user to provide the Project ID.
+```bash
+gcloud config set project PROJECT_ID
+```
 
-### Step 2 — Enable APIs
+### Step 2 — Enable APIs (gcloud)
 
-Navigate directly to the API page for the connector you need. Use these direct URLs (replace `PROJECT_ID` with the actual project ID):
+Run a single command to enable all required APIs:
 
-| Connector        | Direct URL                                                                       |
-|------------------|----------------------------------------------------------------------------------|
-| Gmail            | `https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=PROJECT_ID`             |
-| Google Drive     | `https://console.cloud.google.com/apis/library/drive.googleapis.com?project=PROJECT_ID`             |
-| Google Calendar  | `https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=PROJECT_ID`     |
-| YouTube          | `https://console.cloud.google.com/apis/library/youtube.googleapis.com?project=PROJECT_ID`           |
+```bash
+gcloud services enable \
+  gmail.googleapis.com \
+  calendar-json.googleapis.com \
+  drive.googleapis.com \
+  docs.googleapis.com \
+  sheets.googleapis.com \
+  slides.googleapis.com \
+  people.googleapis.com
+```
 
-Click the **Enable** button on the API page.
-
-**Browser automation tip**: If the page asks you to select a project first, navigate to `https://console.cloud.google.com/welcome?project=PROJECT_ID` first, then retry the API URL.
-
-### Step 3 — Configure OAuth consent screen
+### Step 3 — Configure OAuth consent screen (browser)
 
 Navigate directly to: `https://console.cloud.google.com/auth/overview?project=PROJECT_ID`
 
@@ -75,92 +67,45 @@ If this is the first time setting up OAuth for this project, you'll see a "Get s
 3. **Audience / User type**: choose **External** (or Internal if using Google Workspace)
 4. **Developer contact email**: enter the user's email
 5. Click through to save the basic settings.
+6. Navigate to `https://console.cloud.google.com/auth/audience?project=PROJECT_ID`, click **Add users**, add the user's Google account email, and save. This is required because the app is in "Testing" mode.
 
-#### Add scopes
-
-Navigate to: `https://console.cloud.google.com/auth/scopes?project=PROJECT_ID`
-
-Or from the consent screen page, find the "Data Access" or "Scopes" section.
-
-1. Click **Add or remove scopes**
-2. Search for and add the scope(s) from the scopes reference table above
-3. If the scope doesn't appear in the search results, use **Manually add scopes** — paste the scope URL directly (e.g. `https://www.googleapis.com/auth/gmail.modify`)
-4. Save changes
-
-#### Add test users
-
-Navigate to: `https://console.cloud.google.com/auth/audience?project=PROJECT_ID`
-
-Since the app is in "Testing" mode (not published), only listed test users can authorize:
-1. Click **Add users**
-2. Add the user's Google account email
-3. Save
-
-### Step 4 — Create OAuth credentials (first time only)
+### Step 4 — Create OAuth Desktop credentials (browser)
 
 Navigate directly to: `https://console.cloud.google.com/apis/credentials/oauthclient?project=PROJECT_ID`
 
-1. **Application type**: select **Web application**
+1. **Application type**: select **Desktop app** (NOT Web application)
 2. **Name**: "llm-flows" (or leave default)
-3. Under **Authorized redirect URIs**, click **Add URI** and enter: `https://developers.google.com/oauthplayground`
-4. Click **Create**
-5. A dialog will show the **Client ID** and **Client Secret** — copy both.
+3. Click **Create**
+4. A dialog will show — click **Download JSON** to download `credentials.json`
 
-**Save these values** — you'll need them for the next step and for CLI configuration.
+### Step 5 — Save credentials and enable connector
 
-### Step 5 — Get a Refresh Token
-
-You have two options: OAuth Playground (browser) or curl (command line). The curl method is more reliable for automation.
-
-#### Option A: curl (recommended for agents)
-
-Build and run the authorization URL in the browser, then exchange the code via curl.
-
-1. Navigate the browser to this URL (replace CLIENT_ID and SCOPE):
-```
-https://accounts.google.com/o/oauth2/v2/auth?client_id=CLIENT_ID&redirect_uri=https://developers.google.com/oauthplayground&response_type=code&scope=SCOPE&access_type=offline&prompt=consent
-```
-
-For SCOPE, use the scope from the reference table. For multiple scopes, join them with `+` (URL-encoded space).
-
-Example for Gmail:
-```
-https://accounts.google.com/o/oauth2/v2/auth?client_id=XXX.apps.googleusercontent.com&redirect_uri=https://developers.google.com/oauthplayground&response_type=code&scope=https://www.googleapis.com/auth/gmail.modify&access_type=offline&prompt=consent
-```
-
-2. The user signs in and grants access. The browser redirects to `https://developers.google.com/oauthplayground?code=AUTH_CODE_HERE`.
-3. Grab the `code` parameter from the URL. Take a browser snapshot to read the redirect URL.
-4. Exchange the code for a refresh token via shell:
+Move the downloaded `credentials.json` to `~/.google-workspace-mcp/credentials.json`:
 
 ```bash
-curl -s -X POST https://oauth2.googleapis.com/token \
-  -d "code=AUTH_CODE" \
-  -d "client_id=CLIENT_ID" \
-  -d "client_secret=CLIENT_SECRET" \
-  -d "redirect_uri=https://developers.google.com/oauthplayground" \
-  -d "grant_type=authorization_code" | python3 -c "import sys,json; print(json.load(sys.stdin)['refresh_token'])"
+mkdir -p ~/.google-workspace-mcp
+mv ~/Downloads/client_secret_*.json ~/.google-workspace-mcp/credentials.json
 ```
 
-This prints just the refresh token.
+Then tell the user to enable the Google Workspace connector in the llm-flows UI (no config fields needed). On the first tool call, the MCP server will open the browser for OAuth consent — the user clicks "Allow" once. Tokens are cached at `~/.google-workspace-mcp/token.json` automatically.
 
-#### Option B: OAuth Playground (browser)
+---
 
-Navigate to: `https://developers.google.com/oauthplayground`
+## YouTube
 
-1. Click the **gear icon** (⚙️) in the top-right corner
-2. Check **Use your own OAuth credentials**
-3. Enter the Client ID and Client Secret from Step 4
-4. Close the settings panel
-5. In the left panel "Step 1", find or type the scope URL (e.g. `https://www.googleapis.com/auth/gmail.modify`)
-6. Click **Authorize APIs** → sign in → grant access
-7. In "Step 2", click **Exchange authorization code for tokens**
-8. Copy the **Refresh Token** from the response
+The YouTube connector uses `@mrsknetwork/ytmcp`. It needs **Client ID** and **Client Secret** from the same Google Cloud project used for Google Workspace. It handles its own OAuth flow.
 
-**Important**: When adding a new scope later, regenerate the Refresh Token with ALL scopes selected (old + new). Update the token on all existing Google connectors.
+### Setup
 
-### Step 6 — Configure in llm-flows
+If Google Workspace was already set up, the Google Cloud project, consent screen, and test users are already configured. Just enable the YouTube API via gcloud:
 
-Print the three values (Client ID, Client Secret, Refresh Token) for the user to paste into the connector config in the llm-flows UI.
+```bash
+gcloud services enable youtube.googleapis.com
+```
+
+Then retrieve the Client ID and Client Secret from the existing OAuth Desktop credentials. Navigate to `https://console.cloud.google.com/apis/credentials?project=PROJECT_ID`, click on the Desktop client, and copy the values. Paste them into the YouTube connector config in the llm-flows UI.
+
+If Google Workspace was NOT set up, follow Steps 1-4 from the Google Workspace section above first (adding `youtube.googleapis.com` to the API enable command), then do the steps above.
 
 ---
 

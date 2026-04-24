@@ -1,17 +1,9 @@
 /**
- * MCP server: browser automation via SSE.
+ * MCP server: browser automation via stdio.
  *
- * Runs a single Chrome instance and provides session-isolated browser
- * contexts keyed by _session_id (= run_id).  Multiple concurrent runs
- * each get their own isolated context with separate cookies/storage.
- *
- * Session continuity:
- *   - Within a run: same session_id → same BrowserContext, pages persist
- *   - Across runs: contexts load storageState from the user_data_dir profile
- *   - On release: context is closed, storage state saved back to profile
- *
- * Usage:
- *   tsx mcp-server-browser.ts --port 19101
+ * Each agent run gets its own instance of this server (spawned by mcp-bridge).
+ * The browser itself persists across runs via CDP — Chrome is launched as a
+ * detached process and reconnected on subsequent starts.
  *
  * Environment variables:
  *   BROWSER_HEADLESS        – "true" (default) or "false"
@@ -20,22 +12,24 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from "playwright";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import * as http from "http";
+import { spawn } from "child_process";
 
 // ── Config ───────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.argv.find((_, i, a) => a[i - 1] === "--port") || "19101", 10);
 const headless = process.env.BROWSER_HEADLESS !== "false";
 const userDataDir = process.env.BROWSER_USER_DATA_DIR || "";
 const baseArtifactsDir = process.env.BROWSER_ARTIFACTS_DIR || "/tmp/browser-artifacts";
+
+const CDP_PORT = 9222;
+const CDP_URL = `http://localhost:${CDP_PORT}`;
 
 const CHROME_PATHS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -57,122 +51,92 @@ interface Session {
   page: Page;
   refMap: Map<number, Locator>;
   nextRef: number;
-  lastAccess: number;
 }
 
 let browser: Browser | null = null;
-let persistentContext: BrowserContext | null = null;
-const sessions = new Map<string, Session>();
-const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+let currentSession: Session | null = null;
 
 const LAUNCH_ARGS = [
   "--no-first-run",
   "--disable-gpu",
   "--disable-infobars",
-  "--disable-blink-features=AutomationControlled",
 ];
-const IGNORE_DEFAULT_ARGS = ["--enable-automation"];
+
+async function connectCDP(): Promise<Browser> {
+  return await chromium.connectOverCDP(CDP_URL);
+}
+
+function launchChromeDetached(): void {
+  const execPath = resolveChromePath();
+  const args = [
+    `--remote-debugging-port=${CDP_PORT}`,
+    ...LAUNCH_ARGS,
+    ...(headless ? ["--headless=new"] : []),
+  ];
+  if (userDataDir) {
+    args.push(`--user-data-dir=${userDataDir}`);
+  }
+  const child = spawn(execPath, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
 
 async function ensureBrowser(): Promise<Browser> {
   if (browser && browser.isConnected()) return browser;
 
-  const execPath = resolveChromePath();
-  browser = await chromium.launch({
-    executablePath: execPath,
-    headless,
-    args: LAUNCH_ARGS,
-    ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
-  });
-  return browser;
-}
-
-async function ensurePersistentContext(): Promise<BrowserContext> {
-  if (persistentContext) return persistentContext;
-
-  const execPath = resolveChromePath();
-  persistentContext = await chromium.launchPersistentContext(userDataDir, {
-    executablePath: execPath,
-    headless,
-    args: LAUNCH_ARGS,
-    ignoreDefaultArgs: IGNORE_DEFAULT_ARGS,
-  });
-  await persistentContext.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-  });
-  return persistentContext;
-}
-
-async function setupContext(ctx: BrowserContext) {
-  await ctx.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-  });
-}
-
-async function getSession(sessionId: string): Promise<Session> {
-  const existing = sessions.get(sessionId);
-  if (existing) {
-    existing.lastAccess = Date.now();
-    if (!existing.page.isClosed()) return existing;
-    sessions.delete(sessionId);
-  }
-
-  let context: BrowserContext;
-  if (userDataDir) {
-    context = await ensurePersistentContext();
-  } else {
-    const b = await ensureBrowser();
-    context = await b.newContext();
-    await setupContext(context);
-  }
-
-  const existingPages = context.pages();
-  const blankPage = existingPages.find(
-    (p) => p.url() === "about:blank" || p.url() === "chrome://newtab/",
-  );
-  const page = blankPage && !blankPage.isClosed() ? blankPage : await context.newPage();
-
-  const artifactsDir = join(baseArtifactsDir, sessionId);
-  mkdirSync(artifactsDir, { recursive: true });
-  const client = await context.newCDPSession(page);
-  await client.send("Page.setDownloadBehavior", {
-    behavior: "allow",
-    downloadPath: artifactsDir,
-  });
-
-  const session: Session = {
-    context,
-    page,
-    refMap: new Map(),
-    nextRef: 1,
-    lastAccess: Date.now(),
-  };
-  sessions.set(sessionId, session);
-  return session;
-}
-
-async function releaseSession(sessionId: string): Promise<void> {
-  const session = sessions.get(sessionId);
-  if (!session) return;
   try {
-    if (userDataDir) {
-      await session.page.close();
-    } else {
-      await session.context.close();
-    }
-  } catch { /* ignore */ }
-  sessions.delete(sessionId);
+    browser = await connectCDP();
+    return browser;
+  } catch { /* not running */ }
+
+  launchChromeDetached();
+
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      browser = await connectCDP();
+      return browser;
+    } catch { /* not ready */ }
+  }
+  throw new Error(`Chrome did not start on port ${CDP_PORT}`);
 }
 
-// Periodic idle cleanup
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, session] of sessions) {
-    if (now - session.lastAccess > IDLE_TIMEOUT_MS) {
-      console.error(`[browser] Closing idle session ${id}`);
-      releaseSession(id);
-    }
+let sessionPromise: Promise<Session> | null = null;
+
+async function getSession(): Promise<Session> {
+  if (currentSession) {
+    try {
+      if (!currentSession.page.isClosed()) return currentSession;
+    } catch { /* disconnected */ }
+    currentSession = null;
   }
-}, 60_000);
+  if (sessionPromise) return sessionPromise;
+  sessionPromise = _initSession();
+  try { return await sessionPromise; }
+  finally { sessionPromise = null; }
+}
+
+async function _initSession(): Promise<Session> {
+  const b = await ensureBrowser();
+  const contexts = b.contexts();
+  const context = contexts[0] || await b.newContext();
+  const pages = context.pages();
+  const page = pages.length > 0 ? pages[pages.length - 1] : await context.newPage();
+
+  mkdirSync(baseArtifactsDir, { recursive: true });
+  try {
+    const client = await context.newCDPSession(page);
+    await client.send("Page.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: baseArtifactsDir,
+    });
+  } catch { /* CDP session may fail on reconnect, non-critical */ }
+
+  currentSession = { context, page, refMap: new Map(), nextRef: 1 };
+  return currentSession;
+}
 
 // ── Aria snapshot with refs ──────────────────────────────────────────
 
@@ -289,40 +253,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
-    {
-      name: "browser_release_session",
-      description: "Close the browser context for a session, freeing resources. Called by the daemon, not by agents.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          session_id: { type: "string", description: "Session ID to release" },
-        },
-        required: ["session_id"],
-      },
-    },
   ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const sessionId = (args as any)?._session_id || "default";
 
   try {
     switch (name) {
       case "browser_navigate": {
-        const session = await getSession(sessionId);
+        const session = await getSession();
         await session.page.goto((args as any).url, { waitUntil: "domcontentloaded", timeout: 30_000 });
         await session.page.waitForTimeout(1000);
         const snap = await takeSnapshot(session);
         return { content: [{ type: "text", text: snap }] };
       }
       case "browser_snapshot": {
-        const session = await getSession(sessionId);
+        const session = await getSession();
         const snap = await takeSnapshot(session);
         return { content: [{ type: "text", text: snap }] };
       }
       case "browser_click": {
-        const session = await getSession(sessionId);
+        const session = await getSession();
         const loc = resolveRef(session, (args as any).ref);
         await loc.first().click({ timeout: 10_000 });
         await session.page.waitForTimeout(1000);
@@ -330,25 +282,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: `Clicked ref=${(args as any).ref}.\n\n${snap}` }] };
       }
       case "browser_fill": {
-        const session = await getSession(sessionId);
+        const session = await getSession();
         const loc = resolveRef(session, (args as any).ref);
         await loc.first().fill((args as any).value, { timeout: 10_000 });
         const snap = await takeSnapshot(session);
         return { content: [{ type: "text", text: `Filled ref=${(args as any).ref} with "${(args as any).value}".\n\n${snap}` }] };
       }
       case "browser_screenshot": {
-        const session = await getSession(sessionId);
+        const session = await getSession();
         const fname = basename((args as any).filename || "screenshot.png");
-        const artifactsDir = join(baseArtifactsDir, sessionId);
-        mkdirSync(artifactsDir, { recursive: true });
-        const filePath = join(artifactsDir, fname);
+        mkdirSync(baseArtifactsDir, { recursive: true });
+        const filePath = join(baseArtifactsDir, fname);
         await session.page.screenshot({ path: filePath, fullPage: false });
         return { content: [{ type: "text", text: `Screenshot saved to ${filePath}` }] };
-      }
-      case "browser_release_session": {
-        const sid = (args as any).session_id || sessionId;
-        await releaseSession(sid);
-        return { content: [{ type: "text", text: `Session ${sid} released.` }] };
       }
       default:
         return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
@@ -359,68 +305,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// ── HTTP / SSE transport ─────────────────────────────────────────────
+// ── stdio transport ──────────────────────────────────────────────────
 
-const transports = new Map<string, SSEServerTransport>();
-
-const httpServer = http.createServer(async (req, res) => {
-  const url = new URL(req.url || "/", `http://localhost:${PORT}`);
-
-  if (url.pathname === "/sse" && req.method === "GET") {
-    const transport = new SSEServerTransport("/messages", res);
-    const id = Math.random().toString(36).slice(2);
-    transports.set(id, transport);
-    res.on("close", () => transports.delete(id));
-    await server.connect(transport);
-    return;
-  }
-
-  if (url.pathname === "/messages" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-    req.on("end", async () => {
-      for (const transport of transports.values()) {
-        try {
-          await transport.handlePostMessage(req, res, body);
-          return;
-        } catch { /* try next */ }
-      }
-      res.writeHead(400);
-      res.end("No matching transport");
-    });
-    return;
-  }
-
-  // Session release endpoint (called by McpService.release_session)
-  if (url.pathname.startsWith("/session/") && req.method === "DELETE") {
-    const sid = url.pathname.split("/session/")[1];
-    if (sid) await releaseSession(sid);
-    res.writeHead(200);
-    res.end("ok");
-    return;
-  }
-
-  res.writeHead(404);
-  res.end("Not found");
-});
-
-httpServer.listen(PORT, () => {
-  console.error(`[browser] MCP server listening on http://localhost:${PORT}`);
-});
-
-const shutdown = async () => {
-  for (const [id] of sessions) {
-    await releaseSession(id);
-  }
-  if (persistentContext) {
-    try { await persistentContext.close(); } catch { /* ignore */ }
-  }
+const shutdown = () => {
   if (browser) {
-    try { await browser.close(); } catch { /* ignore */ }
+    try { browser.disconnect(); } catch { /* ignore */ }
   }
-  httpServer.close();
   process.exit(0);
 };
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
+
+(async () => {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+})();

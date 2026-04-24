@@ -1,25 +1,24 @@
 /**
  * Pi extension: MCP bridge — the single extension that connects Pi to all MCP servers.
  *
- * Reads MCP_SERVERS (JSON array of {server_id, url}) and MCP_SESSION_ID from env.
- * For each server, connects via SSE, discovers tools via listTools(), and registers
- * them as Pi tools.  Tool calls are forwarded to the correct MCP server.
- *
- * Session-aware: passes _session_id with every tool call so stateful servers
- * (like browser) can route to the correct context.
+ * Reads MCP_SERVERS (JSON array of {server_id, command, args?, env?}) from env.
+ * For each server, spawns a subprocess via stdio transport, discovers tools via
+ * listTools(), and registers them as Pi tools.  Tool calls are forwarded to the
+ * correct MCP server.  Subprocesses are cleaned up when the bridge exits.
  */
 
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 interface ServerEntry {
   server_id: string;
-  url: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 }
 
 const MCP_SERVERS: ServerEntry[] = JSON.parse(process.env.MCP_SERVERS || "[]");
-const SESSION_ID = process.env.MCP_SESSION_ID || "";
 
 function jsonSchemaToTypebox(schema: any): TSchema {
   if (!schema || typeof schema !== "object") return Type.Any();
@@ -57,20 +56,33 @@ function jsonSchemaToTypebox(schema: any): TSchema {
   return Type.Any();
 }
 
+const transports: StdioClientTransport[] = [];
+
+process.on("exit", () => {
+  for (const t of transports) {
+    try { t.close(); } catch { /* ignore */ }
+  }
+});
+
 export default async function activate(api: any) {
   if (MCP_SERVERS.length === 0) return;
 
   for (const server of MCP_SERVERS) {
     let client: Client;
     try {
-      const transport = new SSEClientTransport(new URL(`${server.url}/sse`));
+      const transport = new StdioClientTransport({
+        command: server.command,
+        args: server.args || [],
+        env: { ...process.env, ...server.env },
+      });
+      transports.push(transport);
       client = new Client(
         { name: `llmflows-bridge-${server.server_id}`, version: "1.0.0" },
         { capabilities: {} },
       );
       await client.connect(transport);
     } catch (err) {
-      console.error(`[mcp-bridge] Failed to connect to ${server.server_id} at ${server.url}:`, err);
+      console.error(`[mcp-bridge] Failed to start ${server.server_id} (${server.command}):`, err);
       continue;
     }
 
@@ -97,13 +109,9 @@ export default async function activate(api: any) {
         parameters,
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
-            const callArgs: Record<string, unknown> = { ...params };
-            if (SESSION_ID) {
-              callArgs._session_id = SESSION_ID;
-            }
             const result = await client.callTool({
               name: toolName,
-              arguments: callArgs,
+              arguments: params,
             });
             const content = (result as any).content;
             if (Array.isArray(content)) return { content };

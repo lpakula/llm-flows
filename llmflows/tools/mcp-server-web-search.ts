@@ -1,11 +1,5 @@
 /**
- * MCP server: web search + fetch via SSE.
- *
- * Stateless — handles concurrent requests from multiple runs without
- * any session isolation needed.
- *
- * Usage:
- *   tsx mcp-server-web-search.ts --port 19100
+ * MCP server: web search + fetch via stdio.
  *
  * Environment variables:
  *   WEB_SEARCH_PROVIDER   – "duckduckgo" | "brave" | "perplexity" | "serpapi"
@@ -15,14 +9,12 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import * as http from "http";
 
-const PORT = parseInt(process.argv.find((_, i, a) => a[i - 1] === "--port") || "19100", 10);
 const PROVIDER = (process.env.WEB_SEARCH_PROVIDER || process.env.LLMFLOWS_WEB_SEARCH_PROVIDER || "duckduckgo").toLowerCase();
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY || "";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || "";
@@ -231,45 +223,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// ── HTTP / SSE transport ─────────────────────────────────────────────
+// ── stdio transport ──────────────────────────────────────────────────
 
-const transports = new Map<string, SSEServerTransport>();
-
-const httpServer = http.createServer(async (req, res) => {
-  const url = new URL(req.url || "/", `http://localhost:${PORT}`);
-
-  if (url.pathname === "/sse" && req.method === "GET") {
-    const transport = new SSEServerTransport("/messages", res);
-    const id = Math.random().toString(36).slice(2);
-    transports.set(id, transport);
-    res.on("close", () => transports.delete(id));
-    await server.connect(transport);
-    return;
-  }
-
-  if (url.pathname === "/messages" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-    req.on("end", async () => {
-      for (const transport of transports.values()) {
-        try {
-          await transport.handlePostMessage(req, res, body);
-          return;
-        } catch { /* try next */ }
-      }
-      res.writeHead(400);
-      res.end("No matching transport");
-    });
-    return;
-  }
-
-  res.writeHead(404);
-  res.end("Not found");
-});
-
-httpServer.listen(PORT, () => {
-  console.error(`[web-search] MCP server listening on http://localhost:${PORT}`);
-});
-
-process.on("SIGTERM", () => { httpServer.close(); process.exit(0); });
-process.on("SIGINT", () => { httpServer.close(); process.exit(0); });
+(async () => {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+})();
