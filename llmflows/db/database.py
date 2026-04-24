@@ -77,12 +77,15 @@ def _seed_mcp_connectors(session):
             "command": "tsx mcp-server-browser.ts",
             "enabled": False,
             "builtin": True,
+            "env": '{"BROWSER_USER_DATA_DIR": "~/.llmflows/browser-profile", "BROWSER_HEADLESS": "false"}',
         },
     ]
     for b in BUILTINS:
         existing = session.query(McpConnector).filter_by(server_id=b["server_id"]).first()
         if not existing:
             session.add(McpConnector(**b))
+        elif b.get("env") and not existing.env:
+            existing.env = b["env"]
     session.commit()
 
 

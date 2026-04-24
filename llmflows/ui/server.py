@@ -21,10 +21,10 @@ from ..db.database import get_session, reset_engine
 from ..services.agent import AgentService
 from ..services.chat import (
     CHAT_SESSIONS_DIR,
-    SYSTEM_PROMPT as _CHAT_SYSTEM_PROMPT,
     build_flow_context as _build_flow_context,
     build_pi_env as _build_pi_env,
     build_space_context as _build_space_context,
+    build_system_prompt as _build_system_prompt,
     get_skill_paths as _get_skill_paths,
     resolve_chat_model as _resolve_chat_model,
 )
@@ -2420,6 +2420,7 @@ class ChatBody(BaseModel):
     session_id: Optional[str] = None
     tier: Optional[str] = None
     flow_name: Optional[str] = None
+    connectors: Optional[list[str]] = None
 
 
 @app.post("/api/chat")
@@ -2445,7 +2446,9 @@ async def chat(body: ChatBody):
         flow_context = _build_flow_context(body.flow_name, space.id)
 
     skill_paths = _get_skill_paths()
-    system_file.write_text(_CHAT_SYSTEM_PROMPT + space_context + flow_context)
+    selected = body.connectors or []
+    system_prompt = _build_system_prompt(connector_ids=selected)
+    system_file.write_text(system_prompt + space_context + flow_context)
 
     chat_model = _resolve_chat_model(body.tier or "max")
 
@@ -2455,6 +2458,7 @@ async def chat(body: ChatBody):
         system_file=system_file,
         model=chat_model,
         skill_paths=skill_paths,
+        connector_ids=selected,
     )
 
     env = _build_pi_env()

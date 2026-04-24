@@ -431,7 +431,7 @@ export function ToolsView() {
           onClose={() => setModalItem(null)}
           onUpdate={handleUpdate}
           isConnected
-          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}`)}
+          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}&tools=browser`)}
         />
       )}
 
@@ -441,7 +441,7 @@ export function ToolsView() {
           open={!!modalItem}
           onClose={() => setModalItem(null)}
           onUpdate={handleUpdate}
-          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}`)}
+          onAskChat={(prompt) => navigate(`/chat?prompt=${encodeURIComponent(prompt)}&tools=browser`)}
         />
       )}
     </div>
