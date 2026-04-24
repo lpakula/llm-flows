@@ -71,16 +71,15 @@ They all share the same Google Cloud project and OAuth credentials.
 | Google Calendar  | Google Calendar API    | `https://www.googleapis.com/auth/calendar`               |
 | YouTube          | YouTube Data API v3    | `https://www.googleapis.com/auth/youtube.readonly`       |
 
-### Step 1 — Create a Google Cloud project (first time only)
+### Step 1 — Google Cloud project
 
-Navigate directly to: `https://console.cloud.google.com/projectcreate`
+**Ask the user** which Google Cloud project to use. Example:
 
-1. Set the project name to "llm-flows" (or any name the user prefers).
-2. Click **Create**.
-3. **Wait 5–10 seconds** for the project to be created. The page may redirect, or a notification will appear.
-4. After creation, note the **project ID** (shown on the page or in the notification). You'll use it in all subsequent URLs.
+> "Do you have a Google Cloud project I should use? If so, give me the **Project ID** (e.g. `my-project-442309`). If not, create one at https://console.cloud.google.com/projectcreate and paste the Project ID here."
 
-**Browser automation tip**: After project creation, navigate directly to the next step URL with `?project=PROJECT_ID` to avoid needing to use the project selector dropdown.
+**Do NOT navigate to the Cloud Console to create or find projects yourself.** Wait for the user to provide the Project ID, then use `?project=PROJECT_ID` in all subsequent URLs.
+
+**Important**: The Project ID is not the display name — it's the lowercase slug with numbers that Google assigns (e.g. "llm-flows-442309"), visible in the project settings or the URL bar.
 
 ### Step 2 — Enable APIs
 
