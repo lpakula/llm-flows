@@ -1,2 +1,3 @@
-2026/04/23-19:33:09.599 195e0fc Creating DB /Users/lukasz/www/llm-flows/~/.llmflows/browser-profile/Default/Extension State since it was missing.
-2026/04/23-19:33:09.604 195e0fc Reusing MANIFEST /Users/lukasz/www/llm-flows/~/.llmflows/browser-profile/Default/Extension State/MANIFEST-000001
+2026/04/23-19:42:38.804 19653aa Reusing MANIFEST /Users/lukasz/www/llm-flows/~/.llmflows/browser-profile/Default/Extension State/MANIFEST-000001
+2026/04/23-19:42:38.804 19653aa Recovering log #3
+2026/04/23-19:42:38.805 19653aa Reusing old log /Users/lukasz/www/llm-flows/~/.llmflows/browser-profile/Default/Extension State/000003.log 
