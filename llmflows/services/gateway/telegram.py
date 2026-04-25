@@ -154,8 +154,21 @@ class TelegramBot:
         logger.info("Telegram bot started in background thread")
 
     def stop(self) -> None:
-        if self._app and self._loop:
-            asyncio.run_coroutine_threadsafe(self._app.stop(), self._loop)
+        if self._app and self._loop and self._loop.is_running():
+            async def _shutdown():
+                try:
+                    if self._app.updater and self._app.updater.running:
+                        await self._app.updater.stop()
+                    await self._app.stop()
+                    await self._app.shutdown()
+                except Exception:
+                    logger.debug("Error during Telegram shutdown", exc_info=True)
+                finally:
+                    self._loop.stop()
+
+            asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=10)
         logger.info("Telegram bot stopped")
 
     def _run(self) -> None:
