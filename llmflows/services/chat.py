@@ -422,7 +422,6 @@ class ChatService:
             model=model,
             skill_paths=skill_paths,
             mode="json",
-            connector_ids=[],
         )
 
         env = build_pi_env()
