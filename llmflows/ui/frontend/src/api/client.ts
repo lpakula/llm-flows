@@ -104,8 +104,8 @@ export const api = {
     patch<AgentAlias>(`/api/agent-aliases/${id}`, body),
 
   // Scheduling
-  scheduleFlow: (spaceId: string, flowId: string) =>
-    post<FlowRun>(`/api/spaces/${spaceId}/schedule`, { flow_id: flowId }),
+  scheduleFlow: (spaceId: string, flowId: string, runVariables?: Record<string, string>) =>
+    post<FlowRun>(`/api/spaces/${spaceId}/schedule`, { flow_id: flowId, ...(runVariables ? { run_variables: runVariables } : {}) }),
 
   // Flow Runs
   listFlowRuns: (spaceId: string) => get<FlowRun[]>(`/api/spaces/${spaceId}/runs`),
