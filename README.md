@@ -77,12 +77,29 @@ Available channels:
 
 ### 🛠️ Built-in agent tools
 
-Every agent step has access to a set of tools out of the box:
+Every agent step has access to a core set of tools out of the box:
 
 - **Read / Write / Edit** — read, create, and edit files
 - **Shell** — run any shell command
+
+### 🔌 Connectors
+
+Connectors give agents access to external services via [MCP](https://modelcontextprotocol.io/) servers. Two are built in:
+
 - **Web search** — search the web and fetch page content, no extra API keys needed
 - **Browser** — control a real Chromium browser: navigate, click, fill forms, take screenshots. The session persists across steps so login state carries over
+
+Install more from the **connector catalog** in the UI or CLI — no code required:
+
+- **Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides
+- **YouTube** — search videos, list playlists, get transcripts
+- **Notion** — search, read, and update pages and databases
+- **GitHub** — manage repositories, issues, and pull requests
+- **Slack** — read and send messages in channels
+- **Linear** — manage issues and projects
+- **PostgreSQL** — query and explore databases
+
+See **[Connectors](docs/connectors.md)** for setup details.
 
 ### 🧠 Skills
 
@@ -92,7 +109,7 @@ Steps can load **skills** — reusable instruction sets that give the agent doma
 
 A flow is a sequence of steps. Each step can use a different type, so you can mix and match within a single flow:
 
-- **Agent** — AI agent with access to tools (file read/write, shell, web search, browser) for research, analysis, content generation, and automation
+- **Agent** — AI agent with access to tools and connectors (file read/write, shell, web search, browser, and any installed connector) for research, analysis, content generation, and automation
 - **Code** — delegates to a coding agent (Cursor, Claude Code) for steps that require writing or editing code
 - **Human-in-the-loop** — pauses the flow and waits for your input before continuing
 
@@ -114,6 +131,7 @@ Every run tracks token usage and cost across all steps. You can see exactly how 
 
 - **[CLI Reference](docs/cli.md)** — all commands
 - **[Flow Authoring](docs/flows.md)** — writing flows, steps, and gates
+- **[Connectors](docs/connectors.md)** — MCP integrations, catalog, and custom servers
 - **[Development](docs/development.md)** — contributing and local setup
 
 ## 🤝 Contributing

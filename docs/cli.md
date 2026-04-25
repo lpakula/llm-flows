@@ -103,15 +103,15 @@ llmflows flow schedule <name> --disable
 llmflows flow schedule <name> --clear
 ```
 
-### Flow Tools
+### Flow Connectors
 
 ```bash
-# List tools enabled for a flow
-llmflows flow tools list <name>
+# List connectors enabled for a flow
+llmflows flow connectors list <name>
 
-# Enable/disable a tool for a flow (available: web_search, browser)
-llmflows flow tools add <name> web_search
-llmflows flow tools remove <name> browser
+# Enable/disable a connector for a flow
+llmflows flow connectors add <name> web_search
+llmflows flow connectors remove <name> browser
 ```
 
 ### Flow Variables
@@ -192,17 +192,35 @@ llmflows agent alias update normal --type pi --agent pi --model anthropic/claude
 llmflows agent alias update max --type code --agent claude-code --model opus
 ```
 
-## Tools
+## Connectors
 
-Manage globally available tools (shared across all flows).
+Manage connectors — MCP server integrations that give agents access to external services.
 
 ```bash
-# List all tools and their status
-llmflows tools list
+# List all installed connectors and their status
+llmflows connectors list
 
-# Enable/disable a tool globally
-llmflows tools enable web_search
-llmflows tools disable browser
+# Browse the connector catalog
+llmflows connectors catalog
+
+# Add a connector from the catalog
+llmflows connectors add notion
+
+# Remove a connector (built-in connectors cannot be removed, only disabled)
+llmflows connectors remove notion
+
+# Enable / disable a connector
+llmflows connectors enable web_search
+llmflows connectors disable browser
+
+# Set a credential or config value
+llmflows connectors config notion NOTION_API_KEY ntn_xxx
+
+# Test a connector (requires the daemon to be running)
+llmflows connectors test notion
+
+# Restart a connector server
+llmflows connectors restart notion
 ```
 
 ## Daemon
@@ -275,10 +293,10 @@ llmflows space var set PASSWORD secret123
 llmflows space var list
 ```
 
-### Configure a flow with schedule and tools
+### Configure a flow with schedule and connectors
 
 ```bash
-llmflows flow tools add my-flow web_search
+llmflows flow connectors add my-flow web_search
 llmflows flow update my-flow --max-spend 3.0
 llmflows flow schedule my-flow --cron "0 9 * * 1-5" --timezone US/Eastern --enable
 llmflows flow var set my-flow TARGET_REPO myorg/myrepo
@@ -305,10 +323,13 @@ llmflows flow var set my-flow TARGET_REPO myorg/myrepo
 | Update flow | `llmflows flow update <name> --max-spend 5.0` |
 | Set schedule | `llmflows flow schedule <name> --cron "0 9 * * *" --enable` |
 | Disable schedule | `llmflows flow schedule <name> --disable` |
-| Add flow tool | `llmflows flow tools add <name> web_search` |
+| Add flow connector | `llmflows flow connectors add <name> web_search` |
 | Set flow variable | `llmflows flow var set <name> KEY VALUE` |
-| List tools | `llmflows tools list` |
-| Enable tool | `llmflows tools enable web_search` |
+| List connectors | `llmflows connectors list` |
+| Browse catalog | `llmflows connectors catalog` |
+| Add connector | `llmflows connectors add notion` |
+| Enable connector | `llmflows connectors enable web_search` |
+| Configure connector | `llmflows connectors config notion NOTION_API_KEY ntn_xxx` |
 | Schedule run | `llmflows run schedule --flow <flow-id>` |
 | List runs | `llmflows run list` |
 | Show run | `llmflows run show <run-id>` |

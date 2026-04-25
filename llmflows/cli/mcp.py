@@ -84,14 +84,11 @@ def connectors_catalog():
 
 @connectors.command("add")
 @click.argument("server_id")
-@click.option("--command", default="", help="Shell command to start the connector server.")
-@click.option("--name", default="", help="Display name for the connector.")
-def connectors_add(server_id, command, name):
-    """Add a connector (from catalog or custom).
+def connectors_add(server_id):
+    """Add a connector from the catalog.
 
     \b
-    Example (catalog):  llmflows connectors add notion
-    Example (custom):   llmflows connectors add my-server --command "npx my-mcp-server"
+    Example: llmflows connectors add notion
     """
     from ..ui.server import MCP_CATALOG
 
@@ -103,24 +100,21 @@ def connectors_add(server_id, command, name):
             raise SystemExit(1)
 
         catalog_entry = next((c for c in MCP_CATALOG if c["server_id"] == server_id), None)
-        resolved_name = name or (catalog_entry["name"] if catalog_entry else server_id)
-        resolved_command = command or (catalog_entry["command"] if catalog_entry else "")
-
-        if not resolved_command:
-            click.echo(f"No command specified and '{server_id}' not found in catalog. Use --command to specify.")
+        if not catalog_entry:
+            click.echo(f"'{server_id}' not found in catalog. Run 'llmflows connectors catalog' to see available connectors.")
             raise SystemExit(1)
 
         connector = McpConnector(
             server_id=server_id,
-            name=resolved_name,
-            command=resolved_command,
+            name=catalog_entry["name"],
+            command=catalog_entry["command"],
             enabled=False,
             builtin=False,
         )
         session.add(connector)
         session.commit()
-        click.echo(f"Added {click.style(resolved_name, fg='cyan')} ({server_id})")
-        if catalog_entry and catalog_entry.get("required_credentials"):
+        click.echo(f"Added {click.style(catalog_entry['name'], fg='cyan')} ({server_id})")
+        if catalog_entry.get("required_credentials"):
             click.echo(click.style("  Required credentials:", fg="yellow"))
             for key in catalog_entry["required_credentials"]:
                 click.echo(f"    llmflows connectors config {server_id} {key} <value>")
@@ -269,34 +263,3 @@ def connectors_restart(server_id):
     """Restart a connector server (requires daemon to be running)."""
     click.echo(f"Restart signal for {click.style(server_id, fg='cyan')}.")
     click.echo(click.style("The daemon will restart this server on its next health check.", fg="bright_black"))
-
-
-@connectors.group("setup")
-def connectors_setup():
-    """Run setup flows for connectors."""
-    pass
-
-
-@connectors_setup.command("google")
-def setup_google():
-    """Run the Google Workspace setup flow.
-
-    Automates GCP project creation, API enablement, and OAuth credential setup
-    using a browser-based flow. Requires the browser connector to be enabled.
-    """
-    from pathlib import Path
-
-    flow_file = Path(__file__).parent.parent / "defaults" / "flows" / "setup-google.json"
-    if not flow_file.exists():
-        click.echo(click.style("Setup flow file not found.", fg="red"))
-        raise SystemExit(1)
-
-    click.echo(f"Google Workspace setup flow: {click.style(str(flow_file), fg='cyan')}")
-    click.echo()
-    click.echo("To run this setup flow:")
-    click.echo(f"  1. Enable the browser connector: {click.style('llmflows connectors enable browser', fg='yellow')}")
-    click.echo(f"  2. Import the flow: {click.style(f'llmflows flow import {flow_file}', fg='yellow')}")
-    click.echo(f"  3. Start a run: {click.style('llmflows run start setup-google', fg='yellow')}")
-    click.echo()
-    click.echo("The flow will guide you through creating a Google Cloud project,")
-    click.echo("enabling APIs, and configuring OAuth credentials.")
