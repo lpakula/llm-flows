@@ -142,6 +142,7 @@ class TelegramBot:
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
         self._chat_sessions: dict[int, _ChatSession] = {}  # chat_id -> session
         self._chat_pending_space: dict[int, str] = {}  # chat_id -> space_id (mid-selection)
+        self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
         self._chat_service = ChatService(session_factory)
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -417,6 +418,36 @@ class TelegramBot:
                     await update.message.reply_text("Step not found or no longer awaiting response.")
             finally:
                 session.close()
+            return
+
+        # Variable collection for /run
+        pending = self._pending_run_vars.get(chat_id)
+        if pending:
+            value = (update.message.text or "").strip()
+            idx = pending["pending_idx"]
+            var_key = pending["vars"][idx]["key"]
+            pending["overrides"][var_key] = value
+
+            next_idx = idx + 1
+            if next_idx < len(pending["vars"]):
+                pending["pending_idx"] = next_idx
+                next_key = pending["vars"][next_idx]["key"]
+                await update.message.reply_text(
+                    f"Enter value for <code>{next_key}</code>:",
+                    parse_mode="HTML",
+                )
+            else:
+                ctx = self._pending_run_vars.pop(chat_id)
+                session = self.session_factory()
+                try:
+                    run_svc = RunService(session)
+                    run = run_svc.enqueue(ctx["space_id"], ctx["flow_id"], run_variables=ctx["overrides"])
+                    await update.message.reply_text(
+                        f"Queued <b>{ctx['flow_name']}</b>\nRun <code>{run.id}</code>",
+                        parse_mode="HTML",
+                    )
+                finally:
+                    session.close()
             return
 
         # Chat session
@@ -706,12 +737,37 @@ class TelegramBot:
             await query.edit_message_text("Invalid selection.")
             return
         space_id, flow_id = parts
+        chat_id = query.message.chat_id
 
         session = self.session_factory()
         try:
             flow = FlowService(session).get(flow_id)
             if not flow:
                 await query.edit_message_text("Flow not found.")
+                return
+
+            flow_vars = flow.get_variables()
+            empty_vars = [
+                {"key": k, "current": v.get("value", "")}
+                for k, v in flow_vars.items()
+                if not v.get("value")
+            ]
+
+            if empty_vars:
+                self._pending_run_vars[chat_id] = {
+                    "space_id": space_id,
+                    "flow_id": flow_id,
+                    "flow_name": flow.name,
+                    "vars": empty_vars,
+                    "overrides": {},
+                    "pending_idx": 0,
+                }
+                first_var = empty_vars[0]["key"]
+                await query.edit_message_text(
+                    f"<b>{flow.name}</b> needs variable values.\n\n"
+                    f"Enter value for <code>{first_var}</code>:",
+                    parse_mode="HTML",
+                )
                 return
 
             run_svc = RunService(session)
@@ -944,7 +1000,7 @@ class TelegramBot:
 
         if event == "run.completed":
             outcome = payload.get("outcome", "completed")
-            summary = payload.get("summary")
+            inbox_message = payload.get("inbox_message") or payload.get("summary")
             text = f"**{name}** — {outcome}"
 
             meta: list[str] = []
@@ -963,8 +1019,8 @@ class TelegramBot:
             if meta:
                 text += f"  ({' · '.join(meta)})"
 
-            if summary:
-                text += f"\n\n{summary}"
+            if inbox_message:
+                text += f"\n\n{inbox_message}"
             return text
 
         if event == "run.timeout":

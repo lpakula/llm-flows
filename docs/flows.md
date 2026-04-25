@@ -136,6 +136,26 @@ Artifacts from completed steps are automatically injected into the prompt for su
 
 To publish files (screenshots, images) in the run summary, save them to `{{run.dir}}/attachments/`.
 
+### Special files
+
+| File | Location | Description |
+|------|----------|-------------|
+| `_result.md` | Step dir (`{{run.dir}}`) | Primary step output, passed to subsequent steps |
+| `inbox.md` | Run artifacts root | Optional. If written by any step, its content becomes the inbox notification when the run completes. If no step writes it, no notification is sent. |
+| `hitl.md` | Step dir (`{{run.dir}}`) | For `hitl` steps only. The message shown to the user in the inbox UI. |
+
+### Run variables
+
+Flow variables can be set at run time via the CLI:
+
+```
+llmflows run schedule --flow <id> --var TOPIC=AI --var LANG=en
+```
+
+When using Telegram `/run`, if a flow has variables with empty values, the bot will prompt for each one before queueing the run.
+
+Run variables are applied to the flow snapshot and take effect for all steps in that run.
+
 ---
 
 ## Step connectors

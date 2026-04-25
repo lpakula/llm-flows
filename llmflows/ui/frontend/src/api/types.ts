@@ -43,6 +43,7 @@ export interface FlowRun {
   token_count: number | null;
   space_name?: string;
   attachments?: { name: string; url: string }[];
+  inbox_message?: string;
 }
 
 export interface FlowWarning {
@@ -189,6 +190,7 @@ export interface StepRunDetail {
   gate_failures?: GateFailure[];
   user_response?: string;
   user_message?: string;
+  step_result?: string;
 }
 
 export interface StepRunInfo {

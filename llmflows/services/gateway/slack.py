@@ -673,7 +673,7 @@ class SlackChannel:
 
         if event == "run.completed":
             outcome = payload.get("outcome", "completed")
-            summary = payload.get("summary")
+            inbox_message = payload.get("inbox_message") or payload.get("summary")
             text = f"*{name}* — {outcome}"
 
             meta: list[str] = []
@@ -692,8 +692,8 @@ class SlackChannel:
             if meta:
                 text += f"  ({' · '.join(meta)})"
 
-            if summary:
-                text += f"\n\n{summary}"
+            if inbox_message:
+                text += f"\n\n{inbox_message}"
             return text
 
         if event == "run.timeout":

@@ -97,6 +97,7 @@ class ReorderSteps(BaseModel):
 
 class ScheduleBody(BaseModel):
     flow_id: str
+    run_variables: Optional[dict[str, str]] = None
 
 
 class DaemonConfigBody(BaseModel):
@@ -916,19 +917,43 @@ async def schedule_flow_run(space_id: str, body: ScheduleBody):
         if not flow:
             raise HTTPException(status_code=404, detail="Flow not found")
 
+        run_vars = body.run_variables or {}
         errors = flow_svc.validate_flow(flow.id, space_id=space_id)
         blockers = [w for w in errors if w["warning_type"] in ("missing_alias", "missing_variable")]
+        if blockers and run_vars:
+            blockers = [
+                w for w in blockers
+                if not (w["warning_type"] == "missing_variable" and w.get("variable_key") in run_vars)
+            ]
         if blockers:
             messages = "; ".join(w["message"] for w in blockers)
             raise HTTPException(status_code=400, detail=messages)
 
-        run = run_svc.enqueue(space_id, body.flow_id)
+        run = run_svc.enqueue(space_id, body.flow_id, run_variables=run_vars or None)
         return run.to_dict()
     finally:
         session.close()
 
 
 # --- FlowRun endpoints ---
+
+def _enrich_run_dict(d: dict, run, space_path: str) -> dict:
+    """Add attachments, inbox_message, and step_results to a run dict."""
+    from ..services.context import ContextService
+    run_att_dir = ATTACHMENTS_DIR / run.id
+    if run_att_dir.is_dir():
+        d["attachments"] = sorted(
+            [{"name": f.name, "url": f"/api/attachments/{run.id}/{f.name}"}
+             for f in run_att_dir.iterdir() if f.is_file()],
+            key=lambda x: x["name"],
+        )
+    else:
+        d["attachments"] = []
+
+    artifacts_dir = ContextService.get_artifacts_dir(Path(space_path), run.id, run.flow_name or "")
+    d["inbox_message"] = ContextService.read_inbox_message(artifacts_dir)
+    return d
+
 
 @app.get("/api/spaces/{space_id}/runs")
 async def list_space_runs(space_id: str):
@@ -943,15 +968,7 @@ async def list_space_runs(space_id: str):
         result = []
         for r in runs:
             d = r.to_dict()
-            run_att_dir = ATTACHMENTS_DIR / r.id
-            if run_att_dir.is_dir():
-                d["attachments"] = sorted(
-                    [{"name": f.name, "url": f"/api/attachments/{r.id}/{f.name}"}
-                     for f in run_att_dir.iterdir() if f.is_file()],
-                    key=lambda x: x["name"],
-                )
-            else:
-                d["attachments"] = []
+            _enrich_run_dict(d, r, space.path)
             result.append(d)
         return result
     finally:
@@ -975,18 +992,12 @@ async def list_flow_runs(flow_id: str):
             .order_by(FlowRun.created_at.desc())
             .all()
         )
+        from ..db.models import Space as SpaceModel
         result = []
         for r in runs:
             d = r.to_dict()
-            run_att_dir = ATTACHMENTS_DIR / r.id
-            if run_att_dir.is_dir():
-                d["attachments"] = sorted(
-                    [{"name": f.name, "url": f"/api/attachments/{r.id}/{f.name}"}
-                     for f in run_att_dir.iterdir() if f.is_file()],
-                    key=lambda x: x["name"],
-                )
-            else:
-                d["attachments"] = []
+            space = session.query(SpaceModel).filter_by(id=r.space_id).first()
+            _enrich_run_dict(d, r, space.path if space else "")
             result.append(d)
         return result
     finally:
@@ -1157,14 +1168,24 @@ async def get_run_steps(run_id: str):
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()
-                if sr.awaiting_user_at and not sr.completed_at and space:
+                if space:
                     try:
                         artifacts_dir = ContextService.get_artifacts_dir(
                             Path(space.path), run_id, run.flow_name or "",
                         )
-                        result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
+                        step_dir = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name)
+                        if sr.awaiting_user_at and not sr.completed_at:
+                            from llmflows.services.context import HITL_FILE
+                            hitl_file = step_dir / HITL_FILE
+                            if hitl_file.exists():
+                                step_data["user_message"] = hitl_file.read_text().strip()
+                        from llmflows.services.context import RESULT_FILE
+                        result_file = step_dir / RESULT_FILE
                         if result_file.exists():
-                            step_data["user_message"] = result_file.read_text().strip()
+                            content = result_file.read_text(errors="replace").strip()
+                            step_data["step_result"] = content
+                            if attempts:
+                                attempts[-1]["step_result"] = content
                     except (PermissionError, OSError):
                         pass
             else:
@@ -1652,9 +1673,10 @@ async def get_inbox():
                     artifacts_dir = ContextService.get_artifacts_dir(
                         Path(space.path), run.id, run.flow_name or "",
                     )
-                    result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
-                    if result_file.exists():
-                        user_message = result_file.read_text().strip()
+                    from llmflows.services.context import HITL_FILE
+                    hitl_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / HITL_FILE
+                    if hitl_file.exists():
+                        user_message = hitl_file.read_text().strip()
                 except (PermissionError, OSError):
                     pass
 
@@ -1969,6 +1991,13 @@ async def update_flow(flow_id: str, body: FlowUpdate):
             updates["schedule_enabled"] = body.schedule_enabled
             if body.schedule_enabled:
                 existing = flow_svc.get(flow_id)
+                if existing:
+                    empty_vars = [k for k, v in existing.get_variables().items() if not v.get("value")]
+                    if empty_vars:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Cannot enable schedule — variables have no value: {', '.join(empty_vars)}",
+                        )
                 cron_expr = updates.get("schedule_cron", existing.schedule_cron if existing else None)
                 tz_str = updates.get("schedule_timezone", existing.schedule_timezone if existing else None) or "UTC"
                 if cron_expr:

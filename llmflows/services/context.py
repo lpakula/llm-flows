@@ -10,6 +10,8 @@ from ..defaults import get_defaults_dir
 DEFAULTS_DIR = get_defaults_dir()
 
 RESULT_FILE = "_result.md"
+INBOX_FILE = "inbox.md"
+HITL_FILE = "hitl.md"
 
 RESULT_FILE_LIMIT = 50_000
 ARTIFACT_FILE_LIMIT = 20_000
@@ -151,6 +153,17 @@ class ContextService:
             return ""
         try:
             return summary_file.read_text().strip()
+        except (PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def read_inbox_message(artifacts_dir: Path) -> str:
+        """Read inbox.md from the artifacts root, if it exists."""
+        inbox_file = artifacts_dir / INBOX_FILE
+        if not inbox_file.exists():
+            return ""
+        try:
+            return inbox_file.read_text().strip()
         except (PermissionError, OSError):
             return ""
 

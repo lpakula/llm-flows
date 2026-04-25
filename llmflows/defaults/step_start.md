@@ -4,10 +4,10 @@ You are an autonomous AI agent executing a step of a larger workflow.
 
 ## Flow Run
 
-**Run ID:** {{ run_id }}
-**Flow:** {{ flow_name }}
-{%- if flow_dir %}
-**Flow Dir:** {{ flow_dir }}
+**Run ID:** {{ run.id }}
+**Flow:** {{ flow.name }}
+{%- if flow.dir %}
+**Flow Dir:** {{ flow.dir }}
 {%- endif %}
 {%- if artifacts %}
 
@@ -15,7 +15,7 @@ You are an autonomous AI agent executing a step of a larger workflow.
 
 ## Previous Step Artifacts
 
-**Run artifacts directory:** `{{ run_artifacts_dir }}`
+**Run artifacts directory:** `{{ run.artifacts_dir }}`
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
@@ -71,43 +71,42 @@ Read each skill file and follow its instructions before starting the step.
 {{ step_content }}
 
 ---
-{%- if artifacts_dir %}
+{%- if run.dir %}
 {%- if step_type == "hitl" %}
 
 ## Output for User
 
-You **must** write your output to: `{{ artifacts_dir }}/_result.md`
+You **must** write your message to: `{{ run.dir }}/hitl.md`
 
 This file will be shown to the user in a UI card. The user can type a response and submit it.
 - End with a clear question the user should answer
 - Frame your question so a brief response is sufficient
+
+You **must** also write a `_result.md` file to: `{{ run.dir }}/_result.md`
+
+This file passes context to subsequent steps. Include what was done and any relevant state.
 {%- elif step_type == "code" %}
 
-## Output Artifacts
+## Output
 
-You **must** write a `_result.md` file to: `{{ artifacts_dir }}/_result.md`
+You **must** write a `_result.md` file to: `{{ run.dir }}/_result.md`
 
-This file is the primary way context is passed to subsequent steps. Include:
-- **What was done** — brief description of the work completed in this step
-- **Key decisions** — any choices made, trade-offs, or alternatives considered
-- **Files changed** — list of files created or modified with brief descriptions
-- **State / context for next steps** — anything the next step needs to know
+This file is passed as context to subsequent steps. Include:
+- What was done and key decisions made
+- Files created or modified
+- Any state the next step needs to continue
 {%- else %}
 
 ## Output
 
-You **must** write your output to: `{{ artifacts_dir }}/_result.md`
+You **must** write your output to: `{{ run.dir }}/_result.md`
 
-This file is the primary deliverable of this step and will be passed as context to subsequent steps.
-- Focus on the **actual result** — the content, answer, analysis, or output the step instructions asked for
-- Format clearly for a human reader using markdown (headers, lists, tables as appropriate)
-- Do NOT include meta-commentary about what you did or how you did it — just provide the result
-- If context is needed for subsequent steps, include it naturally within the result
+This file is passed as context to subsequent steps. Focus on the data, results, and state that the next step needs to continue the workflow. Do not optimize for human readability — structure for machine consumption.
 {%- endif %}
 
-You may also save additional files (data, configs, test output) to `{{ artifacts_dir }}/`.
+You may also save additional files (data, configs, test output) to `{{ run.dir }}/`.
 
-To publish files (screenshots, images, etc.) so they appear in the run summary, save them to `{{ artifacts_dir }}/attachments/`. Files in this directory are automatically copied to the run's shared attachments when the step completes.
+To publish files (screenshots, images, etc.) so they appear in the run summary, save them to `{{ run.dir }}/attachments/`. Files in this directory are automatically copied to the run's shared attachments when the step completes.
 {%- endif %}
 {%- if resume_prompt %}
 

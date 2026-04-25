@@ -12,7 +12,7 @@ This flow run **failed** with outcome `{{ outcome }}` at step `{{ failed_step }}
 ```
 {% endif -%}
 
-Read all previous step results above, then write a concise error analysis to `{{ artifacts_dir }}/summary.md`. Then stop.
+Read all previous step results above, then write a concise error analysis to `{{ run.artifacts_dir }}/inbox.md`. Then stop.
 
 ## LANGUAGE
 

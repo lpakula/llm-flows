@@ -1,6 +1,6 @@
 # SUMMARIZE
 
-Read all previous step results above as a whole. Write a single, concise markdown summary to `{{ artifacts_dir }}/summary.md`. Do not summarize each step separately. Then stop.
+Read all previous step results above as a whole. Write a single, concise markdown summary to `{{ run.artifacts_dir }}/summary.md`. Do not summarize each step separately. Then stop.
 
 ## LANGUAGE
 
