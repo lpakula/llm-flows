@@ -46,6 +46,7 @@ class FlowService:
         description: str = "",
         steps: Optional[list[dict]] = None,
         requirements: Optional[dict] = None,
+        variables: Optional[dict] = None,
     ) -> Flow:
         existing = self.get_by_name(name, space_id)
         if existing:
@@ -54,6 +55,11 @@ class FlowService:
         flow = Flow(name=name, space_id=space_id, description=description)
         if requirements:
             flow.requirements = json.dumps(requirements)
+        if variables:
+            normalized = {}
+            for k, v in variables.items():
+                normalized[k] = v if isinstance(v, dict) else {"value": str(v) if v else "", "is_env": False}
+            flow.variables = json.dumps(normalized)
         self.session.add(flow)
         self.session.flush()
 
@@ -400,9 +406,12 @@ class FlowService:
                     existing.requirements = json.dumps(reqs)
                 imported_vars = flow_data.get("variables")
                 if imported_vars:
+                    normalized = {}
+                    for k, v in imported_vars.items():
+                        normalized[k] = v if isinstance(v, dict) else {"value": str(v) if v else "", "is_env": False}
                     existing_vars = existing.get_variables()
                     merged = dict(existing_vars)
-                    for k, v in imported_vars.items():
+                    for k, v in normalized.items():
                         if k in merged and not v.get("value") and merged[k].get("value"):
                             merged[k] = {**v, "value": merged[k]["value"]}
                         else:
@@ -434,6 +443,7 @@ class FlowService:
                     description=flow_data.get("description", ""),
                     steps=flow_data.get("steps", []),
                     requirements=flow_data.get("requirements"),
+                    variables=flow_data.get("variables"),
                 )
             count += 1
 
