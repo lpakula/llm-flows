@@ -400,7 +400,14 @@ class FlowService:
                     existing.requirements = json.dumps(reqs)
                 imported_vars = flow_data.get("variables")
                 if imported_vars:
-                    existing.variables = json.dumps(imported_vars)
+                    existing_vars = existing.get_variables()
+                    merged = dict(existing_vars)
+                    for k, v in imported_vars.items():
+                        if k in merged and not v.get("value") and merged[k].get("value"):
+                            merged[k] = {**v, "value": merged[k]["value"]}
+                        else:
+                            merged[k] = v
+                    existing.variables = json.dumps(merged)
                 existing.updated_at = datetime.now(timezone.utc)
                 self.session.flush()
 
