@@ -265,10 +265,27 @@ export function FlowDetailView() {
   };
 
   // Run actions
-  const scheduleRun = async () => {
+  const [showRunVarsModal, setShowRunVarsModal] = useState(false);
+  const [runVarValues, setRunVarValues] = useState<Record<string, string>>({});
+
+  const handleRunClick = () => {
+    if (!flow || !spaceId) return;
+    if (hasEmptyVariables) {
+      const initial: Record<string, string> = {};
+      for (const [k, v] of Object.entries(variables)) {
+        if (!v.value) initial[k] = "";
+      }
+      setRunVarValues(initial);
+      setShowRunVarsModal(true);
+    } else {
+      scheduleRun();
+    }
+  };
+
+  const scheduleRun = async (overrides?: Record<string, string>) => {
     if (!flow || !spaceId) return;
     try {
-      await api.scheduleFlow(spaceId, flow.id);
+      await api.scheduleFlow(spaceId, flow.id, overrides);
       await loadRuns();
     } catch (e: unknown) {
       alert("Failed to schedule: " + (e instanceof Error ? e.message : String(e)));
@@ -436,12 +453,12 @@ export function FlowDetailView() {
         </div>
       </div>
 
-      {/* Warnings */}
-      {flow.warnings && flow.warnings.length > 0 && (
+      {/* Warnings (excluding missing_variable — handled by run modal) */}
+      {flow.warnings && flow.warnings.filter((w: FlowWarning) => w.warning_type !== "missing_variable").length > 0 && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-5 py-3 mb-4">
           <h4 className="text-sm font-semibold text-amber-400 mb-2">Configuration Warnings</h4>
           <ul className="space-y-1">
-            {flow.warnings.map((w: FlowWarning, i: number) => (
+            {flow.warnings.filter((w: FlowWarning) => w.warning_type !== "missing_variable").map((w: FlowWarning, i: number) => (
               <li key={i} className="text-xs text-amber-300/80">
                 {w.step_name && <span className="text-amber-400 font-mono mr-1">{w.step_name}:</span>}
                 {w.message}
@@ -459,23 +476,25 @@ export function FlowDetailView() {
           <div>
             <h3 className="text-sm font-medium text-gray-200 mb-1">Variables</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. All variables must have a value before running. <br />Toggle <code className="text-gray-400">ENV</code> to also inject as an environment variable at agent runtime. 
+              Define key-value pairs to use in step content as <code className="text-gray-400">{"{{flow.KEY}}"}</code>. Empty variables will be prompted at run time. <br />Toggle <code className="text-gray-400">ENV</code> to also inject as an environment variable at agent runtime. 
             </p>
             <div className="space-y-2">
               {Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate" title={key}>{key}</span>
-                  <input
+                <div key={key} className="flex items-start gap-2">
+                  <span className="text-xs font-mono text-cyan-400 w-32 shrink-0 truncate pt-1" title={key}>{key}</span>
+                  <textarea
                     value={entry.value}
                     onChange={(e) => {
                       setVariables((v) => ({ ...v, [key]: { ...v[key], value: e.target.value } }));
                       setDirtyVarKeys((s) => new Set(s).add(key));
+                      e.target.style.height = "auto";
+                      e.target.style.height = e.target.scrollHeight + "px";
                     }}
-                    onKeyDown={(e) => e.key === "Enter" && saveVar(key)}
-                    className={`w-1/2 max-w-xs bg-gray-800 border rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                      !entry.value ? "border-amber-600/50 placeholder:text-amber-700" : "border-gray-700"
-                    }`}
-                    placeholder={!entry.value ? "required — fill before running" : "value"}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveVar(key); } }}
+                    ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+                    rows={1}
+                    className="w-1/2 max-w-xs bg-gray-800 border border-gray-700 rounded px-2.5 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none max-h-32 overflow-hidden focus:overflow-y-auto"
+                    placeholder="value"
                   />
                   <button
                     onClick={() => toggleVarEnv(key)}
@@ -718,7 +737,7 @@ export function FlowDetailView() {
                         {step.connectors.length} {step.connectors.length === 1 ? "connector" : "connectors"}
                       </span>
                     )}
-                    {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name) && (
+                    {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name && w.warning_type !== "missing_variable") && (
                       <span className="text-[10px] text-amber-400 shrink-0" title="Has warnings">⚠</span>
                     )}
                   </div>
@@ -744,10 +763,9 @@ export function FlowDetailView() {
               Runs ({runs.length})
             </span>
             <button
-              onClick={scheduleRun}
-              disabled={hasEmptyVariables}
-              title={hasEmptyVariables ? "Fill in all variables before running" : "Start a new run"}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1 rounded-lg transition inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleRunClick}
+              title="Start a new run"
+              className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1 rounded-lg transition inline-flex items-center gap-1"
             >
               <Play size={10} /> Run
             </button>
@@ -1088,6 +1106,48 @@ export function FlowDetailView() {
           open={chatOpen}
           onClose={() => setChatOpen(false)}
         />
+      )}
+
+      {/* Run variables modal */}
+      {showRunVarsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowRunVarsModal(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-200 mb-3">Set variables for this run</h3>
+            <div className="space-y-3">
+              {Object.keys(runVarValues).map((key) => (
+                <div key={key}>
+                  <label className="block text-xs text-gray-400 mb-1">{key}</label>
+                  <textarea
+                    value={runVarValues[key]}
+                    onChange={(e) => {
+                      setRunVarValues((prev) => ({ ...prev, [key]: e.target.value }));
+                      e.target.style.height = "auto";
+                      e.target.style.height = e.target.scrollHeight + "px";
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); const allFilled = Object.values({ ...runVarValues, [key]: e.currentTarget.value }).every(Boolean); if (allFilled) { setShowRunVarsModal(false); scheduleRun({ ...runVarValues, [key]: e.currentTarget.value }); } } }}
+                    autoFocus={Object.keys(runVarValues)[0] === key}
+                    rows={1}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 resize-none max-h-32 overflow-hidden focus:overflow-y-auto"
+                    placeholder={`Enter ${key}…`}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowRunVarsModal(false)}
+                className="text-xs text-gray-400 hover:text-gray-200 px-3 py-1.5 rounded-lg transition"
+              >Cancel</button>
+              <button
+                onClick={() => { setShowRunVarsModal(false); scheduleRun(runVarValues); }}
+                disabled={Object.values(runVarValues).some((v) => !v.trim())}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-4 py-1.5 rounded-lg transition inline-flex items-center gap-1"
+              >
+                <Play size={10} /> Run
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
