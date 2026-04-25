@@ -60,13 +60,15 @@ Tests run in Docker to ensure a consistent environment:
 ```
 llmflows/
 ├── cli/              # CLI commands (click)
-├── db/               # SQLAlchemy models and Alembic migrations
-├── services/         # Business logic (daemon, runs, flows, agents, browser, gateway)
-├── tools/            # Agent tool extensions (browser, web search)
+│   └── mcp.py        # `llmflows connectors` commands
+├── db/               # SQLAlchemy models (McpConnector, etc.) and Alembic migrations
+├── services/         # Business logic (daemon, runs, flows, agents, gateway)
+│   └── mcp.py        # MCP connector bridge (starts/stops connector servers)
+├── tools/            # Built-in MCP servers (browser, web search) — TypeScript
 ├── ui/
-│   ├── server.py     # FastAPI backend
+│   ├── server.py     # FastAPI backend (includes connector catalog + API)
 │   └── frontend/     # React + Vite frontend
-├── defaults/         # Default config (config.toml)
+├── defaults/         # Default config (config.toml) and setup flows
 └── utils/            # Shared utilities
 ```
 
