@@ -147,9 +147,13 @@ class Space(Base):
         """Parse variables JSON into ``{KEY: {value, is_env}}``."""
         import json
         try:
-            return json.loads(self.variables or "{}")
+            raw = json.loads(self.variables or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                raw[k] = {"value": str(v) if v else "", "is_env": False}
+        return raw
 
     def get_variable_values(self) -> dict[str, str]:
         """Return plain ``{KEY: value}`` for template interpolation."""
@@ -211,9 +215,13 @@ class Flow(Base):
         """Parse variables JSON into ``{KEY: {value, is_env}}``."""
         import json
         try:
-            return json.loads(self.variables or "{}")
+            raw = json.loads(self.variables or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                raw[k] = {"value": str(v) if v else "", "is_env": False}
+        return raw
 
     def get_variable_values(self) -> dict[str, str]:
         """Return plain ``{KEY: value}`` for template interpolation."""

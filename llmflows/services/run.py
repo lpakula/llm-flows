@@ -29,7 +29,7 @@ class RunService:
             if snapshot:
                 snap_vars = snapshot.get("variables", {})
                 for k, v in run_variables.items():
-                    if k in snap_vars:
+                    if k in snap_vars and isinstance(snap_vars[k], dict):
                         snap_vars[k]["value"] = v
                     else:
                         snap_vars[k] = {"value": v, "is_env": False}
