@@ -14,12 +14,27 @@ class RunService:
     def __init__(self, session: Session):
         self.session = session
 
-    def enqueue(self, space_id: str, flow_id: str) -> FlowRun:
-        """Create a FlowRun in the queue."""
+    def enqueue(self, space_id: str, flow_id: str, run_variables: dict[str, str] | None = None) -> FlowRun:
+        """Create a FlowRun in the queue, optionally with run-time variable values baked into the snapshot."""
+        from .flow import FlowService
         run = FlowRun(
             space_id=space_id,
             flow_id=flow_id,
         )
+        if run_variables:
+            flow_svc = FlowService(self.session)
+            flow = flow_svc.get(flow_id)
+            flow_name = flow.name if flow else ""
+            snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=space_id)
+            if snapshot:
+                snap_vars = snapshot.get("variables", {})
+                for k, v in run_variables.items():
+                    if k in snap_vars:
+                        snap_vars[k]["value"] = v
+                    else:
+                        snap_vars[k] = {"value": v, "is_env": False}
+                snapshot["variables"] = snap_vars
+                run.flow_snapshot = json.dumps(snapshot)
         self.session.add(run)
         self.session.commit()
         return run
@@ -283,12 +298,13 @@ class RunService:
 
             user_message = ""
             try:
+                from .context import HITL_FILE
                 artifacts_dir = ContextService.get_artifacts_dir(
                     Path(space.path), run.id, run.flow_name or "",
                 )
-                result_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / "_result.md"
-                if result_file.exists():
-                    user_message = result_file.read_text().strip()
+                hitl_file = artifacts_dir / ContextService.step_dir_name(sr.step_position, sr.step_name) / HITL_FILE
+                if hitl_file.exists():
+                    user_message = hitl_file.read_text().strip()
             except (PermissionError, OSError):
                 pass
 

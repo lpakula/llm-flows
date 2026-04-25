@@ -390,6 +390,12 @@ def flow_schedule(name, cron, tz, enable, disable, clear):
                 if not effective_cron:
                     click.echo("Cannot enable schedule without a cron expression. Use --cron.")
                     raise SystemExit(1)
+                empty_vars = [k for k, v in f.get_variables().items() if not v.get("value")]
+                if empty_vars:
+                    click.echo(click.style("Cannot enable schedule — variables have no value:", fg="red"))
+                    for k in empty_vars:
+                        click.echo(f"  {k}")
+                    raise SystemExit(1)
                 effective_tz = tz or f.schedule_timezone or "UTC"
                 updates["schedule_enabled"] = True
                 updates["schedule_next_at"] = _compute_next_run(effective_cron, effective_tz)

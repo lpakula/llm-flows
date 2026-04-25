@@ -163,11 +163,13 @@ def run_show(run_id):
 @run.command("schedule")
 @click.option("--flow", "-f", "flow_id", required=True, help="Flow ID to run")
 @click.option("--space", "-s", "space_id", default=None, help="Space ID")
-def run_schedule(flow_id, space_id):
-    """Schedule a new flow run.
+@click.option("--var", "-v", "variables", multiple=True, help="Set flow variable: KEY=VALUE (repeatable)")
+def run_schedule(flow_id, space_id, variables):
+    """Schedule a new flow run, optionally setting flow variables.
 
     Examples:
       llmflows run schedule --flow abc123
+      llmflows run schedule --flow abc123 --var TOPIC=AI --var LANG=en
     """
     session = _get_session()
     try:
@@ -189,8 +191,21 @@ def run_schedule(flow_id, space_id):
             click.echo(f"Flow {flow_id} not found.")
             raise SystemExit(1)
 
+        run_vars: dict[str, str] = {}
+        for v in variables:
+            if "=" not in v:
+                click.echo(click.style(f"Invalid --var format: {v!r} (expected KEY=VALUE)", fg="red"))
+                raise SystemExit(1)
+            key, value = v.split("=", 1)
+            run_vars[key.strip()] = value.strip()
+
         errors = flow_svc.validate_flow(flow.id, space_id=space.id)
         blockers = [w for w in errors if w["warning_type"] in ("missing_alias", "missing_variable")]
+        if blockers and run_vars:
+            blockers = [
+                w for w in blockers
+                if not (w["warning_type"] == "missing_variable" and w.get("variable_key") in run_vars)
+            ]
         if blockers:
             click.echo(click.style("Cannot schedule run:", fg="red"))
             for w in blockers:
@@ -198,12 +213,15 @@ def run_schedule(flow_id, space_id):
                 click.echo(f"  {step_prefix}{w['message']}")
             raise SystemExit(1)
 
-        new_run = run_svc.enqueue(space.id, flow_id)
+        new_run = run_svc.enqueue(space.id, flow_id, run_variables=run_vars or None)
         click.echo(
             f"Scheduled run {click.style(new_run.id, fg='cyan')} "
             f"for flow {click.style(flow.name, fg='bright_green')} "
             f"— daemon will pick up shortly"
         )
+        if run_vars:
+            for k, val in run_vars.items():
+                click.echo(f"  {click.style(k, fg='bright_blue')} = {val}")
     finally:
         session.close()
 

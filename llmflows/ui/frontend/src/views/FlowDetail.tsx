@@ -93,6 +93,7 @@ export function FlowDetailView() {
   const [viewingStepAgentModel, setViewingStepAgentModel] = useState<{ agent: string; model: string } | null>(null);
   const [viewingStepDuration, setViewingStepDuration] = useState<number | null>(null);
   const [viewingStepCost, setViewingStepCost] = useState<number | null>(null);
+  const [viewingStepResult, setViewingStepResult] = useState<string | null>(null);
   const [viewingGateFailures, setViewingGateFailures] = useState<GateFailure[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<{ stepName: string; attemptId: string } | null>(null);
   const [respondText, setRespondText] = useState("");
@@ -342,6 +343,7 @@ export function FlowDetailView() {
       setViewingStepAgentModel({ agent: activeStep.step_run.agent || "", model: activeStep.step_run.model || "" });
       setViewingStepDuration(activeStep.step_run.duration_seconds ?? null);
       setViewingStepCost(activeStep.step_run.cost_usd ?? null);
+      setViewingStepResult(activeStep.step_run.step_result || null);
     }
   };
 
@@ -354,6 +356,7 @@ export function FlowDetailView() {
     setViewingStepAgentModel(null);
     setViewingStepDuration(null);
     setViewingStepCost(null);
+    setViewingStepResult(null);
     setSelectedAttempt(null);
     setViewingGateFailures([]);
     setAgentLogExpanded(true);
@@ -568,10 +571,11 @@ export function FlowDetailView() {
                 setSchedEnabled(next);
                 if (!next) saveSchedule(schedCron, schedTz, false);
               }}
-              disabled={schedSaving}
+              disabled={schedSaving || (hasEmptyVariables && !schedEnabled)}
+              title={hasEmptyVariables && !schedEnabled ? "Fill in all variables before enabling schedule" : undefined}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${
                 schedEnabled ? "bg-blue-500" : "bg-gray-700"
-              }`}
+              } ${hasEmptyVariables && !schedEnabled ? "opacity-40 cursor-not-allowed" : ""}`}
             >
               <span
                 className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
@@ -584,7 +588,9 @@ export function FlowDetailView() {
             )}
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            Automatically run this flow on a recurring schedule. The daemon will enqueue a run when it's due.
+            {hasEmptyVariables
+              ? "Fill in all variable values to enable scheduling."
+              : "Automatically run this flow on a recurring schedule. The daemon will enqueue a run when it's due."}
           </p>
           <div className={`flex flex-wrap gap-1.5 mb-3 ${!schedEnabled ? "opacity-40 pointer-events-none" : ""}`}>
             {[
@@ -855,6 +861,7 @@ export function FlowDetailView() {
                           setViewingStepAgentModel({ agent: first.agent || "", model: first.model || "" });
                           setViewingStepDuration(first.duration_seconds ?? null);
                           setViewingStepCost(first.cost_usd ?? null);
+                          setViewingStepResult(first.step_result || null);
                           setViewingGateFailures(attempts[1]?.gate_failures || []);
                         }}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : step.status)} ${
@@ -877,6 +884,7 @@ export function FlowDetailView() {
                               setViewingStepAgentModel({ agent: att.agent || "", model: att.model || "" });
                               setViewingStepDuration(att.duration_seconds ?? null);
                               setViewingStepCost(att.cost_usd ?? null);
+                              setViewingStepResult(att.step_result || null);
                               setViewingGateFailures(attempts[j + 2]?.gate_failures || []);
                             }}
                             className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
@@ -950,7 +958,7 @@ export function FlowDetailView() {
                 <button onClick={() => {
                   setLogUrl(null); setViewingStepName(null); setViewingStepPrompt(null);
                   setViewingStepAgentModel(null); setViewingStepDuration(null); setViewingStepCost(null);
-                  setSelectedAttempt(null); setViewingGateFailures([]); setAgentLogExpanded(true);
+                  setViewingStepResult(null); setSelectedAttempt(null); setViewingGateFailures([]); setAgentLogExpanded(true);
                 }} className="text-xs text-gray-500 hover:text-gray-300">Close</button>
               </div>
               {viewingStepAgentModel && (
@@ -1001,13 +1009,27 @@ export function FlowDetailView() {
               <div className={agentLogExpanded ? "h-80 min-h-0" : "min-h-0"}>
                 <LogViewer entries={logEntries} streaming={streaming} onExpandedChange={setAgentLogExpanded} />
               </div>
+
+              {viewingStepResult && (
+                <div className="border-t border-gray-800/80">
+                  <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3">
+                    <summary className="text-[10px] uppercase tracking-wide text-gray-600 cursor-pointer select-none list-none inline-flex items-center gap-2">
+                      <span className="text-gray-700 group-open:rotate-90 transition-transform inline-block text-[9px]">▶</span>
+                      Result
+                    </summary>
+                    <pre className="mt-2 text-gray-500 text-[11px] whitespace-pre-wrap font-mono bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-64 overflow-y-auto">{viewingStepResult}</pre>
+                  </details>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Summary */}
-          {expandedRun.summary && (
-            <RunSummarySection summary={expandedRun.summary} attachments={expandedRun.attachments || []} />
-          )}
+          {/* Inbox */}
+          {expandedRun.inbox_message ? (
+            <RunSummarySection summary={expandedRun.inbox_message} attachments={expandedRun.attachments || []} label="Inbox" />
+          ) : expandedRun.attachments && expandedRun.attachments.length > 0 ? (
+            <RunSummarySection summary="" attachments={expandedRun.attachments} label="Attachments" />
+          ) : null}
         </div>
       )}
 
@@ -1072,9 +1094,9 @@ export function FlowDetailView() {
   );
 }
 
-function RunSummarySection({ summary, attachments }: { summary: string; attachments: { name: string; url: string }[] }) {
+function RunSummarySection({ summary, attachments, label = "Summary" }: { summary: string; attachments: { name: string; url: string }[]; label?: string }) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const html = marked.parse(summary) as string;
+  const html = summary ? marked.parse(summary) as string : "";
   const proseClass =
     "prose prose-invert max-w-none text-gray-400 text-sm leading-relaxed " +
     "[&_h1]:text-base [&_h1]:font-bold [&_h1]:text-gray-300 [&_h1]:mt-4 [&_h1]:mb-2 " +
@@ -1094,9 +1116,9 @@ function RunSummarySection({ summary, attachments }: { summary: string; attachme
   };
   return (
     <div className="px-5 py-3">
-      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">Summary</div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">{label}</div>
       <div className={proseClass} onClick={handleClick}>
-        <div dangerouslySetInnerHTML={{ __html: html }} />
+        {html && <div dangerouslySetInnerHTML={{ __html: html }} />}
         <AttachmentsGrid files={attachments} />
       </div>
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}

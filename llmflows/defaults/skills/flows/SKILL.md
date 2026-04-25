@@ -19,8 +19,9 @@ A flow is an ordered list of steps that `llm-flows` executes sequentially. Each 
 4. The daemon evaluates **gates** — shell commands that must exit 0
 5. If all gates pass, the daemon advances to the next step
 6. If a gate fails, the agent is relaunched with failure context to fix the problem
-7. After the last step, the run completes — the last step's `_result.md` becomes the run summary
-8. If the run fails (timeout, gate failure, etc.), a `__summarizer__` step runs to produce an error diagnosis
+7. After the last step, the run completes
+8. If the run fails (timeout, gate failure, etc.), a `__summarizer__` step runs to produce an error diagnosis to `inbox.md`
+9. If any step wrote `inbox.md` in the run artifacts root, a notification is sent via Telegram/Slack on completion
 
 ### Artifacts are the backbone
 
@@ -35,14 +36,19 @@ The agent does not need to read files from previous steps — the daemon reads t
 
 ### The `_result.md` convention
 
-Every step **must** produce a `_result.md` file in its `{{run.dir}}/`. This is the primary artifact:
+Every step **must** produce a `_result.md` file in its `{{run.dir}}/`. This is the inter-step context file:
 
-- It gets a higher character budget (50,000 chars) when passed to subsequent steps
-- It is displayed in the inbox for `hitl` steps
+- It is passed as context to subsequent steps (higher character budget: 50,000 chars)
+- Focus on data, results, and state the next step needs — not human readability
 - It is the content shown in the run UI
 - The daemon prepends an **automatic gate** to every step that checks the artifacts directory is non-empty — if the step produces no files at all, this gate fails
 
 Other files saved to `{{run.dir}}/` are also collected, but with a lower per-file limit (20,000 chars) and a total budget across all artifacts (120,000 chars). Binary files (images, archives, etc.) are listed but their content is not included in the prompt.
+
+### Special files
+
+- **`inbox.md`** (run artifacts root) — Optional. When the flow author includes an instruction in the step content to write to `{{run.artifacts_dir}}/inbox.md`, the agent produces a human-facing message. If any step writes this file, its content is sent as a notification via Telegram/Slack when the run completes. If no step writes it, no notification is sent. The failure summarizer writes this file automatically for failed runs. This is not auto-injected — the flow author decides which steps should write to it. To guarantee the notification is sent, add a gate: `test -f {{run.artifacts_dir}}/inbox.md`.
+- **`hitl.md`** (step artifacts dir) — For `hitl` steps only. The message shown to the user in the inbox UI and notifications. The agent writes the user-facing question here, separate from `_result.md` which passes context to subsequent steps.
 
 ### Artifact directory layout
 
@@ -57,7 +63,7 @@ Other files saved to `{{run.dir}}/` are also collected, but with a lower per-fil
 │   │       └── screenshot.png
 │   ├── 01-summarize/                 # Step 1 artifacts
 │   │   └── _result.md
-│   └── summary.md                    # Auto-generated run summary
+│   └── inbox.md                      # Optional inbox notification message
 └── ...                               # Any persistent cross-run data
 ```
 
@@ -97,14 +103,14 @@ Runs via an **external code agent** (Cursor, Claude Code, etc.) — a CLI-based 
 
 ### `"hitl"` (human-in-the-loop)
 
-Uses the same executor as `"agent"` (Pi agent), but after the agent finishes, instead of evaluating gates, the daemon **pauses the flow and creates an inbox item**. The user sees the agent's output (from `_result.md`) in the UI with a text input field to respond.
+Uses the same executor as `"agent"` (Pi agent), but after the agent finishes, instead of evaluating gates, the daemon **pauses the flow and creates an inbox item**. The user sees the agent's output (from `hitl.md`) in the UI with a text input field to respond.
 
 **The lifecycle:**
 
-1. Agent runs the step's prompt and writes output to `_result.md`
+1. Agent runs the step's prompt and writes `hitl.md` (user-facing message) and `_result.md` (context for subsequent steps)
 2. Daemon marks the step as "awaiting user" (gates are **not** evaluated)
-3. Step appears in the **Inbox** with the agent's output and a text input
-4. User reads the output and submits a response
+3. Step appears in the **Inbox** with the content of `hitl.md` and a text input
+4. User reads the message and submits a response
 5. Daemon marks the step complete and advances to the next step
 6. The user's response is available to all subsequent steps as context
 
@@ -123,6 +129,7 @@ Uses the same executor as `"agent"` (Pi agent), but after the agent finishes, in
 
 **Edge cases:**
 - `hitl` steps have **no gates** — the daemon skips gate evaluation entirely
+- The agent must write `hitl.md` (the question for the user) and `_result.md` (context for next steps) — they can contain different content
 - The user's response is passed as context to all subsequent steps (via the `User Responses` section in the prompt)
 - The user's response is also available as a template variable: `{{steps.propose-approach.user_response}}`
 
@@ -319,6 +326,7 @@ The agent's prompt is built by the system and automatically includes (flow autho
 - **User responses** — all responses from completed `hitl` steps
 - **Space variables** — listed as available environment variables
 - **Skills** — any skills attached to the step
+- **Template variables** — `{{run.dir}}`, `{{run.id}}`, `{{run.artifacts_dir}}`, `{{flow.dir}}`, `{{flow.name}}` are available in step content for file paths
 
 ---
 
@@ -385,6 +393,16 @@ When exporting/importing flows, variables appear at the flow level:
 ```
 
 Variable values are intentionally left empty in exports — the user fills them in after importing. This keeps secrets out of flow JSON files.
+
+### Run variables (overrides at run time)
+
+Flow variables can be overridden when scheduling a run via CLI or Telegram:
+
+```bash
+llmflows run schedule --flow abc123 --var TOPIC=AI --var LANG=en
+```
+
+When using Telegram `/run`, if a flow has variables with empty values, the bot prompts for each one before queueing the run. Run variables are baked into the flow snapshot at enqueue time — they affect only that run, not the flow's default values. Scheduled (cron) flows require all variables to have values; the schedule cannot be enabled if any variable is empty.
 
 ---
 
@@ -639,7 +657,7 @@ When a step consumes output from a previous step, describe the format explicitly
       "name": "propose",
       "position": 0,
       "step_type": "hitl",
-      "content": "# PROPOSE\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches.\n\n## WORKFLOW\n\n1. Study the codebase\n2. Propose 2-3 approaches with pros/cons\n3. End with: \"Which approach should I implement?\""
+      "content": "# PROPOSE\n\n## PURPOSE\n\nAnalyze the task and propose 2-3 approaches.\n\n## WORKFLOW\n\n1. Study the codebase\n2. Propose 2-3 approaches with pros/cons\n3. Write to `{{run.dir}}/hitl.md`: the approaches with pros/cons, ending with \"Which approach should I implement?\"\n4. Write to `{{run.dir}}/_result.md`: detailed analysis for subsequent steps"
     },
     {
       "name": "implement",
@@ -708,7 +726,7 @@ When a step consumes output from a previous step, describe the format explicitly
       "position": 1,
       "step_type": "hitl",
       "connectors": ["browser"],
-      "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/_result.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it"
+      "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/hitl.md`: explain that credentials were entered and the site is asking for an MFA code, then ask the user to provide it\n4. Write to `{{run.dir}}/_result.md`: summary of login progress for subsequent steps"
     },
     {
       "name": "submit-mfa",

@@ -79,14 +79,17 @@ class AgentService:
         step_output_dir = artifacts_dir / ContextService.step_dir_name(step_position, step_name) if not is_summary else None
 
         spc_vars = space_variables or {}
+        step_dir = str(step_output_dir) if step_output_dir else ""
         prompt_vars = {
             "run_id": run_id,
+            "run": {"id": run_id, "dir": step_dir, "artifacts_dir": str(artifacts_dir)},
             "flow_name": flow_name,
+            "flow": {"name": flow_name, "dir": str(flow_dir)},
             "flow_dir": str(flow_dir),
             "step_name": step_name,
             "step_content": step_content,
             "artifacts": previous_artifacts,
-            "artifacts_dir": str(step_output_dir) if step_output_dir else "",
+            "artifacts_dir": step_dir,
             "run_artifacts_dir": str(artifacts_dir),
             "gate_failures": gate_failures,
             "resume_prompt": resume_prompt,

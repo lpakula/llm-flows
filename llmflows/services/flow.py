@@ -479,6 +479,7 @@ class FlowService:
                 warnings.append({
                     "step_name": "",
                     "warning_type": "missing_variable",
+                    "variable_key": var_name,
                     "message": f"Variable '{var_name}' has no value. Fill it in on the flow page before running.",
                 })
 

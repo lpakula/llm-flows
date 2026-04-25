@@ -511,6 +511,30 @@ class Daemon:
                 run_svc.session.commit()
 
         if step_type == "hitl":
+            from .context import HITL_FILE
+            step_dir = ContextService.get_artifacts_dir(
+                space_root, run.id, run.flow_name or "",
+            ) / _step_dir_name(step_run.step_position, step_run.step_name)
+            hitl_file = step_dir / HITL_FILE
+
+            if not hitl_file.exists():
+                run_svc.mark_step_completed(step_run.id, outcome="completed")
+                logger.warning(
+                    "Run %s step '%s' missing hitl.md, relaunching",
+                    run.id, step_run.step_name,
+                )
+                self._launch_step(
+                    run, working_path,
+                    step_run.step_name, step_run.step_position,
+                    step_run.flow_name, run_svc, flow_svc,
+                    gate_failures=[{
+                        "command": f'test -f "{hitl_file}"',
+                        "message": f"hitl step must produce {HITL_FILE} in the step artifacts directory",
+                        "output": "",
+                    }],
+                )
+                return
+
             run_svc.mark_awaiting_user(step_run.id)
             inbox_item = run_svc.create_inbox_item(
                 type="awaiting_user", reference_id=step_run.id,
@@ -523,11 +547,7 @@ class Daemon:
             )
             user_message = ""
             try:
-                result_file = ContextService.get_artifacts_dir(
-                    space_root, run.id, run.flow_name or "",
-                ) / _step_dir_name(step_run.step_position, step_run.step_name) / "_result.md"
-                if result_file.exists():
-                    user_message = result_file.read_text().strip()
+                user_message = hitl_file.read_text().strip()
             except (PermissionError, OSError):
                 pass
             self.notifications.notify("step.awaiting_user", {
@@ -695,12 +715,12 @@ class Daemon:
 
         if current_step_name == "__summarizer__":
             artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
-            summary = ContextService.read_summary_artifact(artifacts_dir)
+            summary = ContextService.read_summary_artifact(artifacts_dir) or ContextService.read_inbox_message(artifacts_dir)
             outcome = run.outcome or "completed"
             logger.info("Run %s completed (outcome=%s)", run.id, outcome)
             self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
-            self._maybe_create_completed_inbox(run, run_svc)
+            self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
             return
 
         next_flow = current_flow
@@ -987,7 +1007,15 @@ class Daemon:
                         space_id=run.space_id,
                         title=f"{run.flow_name or run.id} — {step_name} (hitl)",
                     )
-                    user_message = result.output or ""
+                    user_message = ""
+                    try:
+                        from .context import HITL_FILE
+                        hitl_file = artifacts_dir / _step_dir_name(step_position, step_name) / HITL_FILE
+                        if hitl_file.exists():
+                            user_message = hitl_file.read_text().strip()
+                    except (PermissionError, OSError):
+                        pass
+                    user_message = user_message or result.output or ""
                     self.notifications.notify("step.awaiting_user", {
                         "flow_name": run.flow_name or run.id,
                         "run_id": run.id,
@@ -1033,7 +1061,7 @@ class Daemon:
         logger.info("Run %s completed (outcome=%s)", run.id, outcome)
         self._finalize_run(run.id)
         run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
-        self._maybe_create_completed_inbox(run, run_svc)
+        self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
 
     def _launch_summary_step(
         self, run, working_path: Path,
@@ -1051,17 +1079,15 @@ class Daemon:
         ctx = ContextService(working_path / ".llmflows")
         summarizer_language = load_system_config().get("daemon", {}).get("summarizer_language", "English")
 
+        summary_vars = {
+            "artifacts_dir": str(artifacts_dir),
+            "run": {"id": run.id, "artifacts_dir": str(artifacts_dir)},
+            "summarizer_language": summarizer_language,
+        }
         if error_context:
-            summary_content = ctx.render_error_summary_step({
-                "artifacts_dir": str(artifacts_dir),
-                "summarizer_language": summarizer_language,
-                **error_context,
-            })
+            summary_content = ctx.render_error_summary_step({**summary_vars, **error_context})
         else:
-            summary_content = ctx.render_summary_step({
-                "artifacts_dir": str(artifacts_dir),
-                "summarizer_language": summarizer_language,
-            })
+            summary_content = ctx.render_summary_step(summary_vars)
 
         try:
             summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
@@ -1074,7 +1100,7 @@ class Daemon:
             outcome = run.outcome or "completed"
             self._finalize_run(run.id)
             run_svc.mark_completed(run.id, outcome=outcome, summary="")
-            self._maybe_create_completed_inbox(run, run_svc)
+            self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
             return
 
         flow_label = run.flow_name or "default"
@@ -1112,15 +1138,17 @@ class Daemon:
         else:
             logger.error("Failed to launch summary step for run %s", run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
-            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir)
             self._finalize_run(run.id)
             outcome = run.outcome or "completed"
             run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
-            self._maybe_create_completed_inbox(run, run_svc)
+            self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
 
-    def _maybe_create_completed_inbox(self, run, run_svc: RunService) -> None:
-        """Create a completed_run inbox item and send notification if the space opts in."""
+    def _maybe_create_completed_inbox(self, run, run_svc: RunService, artifacts_dir: Path) -> None:
+        """Create a completed_run inbox item and send notification only if inbox.md exists."""
+        inbox_message = ContextService.read_inbox_message(artifacts_dir)
+        if not inbox_message:
+            return
         inbox_id = None
         try:
             inbox_item = run_svc.create_inbox_item(
@@ -1136,6 +1164,7 @@ class Daemon:
             "run_id": run.id,
             "outcome": run.outcome or "completed",
             "summary": run.summary or "",
+            "inbox_message": inbox_message,
             "inbox_id": inbox_id,
             "cost_usd": run.cost_usd,
             "duration_seconds": run.duration_seconds,
