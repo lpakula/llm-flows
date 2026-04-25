@@ -8,13 +8,11 @@ import asyncio
 import logging
 import re
 import threading
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
-from ..chat import ChatService
 from ..context import ContextService
 from ..flow import FlowService
 from ..run import RunService
@@ -35,13 +33,6 @@ logger = logging.getLogger("llmflows.telegram")
 _MD_TABLE_RE = re.compile(r"((?:^\|.+\|$\n?)+)", re.MULTILINE)
 
 
-@dataclass
-class _ChatSession:
-    session_id: str
-    space_id: str
-    space_name: str
-    anchor_message_id: int
-    flow_name: str | None = None
 _TG_MAX_LEN = 4096
 
 
@@ -140,10 +131,7 @@ class TelegramBot:
         self._active_chats: set[int] = set()
         self._awaiting_response: dict[int, str] = {}  # chat_id -> step_run_id
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
-        self._chat_sessions: dict[int, _ChatSession] = {}  # chat_id -> session
-        self._chat_pending_space: dict[int, str] = {}  # chat_id -> space_id (mid-selection)
         self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
-        self._chat_service = ChatService(session_factory)
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -197,8 +185,6 @@ class TelegramBot:
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
-        app.add_handler(CommandHandler("chat", self._handle_chat_command))
-        app.add_handler(CommandHandler("chatend", self._handle_chat_end_command))
         app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -227,8 +213,6 @@ class TelegramBot:
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
             BotCommand("inbox", "Show inbox items"),
-            BotCommand("chat", "Chat with the assistant"),
-            BotCommand("chatend", "End chat session"),
             BotCommand("help", "Show commands & chat ID"),
         ])
         logger.info("Telegram bot commands registered")
@@ -278,6 +262,7 @@ class TelegramBot:
             now = datetime.now(timezone.utc)
 
             lines: list[str] = []
+            buttons: list[list] = []
             for space in spaces:
                 active = run_svc.get_active_by_space(space.id)
                 pending = run_svc.get_all_pending(space.id)
@@ -288,17 +273,27 @@ class TelegramBot:
                     step = r.current_step or "starting"
                     elapsed = _format_elapsed(r.started_at, now)
                     lines.append(f"  🟢 {r.flow_name or '?'} — <i>{step}</i>  {elapsed}")
+                    buttons.append([InlineKeyboardButton(
+                        f"Cancel {r.flow_name or r.id}",
+                        callback_data=f"cancelrun:{r.id}",
+                    )])
                 for r in pending:
                     waited = _format_elapsed(r.created_at, now)
                     lines.append(f"  ⏳ {r.flow_name or '?'} — queued {waited}")
+                    buttons.append([InlineKeyboardButton(
+                        f"Dequeue {r.flow_name or r.id}",
+                        callback_data=f"cancelrun:{r.id}",
+                    )])
 
             if not lines:
                 await update.message.reply_text("No active or queued runs.")
                 return
 
+            markup = InlineKeyboardMarkup(buttons) if buttons else None
             await update.message.reply_text(
                 "\n".join(lines),
                 parse_mode="HTML",
+                reply_markup=markup,
             )
         finally:
             session.close()
@@ -390,11 +385,6 @@ class TelegramBot:
     async def _handle_help_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         self._active_chats.add(chat_id)
-        chat_status = ""
-        session = self._chat_sessions.get(chat_id)
-        if session:
-            label = session.flow_name or session.space_name
-            chat_status = f"\n\n<i>Active chat: {label}</i>"
         await update.message.reply_text(
             f"<b>llmflows bot</b>\n\n"
             f"Chat ID: <code>{chat_id}</code>\n\n"
@@ -402,14 +392,11 @@ class TelegramBot:
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
             f"/inbox — Show inbox items\n"
-            f"/chat — Chat with the assistant\n"
-            f"/chatend — End chat session\n"
-            f"/help — Show this message"
-            f"{chat_status}",
+            f"/help — Show this message",
             parse_mode="HTML",
         )
 
-    # ── Message handler (prompt responses + chat) ──────────────────────────
+    # ── Message handler (prompt responses + variable collection) ────────────
 
     async def _handle_message(self, update, context) -> None:
         chat_id = update.effective_chat.id
@@ -417,7 +404,6 @@ class TelegramBot:
             return
         self._active_chats.add(chat_id)
 
-        # HITL takes priority over chat
         step_run_id = self._awaiting_response.pop(chat_id, None)
         if step_run_id:
             response_text = update.message.text or ""
@@ -463,15 +449,8 @@ class TelegramBot:
                     session.close()
             return
 
-        # Chat session
-        chat_session = self._chat_sessions.get(chat_id)
-        if chat_session:
-            await self._chat_reply(update, chat_id, chat_session)
-            return
-
         await update.message.reply_text(
-            "No pending prompt to respond to. "
-            "Use /chat to start a chat session."
+            "No pending prompt to respond to."
         )
 
     # ── Callback handler ─────────────────────────────────────────────────────
@@ -507,12 +486,8 @@ class TelegramBot:
             await self._cb_inbox_detail(query, data[len("inbox_detail:"):])
             return
 
-        if data.startswith("chatspace:"):
-            await self._cb_chat_select_space(query, chat_id, data[len("chatspace:"):])
-            return
-
-        if data.startswith("chatflow:"):
-            await self._cb_chat_select_flow(query, chat_id, data[len("chatflow:"):])
+        if data.startswith("cancelrun:"):
+            await self._cb_cancel_run(query, data[len("cancelrun:"):])
             return
 
         if data.startswith("respond:"):
@@ -562,162 +537,35 @@ class TelegramBot:
                 except Exception:
                     logger.debug("Failed to delete message %s", message_id)
 
-    # ── /chat command — start a chat session ─────────────────────────────────
+    # ── Cancel run callback ─────────────────────────────────────────────────
 
-    async def _handle_chat_command(self, update, context) -> None:
-        chat_id = update.effective_chat.id
-        if not self._is_allowed(chat_id):
-            return
-        self._active_chats.add(chat_id)
-
-        if chat_id in self._chat_sessions:
-            session = self._chat_sessions[chat_id]
-            label = session.flow_name or session.space_name
-            await update.message.reply_text(
-                f"Chat session already active (<b>{label}</b>). "
-                f"Use /chatend to stop it first.",
-                parse_mode="HTML",
-            )
-            return
-
+    async def _cb_cancel_run(self, query, run_id: str) -> None:
         session = self.session_factory()
         try:
-            spaces = SpaceService(session).list_all()
-            if not spaces:
-                await update.message.reply_text("No spaces registered.")
+            run_svc = RunService(session)
+            run = run_svc.get(run_id)
+            if not run:
+                await query.edit_message_text("Run not found.")
                 return
-            buttons = [
-                [InlineKeyboardButton(s.name, callback_data=f"chatspace:{s.id}")]
-                for s in spaces
-            ]
-            await update.message.reply_text(
-                "Select a space for chat:",
-                reply_markup=InlineKeyboardMarkup(buttons),
-            )
-        finally:
-            session.close()
-
-    async def _handle_chat_end_command(self, update, context) -> None:
-        chat_id = update.effective_chat.id
-        if not self._is_allowed(chat_id):
-            return
-        self._active_chats.add(chat_id)
-
-        session = self._chat_sessions.pop(chat_id, None)
-        self._chat_pending_space.pop(chat_id, None)
-        if not session:
-            await update.message.reply_text("No active chat session.")
-            return
-
-        self._chat_service.end_session(session.session_id)
-        try:
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text="━━━ Chat ended ━━━",
-                reply_to_message_id=session.anchor_message_id,
-            )
-        except Exception:
-            await update.message.reply_text("━━━ Chat ended ━━━")
-
-    # ── /chat callback helpers ─────────────────────────────────────────────
-
-    async def _cb_chat_select_space(self, query, chat_id: int, space_id: str) -> None:
-        session = self.session_factory()
-        try:
-            space = SpaceService(session).get(space_id)
-            if not space:
-                await query.edit_message_text("Space not found.")
-                return
-            self._chat_pending_space[chat_id] = space_id
-            flows = FlowService(session).list_by_space(space_id)
-            buttons = [
-                [InlineKeyboardButton(f.name, callback_data=f"chatflow:{space_id}:{f.id}")]
-                for f in flows
-            ]
-            buttons.append([InlineKeyboardButton("Skip (no flow)", callback_data=f"chatflow:{space_id}:skip")])
-            await query.edit_message_text(
-                f"<b>{space.name}</b> — select a flow (or skip):",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(buttons),
-            )
-        finally:
-            session.close()
-
-    async def _cb_chat_select_flow(self, query, chat_id: int, payload: str) -> None:
-        parts = payload.split(":", 1)
-        if len(parts) != 2:
-            await query.edit_message_text("Invalid selection.")
-            return
-        space_id, flow_id = parts
-
-        self._chat_pending_space.pop(chat_id, None)
-
-        session = self.session_factory()
-        try:
-            space = SpaceService(session).get(space_id)
-            if not space:
-                await query.edit_message_text("Space not found.")
+            if run.completed_at:
+                await query.edit_message_text(f"Run <code>{run_id}</code> already completed.", parse_mode="HTML")
                 return
 
-            flow_name = None
-            if flow_id != "skip":
-                flow = FlowService(session).get(flow_id)
-                flow_name = flow.name if flow else None
+            flow_label = run.flow_name or run_id
+            if not run.started_at:
+                session.delete(run)
+                session.commit()
+                await query.edit_message_text(f"Dequeued <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
+                return
 
-            label = flow_name or space.name
-            anchor_text = f"━━━ Chat: {label} ({space.name}) ━━━\nSend messages to chat. /chatend to stop."
-            await query.edit_message_text(anchor_text)
-            anchor_message_id = query.message.message_id
-
-            session_id = self._chat_service.new_session_id()
-            self._chat_sessions[chat_id] = _ChatSession(
-                session_id=session_id,
-                space_id=space_id,
-                space_name=space.name,
-                anchor_message_id=anchor_message_id,
-                flow_name=flow_name,
-            )
+            run_svc.mark_completed(run_id, outcome="cancelled")
+            space = session.query(SpaceModel).filter_by(id=run.space_id).first()
+            if space:
+                from ..agent import AgentService
+                AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+            await query.edit_message_text(f"Cancelled <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
         finally:
             session.close()
-
-    # ── Chat reply handler ─────────────────────────────────────────────────
-
-    async def _chat_reply(self, update, chat_id: int, session: _ChatSession) -> None:
-        """Send user message to Pi and relay the response."""
-        message_text = update.message.text or ""
-
-        typing_task = asyncio.ensure_future(self._keep_typing(chat_id))
-        try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._chat_service.send_message(
-                    session_id=session.session_id,
-                    message=message_text,
-                    space_id=session.space_id,
-                    flow_name=session.flow_name,
-                    channel_name="Telegram",
-                ),
-            )
-        finally:
-            typing_task.cancel()
-
-        html = _to_telegram_html(response)
-        chunks = _split_message(html)
-        for chunk in chunks:
-            await self._send_message_safe(
-                chat_id, chunk,
-                reply_to_message_id=session.anchor_message_id,
-            )
-
-    async def _keep_typing(self, chat_id: int) -> None:
-        """Send 'typing...' indicator every 4 seconds until cancelled."""
-        try:
-            while True:
-                await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
-                await asyncio.sleep(4)
-        except asyncio.CancelledError:
-            pass
 
     # ── /run callback helpers ────────────────────────────────────────────────
 
