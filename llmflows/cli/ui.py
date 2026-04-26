@@ -1,6 +1,5 @@
 """UI CLI command -- launch web UI."""
 
-import logging
 import os
 import shutil
 import subprocess
@@ -53,57 +52,58 @@ def _ensure_frontend_built() -> bool:
 
 
 def _ensure_daemon_running() -> None:
-    """Start the daemon if it is not already running (or restart if stale)."""
-    from ..services.daemon import Daemon, write_pid_file, read_pid_file, remove_pid_file
+    """Start the daemon if it is not already running (or restart if stale).
+
+    Spawns ``llmflows daemon start`` as a detached subprocess so the daemon
+    process has a recognisable cmdline (``llmflows daemon start``) and goes
+    through the single canonical start path that writes the PID file.
+    """
+    import shutil
+    import subprocess
+    import time
+    from ..services.daemon import read_pid_file, remove_pid_file
 
     existing_pid = read_pid_file()
     if existing_pid:
         try:
-            os.kill(existing_pid, 0)  # signal 0 = just check existence
+            os.kill(existing_pid, 0)
             click.echo(f"  Daemon:          already running (pid {existing_pid})")
             return
         except ProcessLookupError:
             click.echo("  Daemon:          stale PID found, restarting…")
             remove_pid_file()
 
-    log_file = os.path.expanduser("~/.llmflows/daemon.log")
-    open(log_file, "w").close()
+    from .daemon import _find_orphan_daemon_pids, _stop_pid
+    orphans = _find_orphan_daemon_pids()
+    if orphans:
+        click.echo(
+            f"  Daemon:          found orphan llmflows daemon(s) {orphans}, "
+            "stopping before starting fresh…"
+        )
+        for opid in orphans:
+            _stop_pid(opid)
 
-    pid = os.fork()
-    if pid > 0:
-        click.echo(f"  Daemon:          started (pid {pid})")
-        return
+    llmflows_bin = shutil.which("llmflows")
+    if llmflows_bin:
+        cmd = [llmflows_bin, "daemon", "start"]
+    else:
+        cmd = [sys.executable, "-m", "llmflows", "daemon", "start"]
 
-    # ── child process ────────────────────────────────────────────────────────
-    os.setsid()
-    write_pid_file(os.getpid())
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
-    # Redirect stdin/stdout/stderr to /dev/null so subprocesses spawned by
-    # the daemon always inherit valid file descriptors (prevents EBADF after
-    # the launching terminal closes).
-    _devnull = os.open(os.devnull, os.O_RDWR)
-    os.dup2(_devnull, 0)
-    os.dup2(_devnull, 1)
-    os.dup2(_devnull, 2)
-    if _devnull > 2:
-        os.close(_devnull)
-
-    fmt = "%(asctime)s %(name)s %(message)s"
-    from logging.handlers import RotatingFileHandler
-    file_handler = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2)
-    file_handler.setFormatter(logging.Formatter(fmt))
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(file_handler)
-
-    for noisy in ("httpx", "httpcore", "telegram", "telegram.ext"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-
-    try:
-        Daemon().start()
-    finally:
-        remove_pid_file()
-    sys.exit(0)
+    for _ in range(20):  # up to ~5s
+        time.sleep(0.25)
+        new_pid = read_pid_file()
+        if new_pid:
+            click.echo(f"  Daemon:          started (pid {new_pid})")
+            return
+    click.echo("  Daemon:          did not register a PID within 5s — check daemon.log", err=True)
 
 
 def _free_port(port: int) -> None:
