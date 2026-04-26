@@ -882,13 +882,13 @@ export function FlowDetailView() {
                           setViewingStepResult(first.step_result || null);
                           setViewingGateFailures(attempts[1]?.gate_failures || []);
                         }}
-                        className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : step.status)} ${
+                        className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : resolveStatus(step.status))} ${
                           viewingStepName === stepLabel && (!selectedAttempt || selectedAttempt.attemptId === attempts[0]?.id)
                             ? "border-2" : "border"
                         } ${attempts[0] ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                       >
                         {step.step_type === "hitl" && <UserCheck size={10} className="inline mr-1 -mt-px opacity-60" />}
-                        {stepLabel}
+                        <span className={resolveStatus(step.status) === "skipped" ? "line-through" : ""}>{stepLabel}</span>
                       </button>
                       {attempts.slice(1).map((att, j) => (
                         <div key={att.id} className="flex items-center gap-1">
