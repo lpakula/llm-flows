@@ -407,6 +407,22 @@ class FlowRun(Base):
         total = sum(sr.token_count for sr in self.step_runs if sr.token_count is not None)
         return total or None
 
+    @property
+    def run_variables(self) -> dict[str, str] | None:
+        """Extract variable values from flow_snapshot, if any were set."""
+        if not self.flow_snapshot:
+            return None
+        import json
+        try:
+            snap = json.loads(self.flow_snapshot)
+            snap_vars = snap.get("variables", {})
+            if not snap_vars:
+                return None
+            return {k: v["value"] for k, v in snap_vars.items()
+                    if isinstance(v, dict) and v.get("value")}
+        except (json.JSONDecodeError, TypeError, KeyError):
+            return None
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -429,6 +445,7 @@ class FlowRun(Base):
             "duration_seconds": self.duration_seconds,
             "cost_usd": self.cost_usd,
             "token_count": self.token_count,
+            "run_variables": self.run_variables,
         }
 
 

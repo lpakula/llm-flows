@@ -17,7 +17,7 @@ import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock, MessageCircle } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw } from "lucide-react";
 import { marked } from "marked";
 import { FlowChatWindow } from "@/views/Chat";
 
@@ -295,6 +295,19 @@ export function FlowDetailView() {
   const stopRun = async (runId: string) => {
     await api.stopRun(runId);
     loadRuns();
+  };
+
+  const replayRun = async (run: FlowRun) => {
+    if (!flow || !spaceId) return;
+    try {
+      const overrides = run.run_variables && Object.keys(run.run_variables).length > 0
+        ? run.run_variables
+        : undefined;
+      await api.scheduleFlow(spaceId, flow.id, overrides);
+      await loadRuns();
+    } catch (e: unknown) {
+      alert("Failed to replay: " + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const deleteRun = async (runId: string) => {
@@ -793,6 +806,13 @@ export function FlowDetailView() {
                     {(!!run.started_at && !run.completed_at) && (
                       <button onClick={() => stopRun(run.id)} className="text-[10px] text-red-400 hover:text-red-300">Stop</button>
                     )}
+                    {run.completed_at && run.outcome && run.outcome !== "completed" && (
+                      <button onClick={() => replayRun(run)}
+                        title="Replay with same variables"
+                        className="text-[10px] text-gray-600 hover:text-blue-400 inline-flex items-center gap-0.5">
+                        <RotateCcw size={9} /> Replay
+                      </button>
+                    )}
                     {(run.completed_at || !run.started_at) && (
                       <button onClick={() => deleteRun(run.id)} className="text-[10px] text-gray-600 hover:text-red-400">Delete</button>
                     )}
@@ -821,6 +841,12 @@ export function FlowDetailView() {
               {expandedRunIsActive && (
                 <button onClick={() => stopRun(expandedRun.id)}
                   className="text-xs text-red-400 hover:text-red-300">Force Stop</button>
+              )}
+              {expandedRun.completed_at && expandedRun.outcome && expandedRun.outcome !== "completed" && (
+                <button onClick={() => replayRun(expandedRun)}
+                  className="text-xs text-gray-500 hover:text-blue-400 inline-flex items-center gap-1">
+                  <RotateCcw size={11} /> Replay
+                </button>
               )}
               <button onClick={collapseRunDetail} className="text-xs text-gray-500 hover:text-gray-300">Close</button>
             </div>

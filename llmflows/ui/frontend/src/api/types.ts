@@ -41,6 +41,7 @@ export interface FlowRun {
   duration_seconds: number | null;
   cost_usd: number | null;
   token_count: number | null;
+  run_variables?: Record<string, string> | null;
   space_name?: string;
   attachments?: { name: string; url: string }[];
   inbox_message?: string;
@@ -78,6 +79,7 @@ export interface Flow {
   total_duration_seconds?: number | null;
   last_run_at?: string | null;
   active_run_count?: number;
+  queued_run_count?: number;
   created_at: string;
   updated_at: string;
 }
