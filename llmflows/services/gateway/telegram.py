@@ -5,6 +5,7 @@ Allows responding to prompt steps and completing manual steps directly from Tele
 """
 
 import asyncio
+import json
 import logging
 import re
 import threading
@@ -135,6 +136,31 @@ class TelegramBot:
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._load_pending_run_vars()
+
+    @staticmethod
+    def _pending_state_file() -> Path:
+        from ...config import ensure_system_dir
+        d = ensure_system_dir() / "telegram"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "pending.json"
+
+    def _load_pending_run_vars(self) -> None:
+        """Restore pending /run variable collection state across daemon restarts."""
+        try:
+            f = self._pending_state_file()
+            if f.exists():
+                data = json.loads(f.read_text())
+                self._pending_run_vars = {int(k): v for k, v in data.items()}
+        except (OSError, ValueError, TypeError):
+            self._pending_run_vars = {}
+
+    def _save_pending_run_vars(self) -> None:
+        try:
+            f = self._pending_state_file()
+            f.write_text(json.dumps({str(k): v for k, v in self._pending_run_vars.items()}))
+        except OSError:
+            logger.exception("Failed to persist telegram pending state")
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="telegram-bot")
@@ -440,6 +466,7 @@ class TelegramBot:
             next_idx = idx + 1
             if next_idx < len(pending["vars"]):
                 pending["pending_idx"] = next_idx
+                self._save_pending_run_vars()
                 next_key = pending["vars"][next_idx]["key"]
                 await update.message.reply_text(
                     f"Enter value for <code>{next_key}</code>:",
@@ -447,6 +474,7 @@ class TelegramBot:
                 )
             else:
                 ctx = self._pending_run_vars.pop(chat_id)
+                self._save_pending_run_vars()
                 session = self.session_factory()
                 try:
                     run_svc = RunService(session)
@@ -460,7 +488,7 @@ class TelegramBot:
             return
 
         await update.message.reply_text(
-            "No pending prompt to respond to."
+            "No pending prompt to respond to. Use /run to start a flow.",
         )
 
     # ── Callback handler ─────────────────────────────────────────────────────
@@ -633,6 +661,7 @@ class TelegramBot:
                     "overrides": {},
                     "pending_idx": 0,
                 }
+                self._save_pending_run_vars()
                 first_var = empty_vars[0]["key"]
                 await query.edit_message_text(
                     f"<b>{flow.name}</b> needs variable values.\n\n"
