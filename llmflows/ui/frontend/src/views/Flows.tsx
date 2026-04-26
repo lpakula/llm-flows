@@ -5,7 +5,7 @@ import { useApp } from "@/App";
 import { useInterval } from "@/hooks/useInterval";
 import type { Flow, Space } from "@/api/types";
 import { formatCost, formatSeconds } from "@/lib/format";
-import { Circle, Star, Clock } from "lucide-react";
+import { Circle, Star, Clock, CalendarClock } from "lucide-react";
 
 function shortDateTime(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -164,6 +164,9 @@ export function SpaceFlowsView() {
                 {(flow.active_run_count ?? 0) > 0 && (
                   <Circle size={8} className="text-yellow-400 fill-yellow-400 animate-pulse shrink-0" />
                 )}
+                {Array.from({ length: flow.queued_run_count ?? 0 }).map((_, i) => (
+                  <Circle key={i} size={8} className="text-blue-400 fill-blue-400 shrink-0" />
+                ))}
               </div>
               <span className="text-xs text-gray-500">{flow.step_count} steps</span>
             </div>
@@ -178,9 +181,14 @@ export function SpaceFlowsView() {
               {(flow.total_cost_usd ?? 0) > 0 && (
                 <span className="text-emerald-400">{formatCost(flow.total_cost_usd!)}</span>
               )}
-              {flow.last_run_at && (
-                <span className="ml-auto text-gray-500">{shortDateTime(flow.last_run_at)}</span>
-              )}
+              <span className="ml-auto flex items-center gap-1.5">
+                {flow.schedule_enabled && (
+                  <span title="Schedule enabled"><CalendarClock size={11} className="text-blue-400 shrink-0" /></span>
+                )}
+                {flow.last_run_at && (
+                  <span className="text-gray-500">{shortDateTime(flow.last_run_at)}</span>
+                )}
+              </span>
             </div>
           </div>
         ))}

@@ -1835,10 +1835,24 @@ async def list_space_flows(space_id: str):
             )
             .filter(FlowRun.space_id == space_id)
             .filter(FlowRun.completed_at.is_(None))
+            .filter(FlowRun.started_at.isnot(None))
             .group_by(FlowRun.flow_id)
             .all()
         )
         active_map = {row.flow_id: row.active_count for row in active_q}
+
+        queued_q = (
+            session.query(
+                FlowRun.flow_id,
+                func.count(FlowRun.id).label("queued_count"),
+            )
+            .filter(FlowRun.space_id == space_id)
+            .filter(FlowRun.completed_at.is_(None))
+            .filter(FlowRun.started_at.is_(None))
+            .group_by(FlowRun.flow_id)
+            .all()
+        )
+        queued_map = {row.flow_id: row.queued_count for row in queued_q}
 
         result = []
         for f in flows:
@@ -1859,6 +1873,8 @@ async def list_space_flows(space_id: str):
                 "total_duration_seconds": duration_map.get(f.id),
                 "last_run_at": last_run.isoformat() if last_run else None,
                 "active_run_count": active_map.get(f.id, 0),
+                "queued_run_count": queued_map.get(f.id, 0),
+                "schedule_enabled": bool(f.schedule_enabled),
                 "starred": bool(f.starred),
                 "created_at": f.created_at.isoformat() if f.created_at else None,
                 "updated_at": f.updated_at.isoformat() if f.updated_at else None,
