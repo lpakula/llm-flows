@@ -1189,7 +1189,8 @@ async def get_run_steps(run_id: str):
                     except (PermissionError, OSError):
                         pass
             else:
-                status = "skipped" if has_ifs and position < max_started_position else "pending"
+                run_is_done = run.completed_at is not None
+                status = "skipped" if has_ifs and (position < max_started_position or run_is_done) else "pending"
                 step_data = None
             result.append({
                 "name": step_name,

@@ -350,6 +350,14 @@ class FlowService:
             flow_variables = flow.get_variables()
             if flow_variables:
                 flow_data["variables"] = flow_variables
+            if flow.schedule_cron:
+                flow_data["schedule_cron"] = flow.schedule_cron
+                flow_data["schedule_timezone"] = flow.schedule_timezone or "UTC"
+                flow_data["schedule_enabled"] = bool(flow.schedule_enabled)
+            if flow.max_spend_usd:
+                flow_data["max_spend_usd"] = flow.max_spend_usd
+            if flow.max_concurrent_runs and flow.max_concurrent_runs != 1:
+                flow_data["max_concurrent_runs"] = flow.max_concurrent_runs
             for s in sorted(flow.steps, key=lambda s: s.position):
                 step_data = {"name": s.name, "position": s.position, "content": s.content}
                 gates = s.get_gates()
@@ -417,6 +425,14 @@ class FlowService:
                         else:
                             merged[k] = v
                     existing.variables = json.dumps(merged)
+                if "schedule_cron" in flow_data:
+                    existing.schedule_cron = flow_data["schedule_cron"] or None
+                    existing.schedule_timezone = flow_data.get("schedule_timezone") or "UTC"
+                    existing.schedule_enabled = flow_data.get("schedule_enabled", False)
+                if "max_spend_usd" in flow_data:
+                    existing.max_spend_usd = flow_data["max_spend_usd"]
+                if "max_concurrent_runs" in flow_data:
+                    existing.max_concurrent_runs = flow_data["max_concurrent_runs"]
                 existing.updated_at = datetime.now(timezone.utc)
                 self.session.flush()
 
