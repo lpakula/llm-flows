@@ -160,6 +160,7 @@ export const api = {
   getDaemonLogs: (lines = 300) => get<{ lines: string[] }>(`/api/daemon/logs?lines=${lines}`),
   startDaemon: () => post<DaemonStatus & { ok: boolean }>("/api/daemon/start"),
   stopDaemon: () => post<DaemonStatus & { ok: boolean }>("/api/daemon/stop"),
+  killAllAgents: () => post<{ ok: boolean; killed: number; runs_cancelled: number }>("/api/daemon/kill-all"),
   getDaemonConfig: () => get<DaemonConfig>("/api/config/daemon"),
   updateDaemonConfig: (body: Partial<DaemonConfig>) => patch<DaemonConfig>("/api/config/daemon", body),
 
