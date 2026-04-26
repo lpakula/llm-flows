@@ -739,6 +739,11 @@ async def start_daemon():
         pid = read_pid_file()
         return {"ok": True, "running": True, "pid": pid}
 
+    from ..cli.daemon import _find_orphan_daemon_pids, _stop_pid
+    orphans = _find_orphan_daemon_pids()
+    for opid in orphans:
+        _stop_pid(opid)
+
     llmflows_bin = shutil.which("llmflows")
     if llmflows_bin:
         cmd = [llmflows_bin, "daemon", "start"]
