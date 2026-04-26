@@ -657,6 +657,77 @@ async def stop_daemon():
     return {"ok": True, "running": False, "pid": None}
 
 
+@app.post("/api/daemon/kill-all")
+async def kill_all_agents():
+    """Emergency kill: SIGKILL all agent processes found via agent.pid files, mark runs cancelled."""
+    import signal as sig
+    from ..db.models import FlowRun
+
+    killed = 0
+    errors = []
+    session, space_svc = _get_services()
+    try:
+        spaces = space_svc.list()
+        for space in spaces:
+            llmflows_dir = Path(space.path) / ".llmflows"
+            if not llmflows_dir.is_dir():
+                continue
+            for pid_file in llmflows_dir.rglob("agent.pid"):
+                try:
+                    pid = int(pid_file.read_text().strip())
+                    os.kill(pid, sig.SIGKILL)
+                    killed += 1
+                except (ValueError, ProcessLookupError, PermissionError):
+                    pass
+                pid_file.unlink(missing_ok=True)
+
+        # Kill CDP browser on port 9222
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["lsof", "-ti", "tcp:9222"], capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                try:
+                    os.kill(int(line.strip()), sig.SIGKILL)
+                    killed += 1
+                except (ValueError, ProcessLookupError, PermissionError):
+                    pass
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Mark all active runs as cancelled
+        run_svc = RunService(session)
+        active_runs = (
+            session.query(FlowRun)
+            .filter(FlowRun.started_at.isnot(None))
+            .filter(FlowRun.completed_at.is_(None))
+            .all()
+        )
+        for run in active_runs:
+            active_step = run_svc.get_active_step(run.id)
+            if active_step:
+                run_svc.mark_step_completed(active_step.id, outcome="cancelled")
+            run_svc.mark_completed(run.id, outcome="cancelled")
+
+        # Kill the daemon process itself
+        from ..services.daemon import read_pid_file, remove_pid_file
+        daemon_pid = read_pid_file()
+        if daemon_pid:
+            try:
+                os.kill(daemon_pid, sig.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            remove_pid_file()
+
+        return {"ok": True, "killed": killed, "runs_cancelled": len(active_runs)}
+    except Exception as exc:
+        errors.append(str(exc))
+        return {"ok": False, "killed": killed, "errors": errors}
+    finally:
+        session.close()
+
+
 @app.post("/api/daemon/start")
 async def start_daemon():
     import shutil

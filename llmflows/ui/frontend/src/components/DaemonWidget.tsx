@@ -9,6 +9,8 @@ export function DaemonWidget() {
   const [showLogs, setShowLogs] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showKillConfirm, setShowKillConfirm] = useState(false);
+  const [killResult, setKillResult] = useState<string | null>(null);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -69,6 +71,22 @@ export function DaemonWidget() {
     setBusy(false);
   };
 
+  const killAll = async () => {
+    setShowKillConfirm(false);
+    setBusy(true);
+    try {
+      const result = await api.killAllAgents();
+      setKillResult(`Killed ${result.killed} process(es), cancelled ${result.runs_cancelled} run(s)`);
+      setTimeout(() => setKillResult(null), 5000);
+    } catch (e) {
+      console.error("Failed to kill agents:", e);
+      setKillResult("Failed to kill agents");
+      setTimeout(() => setKillResult(null), 5000);
+    }
+    setBusy(false);
+    checkStatus();
+  };
+
   return (
     <div className="border-t border-gray-800 px-4 py-3">
       <div className="flex items-center justify-between mb-1">
@@ -117,6 +135,13 @@ export function DaemonWidget() {
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
               <h2 className="text-sm font-semibold">Daemon Logs</h2>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowKillConfirm(true)}
+                  disabled={busy}
+                  className="text-xs text-red-500 hover:text-red-400 transition disabled:opacity-40"
+                >
+                  Kill All
+                </button>
                 <button onClick={loadLogs} className="text-xs text-blue-400 hover:text-blue-300">
                   Refresh
                 </button>
@@ -125,6 +150,11 @@ export function DaemonWidget() {
                 </button>
               </div>
             </div>
+            {killResult && (
+              <div className="px-5 py-2 bg-red-900/30 border-b border-red-800/50 text-xs text-red-300">
+                {killResult}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-gray-400 whitespace-pre-wrap bg-gray-950 rounded-b-2xl">
               {logLines.map((line, i) => (
                 <div key={i} className="leading-5">
@@ -160,6 +190,35 @@ export function DaemonWidget() {
                 className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-500 transition"
               >
                 Stop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kill All Confirmation Modal */}
+      {showKillConfirm && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+          onClick={() => setShowKillConfirm(false)}
+        >
+          <div className="bg-gray-900 rounded-2xl border border-red-700/50 w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-sm font-semibold text-red-400 mb-2">Kill All Agents?</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              This will immediately SIGKILL all running agent processes, cancel all active runs, and stop the daemon. Use this as an emergency stop.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowKillConfirm(false)}
+                className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={killAll}
+                className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-500 transition"
+              >
+                Kill All
               </button>
             </div>
           </div>
