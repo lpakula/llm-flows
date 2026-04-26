@@ -46,20 +46,23 @@ def flow_list():
 
         name_w = max(len(f.name) for f in flows)
         name_w = max(name_w, 4)
+        id_w = 8
 
         cols = [
+            click.style("ID".ljust(id_w), bold=True),
             click.style("NAME".ljust(name_w), bold=True),
             click.style("STEPS".ljust(5), bold=True),
             click.style("DESCRIPTION", bold=True),
         ]
         click.echo("  ".join(cols))
-        click.echo(click.style("  ".join(["─" * name_w, "─" * 5, "─" * 40]), fg="bright_black"))
+        click.echo(click.style("  ".join(["─" * id_w, "─" * name_w, "─" * 5, "─" * 40]), fg="bright_black"))
 
         for f in flows:
             desc = f.description or ""
             if len(desc) > 50:
                 desc = desc[:47] + "..."
             cols = [
+                click.style(f.id.ljust(id_w), fg="bright_black"),
                 click.style(f.name.ljust(name_w), fg="cyan"),
                 click.style(str(len(f.steps)).ljust(5), fg="yellow"),
                 click.style(desc, fg="white"),
@@ -82,6 +85,7 @@ def flow_show(name):
             click.echo(f"Flow '{name}' not found.")
             raise SystemExit(1)
 
+        click.echo(f"ID:          {f.id}")
         click.echo(f"Name:        {f.name}")
         click.echo(f"Description: {f.description or '-'}")
         click.echo(f"Steps:       {len(f.steps)}")

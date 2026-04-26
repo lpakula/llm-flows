@@ -213,7 +213,7 @@ def run_schedule(flow_id, space_id, variables):
                 click.echo(f"  {step_prefix}{w['message']}")
             raise SystemExit(1)
 
-        new_run = run_svc.enqueue(space.id, flow_id, run_variables=run_vars or None)
+        new_run = run_svc.enqueue(space.id, flow.id, run_variables=run_vars or None)
         click.echo(
             f"Scheduled run {click.style(new_run.id, fg='cyan')} "
             f"for flow {click.style(flow.name, fg='bright_green')} "
