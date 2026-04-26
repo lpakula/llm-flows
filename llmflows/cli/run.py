@@ -161,15 +161,15 @@ def run_show(run_id):
 # ── run schedule ─────────────────────────────────────────────────────────────
 
 @run.command("schedule")
-@click.option("--flow", "-f", "flow_id", required=True, help="Flow ID to run")
+@click.option("--flow", "-f", "flow_id", required=True, help="Flow name or ID to run")
 @click.option("--space", "-s", "space_id", default=None, help="Space ID")
 @click.option("--var", "-v", "variables", multiple=True, help="Set flow variable: KEY=VALUE (repeatable)")
 def run_schedule(flow_id, space_id, variables):
     """Schedule a new flow run, optionally setting flow variables.
 
     Examples:
-      llmflows run schedule --flow abc123
-      llmflows run schedule --flow abc123 --var TOPIC=AI --var LANG=en
+      llmflows run schedule --flow my-flow
+      llmflows run schedule --flow my-flow --var TOPIC=AI --var LANG=en
     """
     session = _get_session()
     try:
@@ -186,7 +186,7 @@ def run_schedule(flow_id, space_id, variables):
             click.echo("Not inside a registered space. Use --space <id>.")
             raise SystemExit(1)
 
-        flow = flow_svc.get(flow_id)
+        flow = flow_svc.get_by_name(flow_id, space.id) or flow_svc.get(flow_id)
         if not flow:
             click.echo(f"Flow {flow_id} not found.")
             raise SystemExit(1)
