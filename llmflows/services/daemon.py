@@ -25,6 +25,15 @@ _step_dir_name = ContextService.step_dir_name
 logger = logging.getLogger("llmflows.daemon")
 
 
+def _register_user_responses(step_vars: dict, step_runs: list) -> None:
+    """Register user responses from completed HITL steps as ``{{hitl.response.N}}``."""
+    idx = 0
+    for sr in step_runs:
+        if sr.completed_at and sr.user_response:
+            step_vars[f"hitl.response.{idx}"] = sr.user_response
+            idx += 1
+
+
 def _extract_pi_cost(log_path: Path) -> tuple[float, int]:
     """Parse a Pi NDJSON log file and return (total_cost_usd, total_tokens)."""
     total_cost = 0.0
@@ -82,6 +91,8 @@ class Daemon:
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
         """Build template variables by merging base vars with flow-level variables."""
         merged = dict(base_vars)
+        if space and hasattr(space, "path"):
+            merged["space.dir"] = space.path
         flow_vars = {}
         if flow_snapshot and isinstance(flow_snapshot, dict):
             flow_vars = flow_snapshot.get("variables", {})
@@ -595,7 +606,9 @@ class Daemon:
             "run.id": run.id,
             "flow.name": step_run.flow_name,
             "flow.dir": str(flow_dir),
-            "run.dir": str(step_artifact_dir),
+            "run.dir": str(artifact_dir),
+            "step.dir": str(step_artifact_dir),
+            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         snap_step = self._get_snapshot_step(run, step_run.step_name)
@@ -706,15 +719,19 @@ class Daemon:
         """Determine the next step and launch it, or complete the run."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
-        flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
+        flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         step_vars = self._build_step_vars({
             "run.id": run.id,
             "flow.name": current_flow,
             "flow.dir": str(flow_dir),
+            "run.dir": str(artifacts_dir),
+            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
+        _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
 
         if current_step_name == "__summarizer__":
-            artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
             summary = ContextService.read_summary_artifact(artifacts_dir) or ContextService.read_inbox_message(artifacts_dir)
             outcome = run.outcome or "completed"
             logger.info("Run %s completed (outcome=%s)", run.id, outcome)
@@ -747,6 +764,7 @@ class Daemon:
             if not step_src:
                 break
             ifs = snap_step.get("ifs", []) if snap_step else (step_obj.get_ifs() if step_obj else [])
+            step_vars["step.dir"] = str(artifacts_dir / _step_dir_name(next_position, next_step_name))
             if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
                 break
             logger.info(
@@ -798,10 +816,13 @@ class Daemon:
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, flow_name)
         flow_dir = ContextService.get_flow_dir(space_root, flow_name)
         step_vars = self._build_step_vars({
             "run.id": run.id, "flow.name": flow_name,
             "flow.dir": str(flow_dir),
+            "run.dir": str(artifacts_dir),
+            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         steps = self._get_snapshot_steps(run)
@@ -819,6 +840,7 @@ class Daemon:
             if not snap_step:
                 break
             ifs = snap_step.get("ifs", [])
+            step_vars["step.dir"] = str(artifacts_dir / _step_dir_name(position, first_step))
             if not ifs or evaluate_ifs(ifs, working_path, timeout=gate_timeout, variables=step_vars):
                 break
             logger.info("Run %s: IF conditions not met for step '%s', skipping",
@@ -862,11 +884,11 @@ class Daemon:
             "run.id": run.id,
             "flow.name": flow_name,
             "flow.dir": str(flow_dir),
-            "run.dir": str(step_artifact_dir),
+            "run.dir": str(artifacts_dir),
+            "step.dir": str(step_artifact_dir),
+            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
-        for sr in run_svc.list_step_runs(run.id):
-            if sr.completed_at and sr.user_response:
-                step_vars[f"steps.{sr.step_name}.user_response"] = sr.user_response
+        _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
         if step_content:
             from .gate import _interpolate
             step_content = _interpolate(step_content, step_vars)
@@ -1080,8 +1102,7 @@ class Daemon:
         summarizer_language = load_system_config().get("daemon", {}).get("summarizer_language", "English")
 
         summary_vars = {
-            "artifacts_dir": str(artifacts_dir),
-            "run": {"id": run.id, "artifacts_dir": str(artifacts_dir)},
+            "run": {"id": run.id, "dir": str(artifacts_dir)},
             "summarizer_language": summarizer_language,
         }
         if error_context:

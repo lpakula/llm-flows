@@ -79,7 +79,7 @@ Each gate must be exactly **one** check. Never chain multiple checks with `&&` �
 **Good** — deterministic, fast, single-command:
 - `npm test` — tests pass
 - `npm run build` — build succeeds
-- `test -f {{run.dir}}/report.md` — expected file exists
+- `test -f {{step.dir}}/report.md` — expected file exists
 - `python -m py_compile main.py` — valid syntax
 - `command -v ffmpeg >/dev/null 2>&1` — tool is installed
 
@@ -118,31 +118,34 @@ Step content, gate commands, and IF commands support `{{variable}}` interpolatio
 | Variable | Description |
 |----------|-------------|
 | `{{run.id}}` | Current run ID |
+| `{{run.dir}}` | Run artifacts directory (root for all steps) |
 | `{{flow.name}}` | Current flow name |
-| `{{run.dir}}` | Absolute path to this step's output directory |
 | `{{flow.dir}}` | Persistent flow directory, shared across runs |
+| `{{space.dir}}` | Space project directory |
+| `{{step.dir}}` | This step's output directory within the run |
+| `{{attachment.dir}}` | Run attachments directory |
 | `{{space.KEY}}` | Space variable set via Settings or CLI |
-| `{{steps.STEP_NAME.user_response}}` | User's response from a completed `hitl` step |
+| `{{hitl.response.N}}` | HITL response by index (0-based) |
 
-Note: `{{run.dir}}` and `{{steps.*.user_response}}` are not available in IFs (they're evaluated before the step starts).
+All variables are available in IFs, gates, and step content.
 
 ---
 
 ## Artifacts
 
-Every step writes output to an **artifacts directory** (`{{run.dir}}`). The primary output is `_result.md` — every step must produce this file.
+Every step writes output to its **step directory** (`{{step.dir}}`). The primary output is `_result.md` — every step must produce this file.
 
 Artifacts from completed steps are automatically injected into the prompt for subsequent steps. The agent doesn't need to read files from previous steps — the daemon handles it.
 
-To publish files (screenshots, images) in the run summary, save them to `{{run.dir}}/attachments/`.
+To publish files (screenshots, images) so they appear in the run summary and inbox, save them to `{{attachment.dir}}/`.
 
 ### Special files
 
 | File | Location | Description |
 |------|----------|-------------|
-| `_result.md` | Step dir (`{{run.dir}}`) | Primary step output, passed to subsequent steps |
-| `inbox.md` | Run artifacts root | Optional. If written by any step, its content becomes the inbox notification when the run completes. If no step writes it, no notification is sent. |
-| `hitl.md` | Step dir (`{{run.dir}}`) | For `hitl` steps only. The message shown to the user in the inbox UI. |
+| `_result.md` | Step dir (`{{step.dir}}`) | Primary step output, passed to subsequent steps |
+| `inbox.md` | Run dir (`{{run.dir}}`) | Optional. If written by any step, its content becomes the inbox notification when the run completes. If no step writes it, no notification is sent. |
+| `hitl.md` | Step dir (`{{step.dir}}`) | For `hitl` steps only. The message shown to the user in the inbox UI. |
 
 ### Run variables
 
@@ -288,14 +291,14 @@ A simple 2-step flow that fetches news articles and produces a summary. Uses web
           "name": "Fetch articles",
           "position": 0,
           "connectors": ["web_search"],
-          "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent AI news articles and save each one as a separate file.\n\n## WORKFLOW\n\n1. Use `web_search` to find the latest AI news from the past 24 hours\n2. Pick the 5 most significant stories\n3. For each, use `web_fetch` to load the full article\n4. Save each article to `{{run.dir}}/article-N.md` with: headline, author, date, URL, and full text\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully\n- Do not summarize at this stage",
+          "content": "# FETCH ARTICLES\n\n## PURPOSE\n\nFetch the 5 most recent AI news articles and save each one as a separate file.\n\n## WORKFLOW\n\n1. Use `web_search` to find the latest AI news from the past 24 hours\n2. Pick the 5 most significant stories\n3. For each, use `web_fetch` to load the full article\n4. Save each article to `{{step.dir}}/article-N.md` with: headline, author, date, URL, and full text\n\n## RULES\n\n- Save exactly 5 articles, one per file\n- Preserve original content faithfully\n- Do not summarize at this stage",
           "gates": [
             {
-              "command": "test -f {{run.dir}}/article-1.md",
+              "command": "test -f {{step.dir}}/article-1.md",
               "message": "article-1.md was not saved."
             },
             {
-              "command": "test -f {{run.dir}}/article-5.md",
+              "command": "test -f {{step.dir}}/article-5.md",
               "message": "article-5.md was not saved."
             }
           ]
@@ -304,7 +307,7 @@ A simple 2-step flow that fetches news articles and produces a summary. Uses web
           "name": "Summarize",
           "position": 1,
           "agent_alias": "mini",
-          "content": "# SUMMARIZE\n\n## PURPOSE\n\nProduce a concise daily digest from the articles in your context.\n\n## WORKFLOW\n\n1. The 5 articles from the previous step are already in your context — do not fetch anything\n2. For each article, write a 2-3 sentence summary capturing the key points\n3. Save to `{{run.dir}}/_result.md`\n\n## RULES\n\n- Use the format: ## 1. Headline\\n**Date:** ...\\nSummary text.\n- Preserve original headlines exactly\n- Do not access the web"
+          "content": "# SUMMARIZE\n\n## PURPOSE\n\nProduce a concise daily digest from the articles in your context.\n\n## WORKFLOW\n\n1. The 5 articles from the previous step are already in your context — do not fetch anything\n2. For each article, write a 2-3 sentence summary capturing the key points\n3. Save to `{{step.dir}}/_result.md`\n\n## RULES\n\n- Use the format: ## 1. Headline\\n**Date:** ...\\nSummary text.\n- Preserve original headlines exactly\n- Do not access the web"
         }
       ]
     }
@@ -336,20 +339,20 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
           "name": "Research",
           "position": 0,
           "agent_alias": "mini",
-          "content": "# RESEARCH\n\n## PURPOSE\n\nUnderstand the task requirements and study the relevant parts of the codebase.\n\n## WORKFLOW\n\n1. Read the task description from context\n2. Explore the codebase to understand the current architecture\n3. Identify the files and modules that will need changes\n4. Write a research summary to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not modify any source files\n- Do not run git commands"
+          "content": "# RESEARCH\n\n## PURPOSE\n\nUnderstand the task requirements and study the relevant parts of the codebase.\n\n## WORKFLOW\n\n1. Read the task description from context\n2. Explore the codebase to understand the current architecture\n3. Identify the files and modules that will need changes\n4. Write a research summary to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not modify any source files\n- Do not run git commands"
         },
         {
           "name": "Propose",
           "position": 1,
           "step_type": "hitl",
-          "content": "# PROPOSE APPROACHES\n\n## PURPOSE\n\nPresent 2-3 implementation approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Read the research notes from context\n2. Design 2-3 distinct approaches with pros and cons\n3. Write them to `{{run.dir}}/_result.md`\n4. End with: \"Which approach should I implement? (1, 2, or 3)\""
+          "content": "# PROPOSE APPROACHES\n\n## PURPOSE\n\nPresent 2-3 implementation approaches for the user to choose from.\n\n## WORKFLOW\n\n1. Read the research notes from context\n2. Design 2-3 distinct approaches with pros and cons\n3. Write them to `{{step.dir}}/_result.md`\n4. End with: \"Which approach should I implement? (1, 2, or 3)\""
         },
         {
           "name": "Implement",
           "position": 2,
           "step_type": "code",
           "agent_alias": "max",
-          "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the approach the user chose.\n\n## CONTEXT\n\n- The research notes and proposed approaches are in your context\n- The user's response specifies which approach to implement: {{steps.Propose.user_response}}\n\n## WORKFLOW\n\n1. Implement the chosen approach\n2. Follow existing code conventions\n3. Write a summary of all changes to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not change scope beyond what was proposed\n- Do not push to remote",
+          "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the approach the user chose.\n\n## CONTEXT\n\n- The research notes and proposed approaches are in your context\n- The user's response specifies which approach to implement: {{hitl.response.0}}\n\n## WORKFLOW\n\n1. Implement the chosen approach\n2. Follow existing code conventions\n3. Write a summary of all changes to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not change scope beyond what was proposed\n- Do not push to remote",
           "gates": [
             {"command": "npm test -- --watchAll=false", "message": "All tests must pass."}
           ],
@@ -360,7 +363,7 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
           "name": "Build check",
           "position": 3,
           "agent_alias": "mini",
-          "content": "# BUILD CHECK\n\n## PURPOSE\n\nRun the build and verify it succeeds.\n\n## WORKFLOW\n\n1. Run `npm run build`\n2. Write the build output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not modify any source files\n- Do not push to remote",
+          "content": "# BUILD CHECK\n\n## PURPOSE\n\nRun the build and verify it succeeds.\n\n## WORKFLOW\n\n1. Run `npm run build`\n2. Write the build output to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not modify any source files\n- Do not push to remote",
           "gates": [
             {"command": "test -f dist/index.js", "message": "Build output must exist."}
           ]
@@ -376,7 +379,7 @@ A 4-step flow that researches a task, proposes approaches for human review, impl
 - **`hitl`** step (Propose) — pauses for human input, no gates
 - **`code`** step (Implement) — uses Cursor/Claude Code with `max` alias for complex work
 - **`agent`** step (Build check) with `mini` — runs the build and validates output via gates
-- `{{steps.Propose.user_response}}` — referencing the human's response in a later step
+- `{{hitl.response.0}}` — referencing the human's response in a later step
 - `allow_max: true` — escalates to stronger model on last gate retry
 - `max_gate_retries: 3` — limits retry attempts
 - Constraint progression: research forbids changes, implement forbids pushing
@@ -399,9 +402,9 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
           "name": "Login",
           "position": 0,
           "connectors": ["browser"],
-          "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{run.dir}}/after-login.png`\n6. Write the current page state to `{{run.dir}}/_result.md`",
+          "content": "# LOGIN\n\n## PURPOSE\n\nNavigate to the login page and enter credentials.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to {{space.TARGET_URL}}\n2. Use the snapshot to find the username and password fields\n3. Use `browser_fill` to enter {{space.USERNAME}} and {{space.PASSWORD}}\n4. Use `browser_click` to submit the form\n5. Take a `browser_screenshot` and save to `{{step.dir}}/after-login.png`\n6. Write the current page state to `{{step.dir}}/_result.md`",
           "gates": [
-            {"command": "test -f {{run.dir}}/after-login.png", "message": "Login screenshot must exist."}
+            {"command": "test -f {{step.dir}}/after-login.png", "message": "Login screenshot must exist."}
           ]
         },
         {
@@ -409,19 +412,19 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
           "position": 1,
           "step_type": "hitl",
           "connectors": ["browser"],
-          "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{run.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{run.dir}}/_result.md`: explain that the site is asking for an MFA code and ask the user to provide it"
+          "content": "# MFA CODE REQUIRED\n\n## PURPOSE\n\nShow the user the current browser state and ask for the MFA code.\n\n## WORKFLOW\n\n1. Take a `browser_screenshot` and save to `{{step.dir}}/mfa-prompt.png`\n2. Use `browser_snapshot` to describe the current page\n3. Write to `{{step.dir}}/_result.md`: explain that the site is asking for an MFA code and ask the user to provide it"
         },
         {
           "name": "Submit MFA",
           "position": 2,
           "connectors": ["browser"],
-          "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{steps.MFA.user_response}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{run.dir}}/_result.md`"
+          "content": "# SUBMIT MFA\n\n## PURPOSE\n\nEnter the MFA code and complete login.\n\n## WORKFLOW\n\n1. The user's MFA code is: {{hitl.response.0}}\n2. Use `browser_snapshot` to find the MFA input field\n3. Use `browser_fill` to enter the code\n4. Use `browser_click` to submit\n5. Take a `browser_screenshot` to confirm login succeeded\n6. Save confirmation to `{{step.dir}}/_result.md`"
         },
         {
           "name": "Export report",
           "position": 3,
           "connectors": ["browser"],
-          "content": "# EXPORT REPORT\n\n## PURPOSE\n\nNavigate to the reports page and export the latest report.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or links in the snapshot to reach the reports section\n2. Find and click the export/download button\n3. Take a `browser_screenshot` of the confirmation\n4. Save it to `{{run.dir}}/attachments/export-confirmation.png`\n5. Write a summary of what was exported to `{{run.dir}}/_result.md`"
+          "content": "# EXPORT REPORT\n\n## PURPOSE\n\nNavigate to the reports page and export the latest report.\n\n## WORKFLOW\n\n1. Use `browser_navigate` or links in the snapshot to reach the reports section\n2. Find and click the export/download button\n3. Take a `browser_screenshot` of the confirmation\n4. Save it to `{{attachment.dir}}/export-confirmation.png`\n5. Write a summary of what was exported to `{{step.dir}}/_result.md`"
         }
       ]
     }
@@ -433,7 +436,7 @@ A flow that logs into a website, handles MFA via human-in-the-loop, and performs
 - Step-level `connectors: ["browser"]` — each step that needs the browser declares it; session persists across consecutive browser steps
 - Variables — credentials stored as space variables, not hardcoded
 - `hitl` step for MFA — browser stays alive while waiting for the user's code (because the hitl step declares the `"browser"` connector)
-- `{{steps.MFA.user_response}}` — passing the MFA code to the next step
+- `{{hitl.response.0}}` — passing the MFA code to the next step
 - `attachments/` directory — screenshot published in the run summary
 - Browser state carries over: step 1 logs in, step 3 still has the session
 
@@ -455,7 +458,7 @@ A flow that lints whatever languages are present in the project. Steps are skipp
           "name": "Lint Python",
           "position": 0,
           "agent_alias": "mini",
-          "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `python -m ruff check .`\n2. Save the full output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
+          "content": "# LINT PYTHON\n\n## PURPOSE\n\nRun the Python linter and capture results.\n\n## WORKFLOW\n\n1. Run `python -m ruff check .`\n2. Save the full output to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f pyproject.toml || test -f requirements.txt", "message": "Python project detected"}
           ]
@@ -464,7 +467,7 @@ A flow that lints whatever languages are present in the project. Steps are skipp
           "name": "Lint JavaScript",
           "position": 1,
           "agent_alias": "mini",
-          "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `npx eslint .`\n2. Save the full output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
+          "content": "# LINT JAVASCRIPT\n\n## PURPOSE\n\nRun the JavaScript linter and capture results.\n\n## WORKFLOW\n\n1. Run `npx eslint .`\n2. Save the full output to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f package.json", "message": "Node project detected"},
             {"command": "grep -q eslint package.json", "message": "ESLint is configured"}
@@ -474,7 +477,7 @@ A flow that lints whatever languages are present in the project. Steps are skipp
           "name": "Lint Go",
           "position": 2,
           "agent_alias": "mini",
-          "content": "# LINT GO\n\n## PURPOSE\n\nRun the Go linter and capture results.\n\n## WORKFLOW\n\n1. Run `golangci-lint run ./...`\n2. Save the full output to `{{run.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
+          "content": "# LINT GO\n\n## PURPOSE\n\nRun the Go linter and capture results.\n\n## WORKFLOW\n\n1. Run `golangci-lint run ./...`\n2. Save the full output to `{{step.dir}}/_result.md`\n\n## FORBIDDEN\n\n- Do not fix any issues, only report them",
           "ifs": [
             {"command": "test -f go.mod", "message": "Go project detected"}
           ]
@@ -483,7 +486,7 @@ A flow that lints whatever languages are present in the project. Steps are skipp
           "name": "Summary",
           "position": 3,
           "agent_alias": "mini",
-          "content": "# LINT SUMMARY\n\n## PURPOSE\n\nSummarize the lint results from the previous steps.\n\n## WORKFLOW\n\n1. Read all lint outputs from context (only completed steps are included — skipped steps won't appear)\n2. List any warnings or errors found\n3. Write a summary to `{{run.dir}}/_result.md`"
+          "content": "# LINT SUMMARY\n\n## PURPOSE\n\nSummarize the lint results from the previous steps.\n\n## WORKFLOW\n\n1. Read all lint outputs from context (only completed steps are included — skipped steps won't appear)\n2. List any warnings or errors found\n3. Write a summary to `{{step.dir}}/_result.md`"
         }
       ]
     }
