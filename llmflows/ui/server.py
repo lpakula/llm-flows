@@ -1721,6 +1721,14 @@ async def get_inbox():
                         key=lambda x: x["name"],
                     )
 
+                artifacts_dir = ContextService.get_artifacts_dir(
+                    Path(space.path), run.id, run.flow_name or "",
+                )
+                inbox_message = ContextService.read_inbox_message(artifacts_dir)
+                if not inbox_message:
+                    run_svc.archive_inbox_item(item.id)
+                    continue
+
                 completed.append({
                     "inbox_id": item.id,
                     "run_id": run.id,
@@ -1729,7 +1737,7 @@ async def get_inbox():
                     "flow_id": run.flow_id or "",
                     "flow_name": run.flow_name or "",
                     "outcome": run.outcome or "",
-                    "summary": run.summary or "",
+                    "summary": inbox_message,
                     "duration_seconds": run.duration_seconds,
                     "cost_usd": run.cost_usd,
                     "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,

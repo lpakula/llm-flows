@@ -442,6 +442,20 @@ class Daemon:
         )
         agent_running = executor.is_running(ctx)
 
+        # Grace period: if the step was started very recently, don't trust a
+        # "not running" signal — the process may not have fully spawned yet.
+        if not agent_running and step_run.started_at:
+            started = step_run.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - started).total_seconds()
+            if age < 15:
+                logger.debug(
+                    "Run %s step '%s' appears dead after %.0fs — too early, skipping",
+                    run.id, step_run.step_name, age,
+                )
+                return
+
         if agent_running:
             if step_run.agent == "pi" and step_run.log_path:
                 c, t = _extract_pi_cost(Path(step_run.log_path))
@@ -491,6 +505,16 @@ class Daemon:
                         "timeout_minutes": elapsed_mins,
                     })
             return
+
+        started = step_run.started_at
+        if started and started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        step_age = (datetime.now(timezone.utc) - started).total_seconds() if started else 0
+        logger.info(
+            "Run %s step '%s' agent stopped (ran %.0fs, pid_file=%s)",
+            run.id, step_run.step_name, step_age,
+            step_run.log_path or "?",
+        )
 
         run_svc.session.refresh(step_run)
         if step_run.completed_at:

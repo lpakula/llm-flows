@@ -944,7 +944,7 @@ wheels = [
 
 [[package]]
 name = "llmflows"
-version = "0.19.2"
+version = "0.19.5"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
