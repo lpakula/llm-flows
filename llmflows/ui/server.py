@@ -1262,9 +1262,13 @@ def _filter_pi_event(event: dict, state: _PiLogState) -> dict | None:
         if role == "user":
             return None
         if role == "assistant":
-            return msg
+            content = msg.get("content", [])
+            text_only = [c for c in content if c.get("type") != "toolCall"]
+            if not text_only:
+                return None
+            return {**msg, "content": text_only}
         if role == "toolResult":
-            return msg
+            return None
         return None
 
     role = event.get("role")
@@ -1272,10 +1276,14 @@ def _filter_pi_event(event: dict, state: _PiLogState) -> dict | None:
         return None
     if role == "assistant":
         if event.get("stopReason") or event.get("textSignature"):
-            return event
+            content = event.get("content", [])
+            text_only = [c for c in content if c.get("type") != "toolCall"]
+            if not text_only:
+                return None
+            return {**event, "content": text_only}
         return None
     if role == "toolResult":
-        return event if "timestamp" in event else None
+        return None
     if role:
         return None
     return event
