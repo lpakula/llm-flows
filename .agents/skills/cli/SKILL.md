@@ -143,9 +143,12 @@ llmflows tools disable browser
 A run is a single execution of a flow. Use `run schedule` to queue a new run.
 
 ```bash
-# Schedule a run for a flow
-llmflows run schedule --flow <flow-id>
-llmflows run schedule --flow <flow-id> --space <space-id>
+# Schedule a run for a flow (accepts flow name or ID)
+llmflows run schedule --flow <flow-name>
+llmflows run schedule --flow <flow-name> --space <space-id>
+
+# Pass run-time variables (overrides flow variables for this run)
+llmflows run schedule --flow my-flow --var TOPIC=AI --var LANG=en
 
 # List runs
 llmflows run list
@@ -220,7 +223,7 @@ llmflows register
 llmflows daemon start
 
 # 3. Schedule a run
-llmflows run schedule --flow <flow-id>
+llmflows run schedule --flow <flow-name>
 
 # 4. Monitor
 llmflows run list
@@ -250,7 +253,7 @@ llmflows run logs <run-id> --follow
 | Set flow variable | `llmflows flow var set <name> KEY VALUE` |
 | List tools | `llmflows tools list` |
 | Enable tool | `llmflows tools enable web_search` |
-| Schedule run | `llmflows run schedule --flow <flow-id>` |
+| Schedule run | `llmflows run schedule --flow <flow-name>` |
 | List runs | `llmflows run list` |
 | Show run | `llmflows run show <run-id>` |
 | Follow run logs | `llmflows run logs <run-id> --follow` |
