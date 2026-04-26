@@ -51,6 +51,45 @@ def _ensure_frontend_built() -> bool:
         return False
 
 
+def _kill_other_ui_instances() -> None:
+    """Terminate any other ``llmflows ui`` processes owned by the current user.
+
+    Ensures only one UI instance runs at a time. Excludes the current process.
+    """
+    import subprocess
+    from .daemon import _stop_pid
+
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-u", str(os.getuid()), "-f", "llmflows ui"],
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+
+    own = os.getpid()
+    own_ppid = os.getppid()
+    others: list[int] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+        if pid in (own, own_ppid):
+            continue
+        others.append(pid)
+
+    if not others:
+        return
+
+    click.echo(f"  UI:              found existing instance(s) {others}, stopping…")
+    for pid in sorted(set(others)):
+        _stop_pid(pid)
+
+
 def _ensure_daemon_running() -> None:
     """Start the daemon if it is not already running (or restart if stale).
 
@@ -209,6 +248,7 @@ def ui(port, host, reload, dev):
     """Launch web UI on localhost (Ctrl+C to stop)."""
     from ..db.database import init_db
 
+    _kill_other_ui_instances()
     init_db()
 
     config = load_system_config()
