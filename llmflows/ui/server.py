@@ -1409,6 +1409,7 @@ async def stream_step_run_logs(step_run_id: str, request: Request):
         pos = 0
         idle_count = 0
         pi_state = _PiLogState()
+        buffer = ""
         while idle_count < 120:
             if await request.is_disconnected():
                 break
@@ -1421,19 +1422,22 @@ async def stream_step_run_logs(step_run_id: str, request: Request):
                 idle_count = 0
                 with open(log_path, "r") as f:
                     f.seek(pos)
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            event = json.loads(line)
-                            filtered = _filter_pi_event(event, pi_state)
-                            if filtered is None:
-                                continue
-                            yield f"data: {json.dumps(filtered)}\n\n"
-                        except json.JSONDecodeError:
-                            yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
+                    chunk = f.read()
                     pos = f.tell()
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        filtered = _filter_pi_event(event, pi_state)
+                        if filtered is None:
+                            continue
+                        yield f"data: {json.dumps(filtered)}\n\n"
+                    except json.JSONDecodeError:
+                        yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
             else:
                 idle_count += 1
 
@@ -1475,6 +1479,7 @@ async def stream_run_logs(run_id: str, request: Request):
         idle_count = 0
         pi_state = _PiLogState()
         max_idle = 120
+        buffer = ""
         while idle_count < max_idle:
             if await request.is_disconnected():
                 break
@@ -1487,19 +1492,22 @@ async def stream_run_logs(run_id: str, request: Request):
                 idle_count = 0
                 with open(log_path, "r") as f:
                     f.seek(pos)
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            event = json.loads(line)
-                            filtered = _filter_pi_event(event, pi_state)
-                            if filtered is None:
-                                continue
-                            yield f"data: {json.dumps(filtered)}\n\n"
-                        except json.JSONDecodeError:
-                            yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
+                    chunk = f.read()
                     pos = f.tell()
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        filtered = _filter_pi_event(event, pi_state)
+                        if filtered is None:
+                            continue
+                        yield f"data: {json.dumps(filtered)}\n\n"
+                    except json.JSONDecodeError:
+                        yield f"data: {json.dumps({'type': 'raw', 'text': line})}\n\n"
             else:
                 idle_count += 1
 
