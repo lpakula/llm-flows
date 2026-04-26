@@ -15,7 +15,7 @@ You are an autonomous AI agent executing a step of a larger workflow.
 
 ## Previous Step Artifacts
 
-**Run artifacts directory:** `{{ run.artifacts_dir }}`
+**Run directory:** `{{ run.dir }}`
 {%- for art in artifacts %}
 
 ### Step {{ art.position }}: {{ art.step_name }}
@@ -71,25 +71,25 @@ Read each skill file and follow its instructions before starting the step.
 {{ step_content }}
 
 ---
-{%- if run.dir %}
+{%- if step.dir %}
 {%- if step_type == "hitl" %}
 
 ## Output for User
 
-You **must** write your message to: `{{ run.dir }}/hitl.md`
+You **must** write your message to: `{{ step.dir }}/hitl.md`
 
 This file will be shown to the user in a UI card. The user can type a response and submit it.
 - End with a clear question the user should answer
 - Frame your question so a brief response is sufficient
 
-You **must** also write a `_result.md` file to: `{{ run.dir }}/_result.md`
+You **must** also write a `_result.md` file to: `{{ step.dir }}/_result.md`
 
 This file passes context to subsequent steps. Include what was done and any relevant state.
 {%- elif step_type == "code" %}
 
 ## Output
 
-You **must** write a `_result.md` file to: `{{ run.dir }}/_result.md`
+You **must** write a `_result.md` file to: `{{ step.dir }}/_result.md`
 
 This file is passed as context to subsequent steps. Include:
 - What was done and key decisions made
@@ -99,14 +99,14 @@ This file is passed as context to subsequent steps. Include:
 
 ## Output
 
-You **must** write your output to: `{{ run.dir }}/_result.md`
+You **must** write your output to: `{{ step.dir }}/_result.md`
 
 This file is passed as context to subsequent steps. Focus on the data, results, and state that the next step needs to continue the workflow. Do not optimize for human readability — structure for machine consumption.
 {%- endif %}
 
-You may also save additional files (data, configs, test output) to `{{ run.dir }}/`.
+You may also save additional files (data, configs, test output) to `{{ step.dir }}/`.
 
-To publish files (screenshots, images, etc.) so they appear in the run summary, save them to `{{ run.dir }}/attachments/`. Files in this directory are automatically copied to the run's shared attachments when the step completes.
+To publish files (screenshots, images, etc.) so they appear in the run summary, save them to `{{ attachment.dir }}/`.
 {%- endif %}
 {%- if resume_prompt %}
 

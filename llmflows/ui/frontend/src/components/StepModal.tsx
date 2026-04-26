@@ -9,10 +9,13 @@ const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
 
 const VARIABLES = [
   { token: "{{run.id}}", desc: "Current run ID" },
+  { token: "{{run.dir}}", desc: "Run artifacts directory" },
   { token: "{{flow.name}}", desc: "Flow name" },
-  { token: "{{run.dir}}", desc: "Step artifacts directory" },
   { token: "{{flow.dir}}", desc: "Persistent flow directory (cross-run)" },
-  { token: "{{steps.<name>.user_response}}", desc: "HITL step response" },
+  { token: "{{space.dir}}", desc: "Space project directory" },
+  { token: "{{step.dir}}", desc: "Step output directory within the run" },
+  { token: "{{attachment.dir}}", desc: "Run attachments directory" },
+  { token: "{{hitl.response.N}}", desc: "HITL response by index (0-based)" },
 ];
 
 interface StepFormData {
