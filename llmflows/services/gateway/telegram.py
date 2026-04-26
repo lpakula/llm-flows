@@ -154,9 +154,16 @@ class TelegramBot:
                 finally:
                     self._loop.stop()
 
-            asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+            future = asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+            try:
+                future.result(timeout=15)
+            except Exception:
+                logger.debug("Telegram shutdown future timed out", exc_info=True)
             if self._thread and self._thread.is_alive():
-                self._thread.join(timeout=10)
+                self._thread.join(timeout=5)
+        self._app = None
+        self._loop = None
+        self._thread = None
         logger.info("Telegram bot stopped")
 
     def _run(self) -> None:
@@ -193,6 +200,9 @@ class TelegramBot:
 
         try:
             self._loop.run_until_complete(app.initialize())
+            self._loop.run_until_complete(
+                app.bot.delete_webhook(drop_pending_updates=True)
+            )
             self._loop.run_until_complete(self._register_commands())
             self._loop.run_until_complete(app.start())
             self._loop.run_until_complete(
