@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Flow, FlowStep
+from ..db.models import Flow, FlowStep, FlowVersion
 
 VALID_STEP_TYPES = ("agent", "code", "hitl")
 
@@ -579,3 +579,123 @@ class FlowService:
                         })
 
         return warnings
+
+    # ── Flow Versioning ────────────────────────────────────────────────────────
+
+    def save_version(self, flow_id: str, description: str = "") -> Optional[FlowVersion]:
+        """Snapshot the current flow state into a FlowVersion record."""
+        flow = self.get(flow_id)
+        if not flow:
+            return None
+        snapshot = self.build_flow_snapshot(flow.name, space_id=flow.space_id)
+        if not snapshot:
+            return None
+        version = FlowVersion(
+            flow_id=flow_id,
+            version=flow.version or 1,
+            snapshot=json.dumps(snapshot),
+            description=description,
+        )
+        self.session.add(version)
+        flow.version = (flow.version or 1) + 1
+        flow.updated_at = datetime.now(timezone.utc)
+        self.session.commit()
+        return version
+
+    def list_versions(self, flow_id: str) -> list[FlowVersion]:
+        return (
+            self.session.query(FlowVersion)
+            .filter_by(flow_id=flow_id)
+            .order_by(FlowVersion.version.desc())
+            .all()
+        )
+
+    def get_version(self, version_id: str) -> Optional[FlowVersion]:
+        return self.session.query(FlowVersion).filter_by(id=version_id).first()
+
+    def rollback_to_version(self, flow_id: str, version_id: str) -> Optional[Flow]:
+        """Restore a flow to a previous version. Saves the current state first."""
+        version = self.get_version(version_id)
+        if not version or version.flow_id != flow_id:
+            return None
+        flow = self.get(flow_id)
+        if not flow:
+            return None
+
+        self.save_version(flow_id, description=f"Auto-saved before rollback to v{version.version}")
+
+        snapshot = version.get_snapshot()
+        if not snapshot:
+            return None
+
+        for step in list(flow.steps):
+            self.session.delete(step)
+        self.session.flush()
+
+        flow.description = snapshot.get("description", "")
+        reqs = snapshot.get("requirements")
+        if reqs:
+            flow.requirements = json.dumps(reqs)
+        snap_vars = snapshot.get("variables")
+        if snap_vars:
+            flow.variables = json.dumps(snap_vars)
+        flow.updated_at = datetime.now(timezone.utc)
+
+        for i, step_data in enumerate(snapshot.get("steps", [])):
+            step = FlowStep(
+                flow_id=flow_id,
+                name=step_data["name"],
+                position=step_data.get("position", i),
+                content=step_data.get("content", ""),
+                gates=_serialize_gates(step_data.get("gates")),
+                ifs=_serialize_json_list(step_data.get("ifs")),
+                agent_alias=step_data.get("agent_alias", "normal"),
+                step_type=_normalize_step_type(step_data.get("step_type")),
+                allow_max=step_data.get("allow_max", False),
+                max_gate_retries=step_data.get("max_gate_retries", 5),
+                skills=_serialize_json_list(step_data.get("skills")),
+                connectors=_serialize_json_list(step_data.get("connectors")),
+            )
+            self.session.add(step)
+
+        self.session.commit()
+        return flow
+
+    def apply_flow_proposal(self, flow_id: str, proposal: dict) -> Optional[Flow]:
+        """Apply a flow improvement proposal. Saves current version first."""
+        flow = self.get(flow_id)
+        if not flow:
+            return None
+
+        self.save_version(flow_id, description="Auto-saved before applying improvement")
+
+        for step in list(flow.steps):
+            self.session.delete(step)
+        self.session.flush()
+
+        if "description" in proposal:
+            flow.description = proposal["description"]
+        if "requirements" in proposal:
+            flow.requirements = json.dumps(proposal["requirements"])
+
+        flow.updated_at = datetime.now(timezone.utc)
+
+        for i, step_data in enumerate(proposal.get("steps", [])):
+            step = FlowStep(
+                flow_id=flow_id,
+                name=step_data["name"],
+                position=step_data.get("position", i),
+                content=step_data.get("content", ""),
+                gates=_serialize_gates(step_data.get("gates")),
+                ifs=_serialize_json_list(step_data.get("ifs")),
+                agent_alias=step_data.get("agent_alias", "normal"),
+                step_type=_normalize_step_type(step_data.get("step_type")),
+                allow_max=step_data.get("allow_max", False),
+                max_gate_retries=step_data.get("max_gate_retries", 5),
+                skills=_serialize_json_list(step_data.get("skills")),
+                connectors=_serialize_json_list(step_data.get("connectors")),
+            )
+            self.session.add(step)
+
+        self.session.commit()
+        return flow

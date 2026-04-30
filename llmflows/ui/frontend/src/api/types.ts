@@ -64,6 +64,7 @@ export interface Flow {
   description: string;
   requirements: FlowRequirements;
   variables: Record<string, { value: string; is_env: boolean }>;
+  version: number;
   step_count: number;
   steps: FlowStep[];
   warnings?: FlowWarning[];
@@ -82,6 +83,15 @@ export interface Flow {
   queued_run_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface FlowVersion {
+  id: string;
+  flow_id: string;
+  version: number;
+  description: string;
+  created_at: string;
+  snapshot?: Record<string, unknown>;
 }
 
 export interface FlowStep {

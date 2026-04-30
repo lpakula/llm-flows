@@ -1281,16 +1281,17 @@ async def get_run_steps(run_id: str):
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
 
-        summary_sr = step_run_map.get("__summarizer__")
-        if summary_sr and not any(s["name"] == "__summarizer__" for s in result):
-            result.append({
-                "name": "__summarizer__",
-                "flow": run.flow_name or "",
-                "status": summary_sr.status,
-                "has_ifs": False,
-                "step_run": summary_sr.to_dict(),
-                "attempts": [summary_sr.to_dict()],
-            })
+        for sys_step_name in ("__summarizer__", "__post_run__", "__review_improvement__"):
+            sys_sr = step_run_map.get(sys_step_name)
+            if sys_sr and not any(s["name"] == sys_step_name for s in result):
+                result.append({
+                    "name": sys_step_name,
+                    "flow": run.flow_name or "",
+                    "status": sys_sr.status,
+                    "has_ifs": False,
+                    "step_run": sys_sr.to_dict(),
+                    "attempts": [sys_sr.to_dict()],
+                })
 
         return {"steps": result}
     finally:
@@ -2032,6 +2033,51 @@ async def get_flow(flow_id: str):
         result = flow.to_dict()
         result["warnings"] = flow_svc.validate_flow(flow_id)
         return result
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/versions")
+async def list_flow_versions(flow_id: str):
+    """List all saved versions of a flow."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        versions = flow_svc.list_versions(flow_id)
+        return [v.to_dict() for v in versions]
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/versions/{version_id}")
+async def get_flow_version(flow_id: str, version_id: str):
+    """Get a specific flow version with its full snapshot."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        version = flow_svc.get_version(version_id)
+        if not version or version.flow_id != flow_id:
+            raise HTTPException(status_code=404, detail="Version not found")
+        result = version.to_dict()
+        result["snapshot"] = version.get_snapshot()
+        return result
+    finally:
+        session.close()
+
+
+@app.post("/api/flows/{flow_id}/rollback/{version_id}")
+async def rollback_flow(flow_id: str, version_id: str):
+    """Rollback a flow to a previous version."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.rollback_to_version(flow_id, version_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow or version not found")
+        return flow.to_dict()
     finally:
         session.close()
 

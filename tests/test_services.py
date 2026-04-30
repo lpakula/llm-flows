@@ -562,3 +562,128 @@ class TestStepRunService:
         assert d["agent"] == "cursor"
         assert d["model"] == "auto"
         assert d["status"] == "running"
+
+
+class TestFlowVersioning:
+    def test_save_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("versioned", space_id=test_space.id, steps=[
+            {"name": "research", "position": 0, "content": "# Research"},
+        ])
+        assert flow.version == 1
+
+        version = svc.save_version(flow.id, description="initial save")
+        assert version is not None
+        assert version.version == 1
+        assert version.description == "initial save"
+        test_db.refresh(flow)
+        assert flow.version == 2
+
+    def test_list_versions(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("multi-ver", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0},
+        ])
+        svc.save_version(flow.id, "v1 save")
+        svc.update_step(flow.steps[0].id, content="updated content")
+        svc.save_version(flow.id, "v2 save")
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 2
+        assert versions[0].version == 2
+        assert versions[1].version == 1
+
+    def test_rollback_to_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("rollback-test", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "original content"},
+        ])
+        v1 = svc.save_version(flow.id, "v1")
+
+        svc.update_step(flow.steps[0].id, content="modified content")
+        test_db.refresh(flow)
+        assert flow.steps[0].content == "modified content"
+
+        restored = svc.rollback_to_version(flow.id, v1.id)
+        assert restored is not None
+        test_db.refresh(restored)
+        assert len(restored.steps) == 1
+        assert restored.steps[0].content == "original content"
+
+    def test_rollback_saves_current_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("rollback-save", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "v1"},
+        ])
+        v1 = svc.save_version(flow.id, "v1")
+
+        svc.update_step(flow.steps[0].id, content="v2")
+        svc.rollback_to_version(flow.id, v1.id)
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) >= 2
+
+    def test_apply_flow_proposal(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("proposal-test", space_id=test_space.id, steps=[
+            {"name": "old-step", "position": 0, "content": "old content"},
+        ])
+
+        proposal = {
+            "description": "improved flow",
+            "steps": [
+                {"name": "new-step-1", "position": 0, "content": "new content 1"},
+                {"name": "new-step-2", "position": 1, "content": "new content 2"},
+            ],
+        }
+        result = svc.apply_flow_proposal(flow.id, proposal)
+        assert result is not None
+        test_db.refresh(result)
+        assert result.description == "improved flow"
+        assert len(result.steps) == 2
+        assert result.steps[0].name == "new-step-1"
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 1
+        assert "improvement" in versions[0].description.lower()
+
+    def test_version_to_dict(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("dict-ver", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0},
+        ])
+        version = svc.save_version(flow.id, "test version")
+        d = version.to_dict()
+        assert d["version"] == 1
+        assert d["description"] == "test version"
+        assert "flow_id" in d
+        assert "created_at" in d
+
+    def test_version_snapshot_contains_steps(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("snap-check", space_id=test_space.id, steps=[
+            {"name": "research", "position": 0, "content": "# Do research"},
+            {"name": "implement", "position": 1, "content": "# Implement"},
+        ])
+        version = svc.save_version(flow.id)
+        snapshot = version.get_snapshot()
+        assert snapshot["name"] == "snap-check"
+        assert len(snapshot["steps"]) == 2
+        assert snapshot["steps"][0]["name"] == "research"
+
+    def test_flow_to_dict_includes_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-dict", space_id=test_space.id)
+        d = flow.to_dict()
+        assert d["version"] == 1
+
+    def test_rollback_nonexistent_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("bad-rollback", space_id=test_space.id)
+        result = svc.rollback_to_version(flow.id, "nonexistent")
+        assert result is None
+
+    def test_save_version_nonexistent_flow(self, test_db, test_space):
+        svc = FlowService(test_db)
+        result = svc.save_version("nonexistent")
+        assert result is None
