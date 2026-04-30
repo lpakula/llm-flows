@@ -62,6 +62,7 @@ import type {
   GatewayConfig,
   ConnectorConfig,
   SkillInfo,
+  FlowVersion,
 } from "./types";
 
 export const api = {
@@ -145,6 +146,9 @@ export const api = {
   exportFlows: (spaceId: string) => post<unknown>(`/api/spaces/${spaceId}/flows/export`),
   exportFlowToDisk: (flowId: string) =>
     post<{ ok: boolean; path: string }>(`/api/flows/${flowId}/export`),
+  listFlowVersions: (flowId: string) => get<FlowVersion[]>(`/api/flows/${flowId}/versions`),
+  rollbackFlow: (flowId: string, versionId: string) =>
+    post<Flow>(`/api/flows/${flowId}/rollback/${versionId}`),
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);

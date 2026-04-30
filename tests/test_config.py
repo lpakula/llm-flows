@@ -1,5 +1,8 @@
 """Tests for configuration."""
 
+from pathlib import Path
+from unittest.mock import patch
+
 from llmflows.config import (
     DEFAULT_CONFIG,
     load_system_config,
@@ -10,13 +13,14 @@ from llmflows.config import (
 def test_default_config():
     assert "daemon" in DEFAULT_CONFIG
     assert "ui" in DEFAULT_CONFIG
-    assert DEFAULT_CONFIG["daemon"]["poll_interval_seconds"] == 30
+    assert DEFAULT_CONFIG["daemon"]["poll_interval_seconds"] == 10
     assert DEFAULT_CONFIG["ui"]["port"] == 4300
 
 
 def test_load_system_config_defaults():
-    config = load_system_config()
-    assert config["daemon"]["poll_interval_seconds"] == 30
+    with patch("llmflows.config.SYSTEM_CONFIG", Path("/nonexistent/config.toml")):
+        config = load_system_config()
+    assert config["daemon"]["poll_interval_seconds"] == 10
     assert config["ui"]["port"] == 4300
     assert config["ui"]["host"] == "localhost"
 

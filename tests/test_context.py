@@ -15,11 +15,15 @@ class TestContextService:
         svc = self._setup_dirs(temp_dir)
         result = svc.render_step_instructions({
             "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
             "step_name": "research",
+            "step": {"dir": "/tmp/artifacts/00-research"},
             "step_content": "# Research the problem",
             "flow_name": "default",
+            "flow": {"name": "default", "dir": ""},
             "artifacts": [],
             "artifacts_dir": "/tmp/artifacts/00-research",
+            "attachment": {"dir": "/tmp/attachments"},
             "gate_failures": None,
         })
         assert "abc123" in result
@@ -30,16 +34,21 @@ class TestContextService:
         svc = self._setup_dirs(temp_dir)
         result = svc.render_step_instructions({
             "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
             "step_name": "implement",
+            "step": {"dir": "/tmp/artifacts/01-implement"},
             "step_content": "# Implement based on research",
             "flow_name": "default",
+            "flow": {"name": "default", "dir": ""},
             "artifacts": [{
                 "position": 0,
                 "step_name": "research",
+                "path": "/tmp/artifacts/00-research",
                 "result": None,
                 "files": [{"name": "findings.md", "content": "Found the answer."}],
             }],
             "artifacts_dir": "/tmp/artifacts/01-implement",
+            "attachment": {"dir": "/tmp/attachments"},
             "gate_failures": None,
         })
         assert "Previous Step Artifacts" in result
@@ -50,11 +59,15 @@ class TestContextService:
         svc = self._setup_dirs(temp_dir)
         result = svc.render_step_instructions({
             "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
             "step_name": "implement",
+            "step": {"dir": "/tmp/artifacts/01-implement"},
             "step_content": "# Fix the issue",
             "flow_name": "default",
+            "flow": {"name": "default", "dir": ""},
             "artifacts": [],
             "artifacts_dir": "/tmp/artifacts/01-implement",
+            "attachment": {"dir": "/tmp/attachments"},
             "gate_failures": [{
                 "command": "pytest tests/",
                 "message": "Tests must pass",
@@ -130,3 +143,60 @@ class TestContextService:
         assert ContextService._safe_flow_dir("crypto-news") == "crypto-news"
         assert ContextService._safe_flow_dir("") == "_default"
         assert ContextService._safe_flow_dir("  ") == "_default"
+
+    def test_read_flow_proposal(self, temp_dir):
+        import json
+        proposal = {
+            "description": "improved flow",
+            "improvement_summary": "Added better error handling",
+            "steps": [{"name": "step1", "position": 0, "content": "# Step 1"}],
+        }
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        (temp_dir / "flow_proposal.json").write_text(json.dumps(proposal))
+        result = ContextService.read_flow_proposal(temp_dir)
+        assert result is not None
+        assert result["improvement_summary"] == "Added better error handling"
+        assert len(result["steps"]) == 1
+
+    def test_read_flow_proposal_missing(self, temp_dir):
+        result = ContextService.read_flow_proposal(temp_dir)
+        assert result is None
+
+    def test_read_flow_proposal_invalid_json(self, temp_dir):
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        (temp_dir / "flow_proposal.json").write_text("not json")
+        result = ContextService.read_flow_proposal(temp_dir)
+        assert result is None
+
+    def test_read_flow_proposal_no_steps(self, temp_dir):
+        import json
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        (temp_dir / "flow_proposal.json").write_text(json.dumps({"description": "no steps"}))
+        result = ContextService.read_flow_proposal(temp_dir)
+        assert result is None
+
+    def test_render_post_run_step(self, temp_dir):
+        ctx = ContextService(temp_dir)
+        result = ctx.render_post_run_step({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "outcome": "completed",
+            "summarizer_language": "English",
+        })
+        assert "POST-RUN ANALYSIS" in result
+        assert "test-flow" in result
+
+    def test_render_post_run_step_with_error(self, temp_dir):
+        ctx = ContextService(temp_dir)
+        result = ctx.render_post_run_step({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "outcome": "error",
+            "summarizer_language": "English",
+            "error_details": "Step crashed with OOM",
+            "failed_step": "build",
+            "log_tail": "Out of memory",
+        })
+        assert "Error Details" in result
+        assert "OOM" in result
+        assert "build" in result

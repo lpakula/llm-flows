@@ -66,6 +66,18 @@ class ContextService:
         except TemplateError:
             return self.render_summary_step(context)
 
+    def render_post_run_step(self, context: dict) -> str:
+        """Render step_post_run.md for the post-run analysis step."""
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return self.render_error_summary_step(context) if context.get("error_details") else self.render_summary_step(context)
+        try:
+            env = Environment(autoescape=False)
+            template = env.from_string(template_file.read_text())
+            return template.render(context)
+        except TemplateError:
+            return self.render_summary_step(context)
+
     @staticmethod
     def collect_artifacts(artifacts_dir: Path) -> list[dict]:
         """Collect artifacts from completed steps.
@@ -188,6 +200,21 @@ class ContextService:
                 except (PermissionError, OSError):
                     continue
         return ""
+
+    @staticmethod
+    def read_flow_proposal(artifacts_dir: Path) -> dict | None:
+        """Read flow_proposal.json from the artifacts root, if it exists."""
+        import json
+        proposal_file = artifacts_dir / "flow_proposal.json"
+        if not proposal_file.exists():
+            return None
+        try:
+            data = json.loads(proposal_file.read_text())
+            if isinstance(data, dict) and data.get("steps"):
+                return data
+        except (json.JSONDecodeError, PermissionError, OSError):
+            pass
+        return None
 
     @staticmethod
     def _safe_flow_dir(flow_name: str) -> str:

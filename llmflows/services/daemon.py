@@ -764,6 +764,16 @@ class Daemon:
             self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
             return
 
+        if current_step_name == "__post_run__":
+            self._handle_post_run_completion(
+                run, run_svc, flow_svc, working_path, current_position,
+            )
+            return
+
+        if current_step_name == "__review_improvement__":
+            self._handle_review_completion(run, run_svc, flow_svc)
+            return
+
         next_flow = current_flow
         next_position = current_position + 1
 
@@ -1099,25 +1109,41 @@ class Daemon:
     def _complete_run(
         self, run, run_svc: RunService,
     ) -> None:
-        """Finalize a successful run using the last step's _result.md as the summary."""
+        """Launch post-run analysis step instead of completing immediately."""
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
-        artifacts_dir = ContextService.get_artifacts_dir(Path(space.path), run.id, run.flow_name or "")
-        summary = ContextService.read_last_step_result(artifacts_dir)
-        outcome = run.outcome or "completed"
-        logger.info("Run %s completed (outcome=%s)", run.id, outcome)
-        self._finalize_run(run.id)
-        run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
-        self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
+        working_path = Path(space.path)
+        last_step_runs = run_svc.list_step_runs(run.id)
+        last_pos = max((sr.step_position for sr in last_step_runs), default=-1) + 1
+        flow_svc = FlowService(run_svc.session)
+        self._launch_post_run_step(
+            run, working_path, last_pos, run_svc, flow_svc,
+        )
 
     def _launch_summary_step(
         self, run, working_path: Path,
         step_position: int, run_svc: RunService, flow_svc: FlowService,
         error_context: dict | None = None,
     ) -> None:
-        """Launch the auto-appended summary step for error runs.
+        """Launch the post-run analysis step (replaces the old summarizer).
 
-        When *error_context* is provided the error summary template is used
-        instead of the normal one, giving the AI context about the failure.
+        Handles both error and success cases. The post-run step analyses the
+        run, writes a summary, and optionally proposes flow improvements in
+        ``flow_proposal.json``.
+        """
+        self._launch_post_run_step(
+            run, working_path, step_position, run_svc, flow_svc,
+            error_context=error_context,
+        )
+
+    def _launch_post_run_step(
+        self, run, working_path: Path,
+        step_position: int, run_svc: RunService, flow_svc: FlowService,
+        error_context: dict | None = None,
+    ) -> None:
+        """Launch the post-run analysis step.
+
+        Analyses the run for errors/inefficiencies and optionally proposes
+        flow improvements via ``flow_proposal.json``.
         """
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
@@ -1125,52 +1151,55 @@ class Daemon:
         ctx = ContextService(working_path / ".llmflows")
         summarizer_language = load_system_config().get("daemon", {}).get("summarizer_language", "English")
 
-        summary_vars = {
+        post_run_vars = {
             "run": {"id": run.id, "dir": str(artifacts_dir)},
+            "flow_name": run.flow_name or "",
+            "outcome": run.outcome or "completed",
             "summarizer_language": summarizer_language,
         }
         if error_context:
-            summary_content = ctx.render_error_summary_step({**summary_vars, **error_context})
-        else:
-            summary_content = ctx.render_summary_step(summary_vars)
+            post_run_vars.update(error_context)
+
+        post_run_content = ctx.render_post_run_step(post_run_vars)
 
         try:
-            summary_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
-            if summary_agent in KNOWN_LLM_PROVIDERS:
+            post_run_agent, resolved_model = resolve_alias(run_svc.session, "pi", "mini")
+            if post_run_agent in KNOWN_LLM_PROVIDERS:
                 if "/" not in resolved_model:
-                    resolved_model = f"{summary_agent}/{resolved_model}"
-                summary_agent = "pi"
+                    resolved_model = f"{post_run_agent}/{resolved_model}"
+                post_run_agent = "pi"
         except ValueError:
-            logger.warning("No 'mini' alias configured — skipping summary step for run %s", run.id)
+            logger.warning("No 'mini' alias configured — skipping post-run step for run %s", run.id)
             outcome = run.outcome or "completed"
+            summary = ContextService.read_last_step_result(artifacts_dir)
             self._finalize_run(run.id)
-            run_svc.mark_completed(run.id, outcome=outcome, summary="")
+            run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
             self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
             return
 
         flow_label = run.flow_name or "default"
         step_run = run_svc.create_step_run(
             run_id=run.id,
-            step_name="__summarizer__",
+            step_name="__post_run__",
             step_position=step_position,
             flow_name=flow_label,
-            agent=summary_agent,
+            agent=post_run_agent,
             model=resolved_model,
         )
 
-        run_svc.update_run_step(run.id, "__summarizer__", flow_label)
+        run_svc.update_run_step(run.id, "__post_run__", flow_label)
 
         space_dir = Path(space.path) / ".llmflows"
         agent_svc = AgentService(space_dir, working_path)
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id,
-            step_name="__summarizer__",
+            step_name="__post_run__",
             step_position=step_position,
-            step_content=summary_content,
+            step_content=post_run_content,
             flow_name=flow_label,
             model=resolved_model,
-            agent=summary_agent,
+            agent=post_run_agent,
             space_variables=self._env_variables_from_snapshot(self._get_snapshot(run)),
         )
 
@@ -1179,15 +1208,149 @@ class Daemon:
                 run_svc.set_step_prompt(step_run.id, prompt_content)
             if log_path:
                 run_svc.set_step_log_path(step_run.id, log_path)
-            logger.info("Launched summary step for run %s", run.id)
+            logger.info("Launched post-run step for run %s", run.id)
         else:
-            logger.error("Failed to launch summary step for run %s", run.id)
+            logger.error("Failed to launch post-run step for run %s", run.id)
             run_svc.mark_step_completed(step_run.id, outcome="error")
-            summary = ContextService.read_summary_artifact(artifacts_dir)
+            summary = ContextService.read_summary_artifact(artifacts_dir) or ContextService.read_last_step_result(artifacts_dir)
             self._finalize_run(run.id)
             outcome = run.outcome or "completed"
             run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
             self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
+
+    def _handle_post_run_completion(
+        self, run, run_svc: RunService, flow_svc: FlowService,
+        working_path: Path, step_position: int,
+    ) -> None:
+        """Check post-run artifacts for a flow proposal. If found, launch HITL review."""
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
+
+        proposal = ContextService.read_flow_proposal(artifacts_dir)
+        if proposal and proposal.get("improvement_summary"):
+            logger.info(
+                "Run %s post-run found flow improvement proposal, launching review",
+                run.id,
+            )
+            self._launch_review_step(
+                run, working_path, step_position + 1,
+                run_svc, flow_svc, proposal,
+            )
+            return
+
+        summary = (
+            ContextService.read_summary_artifact(artifacts_dir)
+            or ContextService.read_inbox_message(artifacts_dir)
+            or ContextService.read_last_step_result(artifacts_dir)
+        )
+        outcome = run.outcome or "completed"
+        logger.info("Run %s completed (outcome=%s)", run.id, outcome)
+        self._finalize_run(run.id)
+        run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
+        self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
+
+    def _launch_review_step(
+        self, run, working_path: Path,
+        step_position: int, run_svc: RunService, flow_svc: FlowService,
+        proposal: dict,
+    ) -> None:
+        """Launch a HITL step to let the user review a flow improvement proposal."""
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
+        step_dir = artifacts_dir / _step_dir_name(step_position, "__review_improvement__")
+        step_dir.mkdir(parents=True, exist_ok=True)
+
+        improvement = proposal.get("improvement_summary", "Flow improvement proposed.")
+        hitl_content = f"# Flow Improvement Proposal\n\n{improvement}\n\n"
+        hitl_content += "Reply **approve** to apply this improvement, or anything else to skip."
+        (step_dir / "hitl.md").write_text(hitl_content)
+        (step_dir / "_result.md").write_text(improvement)
+
+        try:
+            agent, model = resolve_alias(run_svc.session, "pi", "mini")
+            if agent in KNOWN_LLM_PROVIDERS:
+                if "/" not in model:
+                    model = f"{agent}/{model}"
+                agent = "pi"
+        except ValueError:
+            self._finalize_run(run.id)
+            outcome = run.outcome or "completed"
+            run_svc.mark_completed(run.id, outcome=outcome, summary="")
+            return
+
+        flow_label = run.flow_name or "default"
+        step_run = run_svc.create_step_run(
+            run_id=run.id,
+            step_name="__review_improvement__",
+            step_position=step_position,
+            flow_name=flow_label,
+            agent=agent,
+            model=model,
+        )
+
+        run_svc.update_run_step(run.id, "__review_improvement__", flow_label)
+        run_svc.mark_step_completed(step_run.id, outcome="completed")
+        run_svc.mark_awaiting_user(step_run.id)
+
+        inbox_item = run_svc.create_inbox_item(
+            type="awaiting_user", reference_id=step_run.id,
+            space_id=run.space_id,
+            title=f"{run.flow_name or run.id} — Flow Improvement Proposal",
+        )
+
+        logger.info("Run %s awaiting user review for flow improvement", run.id)
+        self.notifications.notify("step.awaiting_user", {
+            "flow_name": run.flow_name or run.id,
+            "run_id": run.id,
+            "step_name": "__review_improvement__",
+            "step_run_id": step_run.id,
+            "step_type": "hitl",
+            "inbox_id": inbox_item.id,
+            "user_message": hitl_content,
+        })
+
+    def _handle_review_completion(
+        self, run, run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Process the user's response to a flow improvement review."""
+        space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
+
+        latest = run_svc.get_latest_step_run(run.id, "__review_improvement__")
+        user_response = (latest.user_response or "").strip().lower() if latest else ""
+        approved = user_response in ("approve", "approved", "yes", "y")
+
+        if approved and run.flow_id:
+            proposal = ContextService.read_flow_proposal(artifacts_dir)
+            if proposal:
+                try:
+                    flow_svc.apply_flow_proposal(run.flow_id, proposal)
+                    logger.info(
+                        "Run %s: applied flow improvement to flow %s",
+                        run.id, run.flow_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Run %s: failed to apply flow improvement", run.id,
+                    )
+        elif approved:
+            logger.warning(
+                "Run %s: approved improvement but no flow_id to apply to", run.id,
+            )
+
+        summary = (
+            ContextService.read_summary_artifact(artifacts_dir)
+            or ContextService.read_inbox_message(artifacts_dir)
+            or ContextService.read_last_step_result(artifacts_dir)
+        )
+        outcome = run.outcome or "completed"
+        logger.info("Run %s completed after review (outcome=%s)", run.id, outcome)
+        self._finalize_run(run.id)
+        run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
+        self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
 
     def _maybe_create_completed_inbox(self, run, run_svc: RunService, artifacts_dir: Path) -> None:
         """Create a completed_run inbox item and send notification only if inbox.md exists."""

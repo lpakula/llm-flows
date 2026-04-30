@@ -11,7 +11,7 @@ import { ImageLightbox } from "@/components/ImageLightbox";
 import { StepModal } from "@/components/StepModal";
 import type {
   Flow, FlowStep, FlowRun, FlowWarning, Gate, AgentAlias, SkillInfo,
-  ConnectorConfig, StepRunInfo, GateFailure,
+  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion,
 } from "@/api/types";
 import {
   statusBadge, displayStatus, formatSeconds, formatCost,
@@ -34,6 +34,13 @@ function formatTimestamp(iso: string | undefined | null): string {
   try {
     return new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z").toLocaleString();
   } catch { return iso; }
+}
+
+function systemStepLabel(name: string): string {
+  if (name === "__summarizer__") return "summarizer";
+  if (name === "__post_run__") return "post-run analysis";
+  if (name === "__review_improvement__") return "improvement review";
+  return name;
 }
 
 function RunStatusIcon({ run }: { run: FlowRun }) {
@@ -99,6 +106,10 @@ export function FlowDetailView() {
   const [respondText, setRespondText] = useState("");
   const [agentLogExpanded, setAgentLogExpanded] = useState(true);
 
+  // Flow versions
+  const [versions, setVersions] = useState<FlowVersion[]>([]);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+
   // Floating chat window
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -133,6 +144,10 @@ export function FlowDetailView() {
       const sk = await api.listSkills(f.space_id);
       setSpaceSkills(sk);
     } catch { /* skills discovery may fail */ }
+    try {
+      const v = await api.listFlowVersions(flowId!);
+      setVersions(v);
+    } catch { /* versions may not exist yet */ }
   }, [flowId, setSelectedSpaceId]);
 
   useEffect(() => {
@@ -337,6 +352,17 @@ export function FlowDetailView() {
     }
   };
 
+  const rollbackToVersion = async (versionId: string, versionNum: number) => {
+    if (!flow || !confirm(`Rollback to version ${versionNum}? The current version will be saved automatically.`)) return;
+    try {
+      await api.rollbackFlow(flow.id, versionId);
+      load();
+      reload();
+    } catch (e: unknown) {
+      alert("Rollback failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const duplicateFlow = async () => {
     if (!flow) return;
     const newName = prompt("Name for the copy:", flow.name + "-copy");
@@ -368,7 +394,7 @@ export function FlowDetailView() {
     );
     if (activeStep?.step_run) {
       setLogUrl(`/api/step-runs/${activeStep.step_run.id}/logs`);
-      setViewingStepName(activeStep.name === "__summarizer__" ? "summarizer" : activeStep.name);
+      setViewingStepName(systemStepLabel(activeStep.name));
       setViewingStepPrompt(activeStep.step_run.prompt || null);
       setViewingStepAgentModel({ agent: activeStep.step_run.agent || "", model: activeStep.step_run.model || "" });
       setViewingStepDuration(activeStep.step_run.duration_seconds ?? null);
@@ -678,6 +704,41 @@ export function FlowDetailView() {
         </div>
       </div>
 
+      {/* Version History */}
+      {versions.length > 0 && (
+        <div className="mb-4">
+          <button
+            onClick={() => setVersionsOpen(!versionsOpen)}
+            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 mb-2"
+          >
+            <RotateCcw size={12} />
+            <span>Version History ({versions.length}) &middot; Current: v{flow.version || 1}</span>
+            <span className="text-[10px]">{versionsOpen ? "▲" : "▼"}</span>
+          </button>
+          {versionsOpen && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <div className="divide-y divide-gray-800">
+                {versions.map((v) => (
+                  <div key={v.id} className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-800/30">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-gray-300">v{v.version}</span>
+                      {v.description && (
+                        <span className="text-xs text-gray-500 truncate max-w-md">{v.description}</span>
+                      )}
+                      <span className="text-[10px] text-gray-600">{shortDateTime(v.created_at)}</span>
+                    </div>
+                    <button
+                      onClick={() => rollbackToVersion(v.id, v.version)}
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >Rollback</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Steps + Runs split */}
       <div className="grid grid-cols-2 gap-4 mb-4">
         {/* Steps panel */}
@@ -885,7 +946,7 @@ export function FlowDetailView() {
               <div className="flex items-center overflow-x-auto pb-1">
                 {runSteps.map((step, i) => {
                   const attempts = step.attempts || [];
-                  const stepLabel = step.name === "__summarizer__" ? "summarizer" : step.name;
+                  const stepLabel = systemStepLabel(step.name);
                   const isCancelled = displayStatus(expandedRun) === "cancelled";
                   const resolveStatus = (s: string) =>
                     isCancelled && s === "pending" ? "skipped" : s;
@@ -950,7 +1011,7 @@ export function FlowDetailView() {
           {(() => {
             const awaitingStep = runSteps.find((s) => s.status === "awaiting_user" && s.step_run);
             if (!awaitingStep?.step_run) return null;
-            const stepLabel = awaitingStep.name === "__summarizer__" ? "summarizer" : awaitingStep.name;
+            const stepLabel = systemStepLabel(awaitingStep.name);
             return (
               <div className="px-5 py-3 border-b border-gray-800 bg-amber-950/10">
                 <div className="flex items-center gap-2 mb-2">
