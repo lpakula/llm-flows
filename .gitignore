@@ -24,8 +24,8 @@ rp5m/tasks/
 
 .worktrees/
 
-# Browser profile (used by Playwright/Chrome automation — never commit)
-~/.llmflows/browser-profile/
+# Browser profile — Chrome creates this if ~ is not expanded (never commit)
+~/
 .llmflows/browser-profile/
 
 llmflows/ui/frontend/tsconfig.tsbuildinfo

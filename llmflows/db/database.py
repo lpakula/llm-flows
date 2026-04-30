@@ -77,7 +77,7 @@ def _seed_mcp_connectors(session):
             "command": "tsx mcp-server-browser.ts",
             "enabled": False,
             "builtin": True,
-            "env": '{"BROWSER_USER_DATA_DIR": "~/.llmflows/browser-profile", "BROWSER_HEADLESS": "false"}',
+            "env": '{"BROWSER_USER_DATA_DIR": "$HOME/.llmflows/browser-profile", "BROWSER_HEADLESS": "false"}',
         },
     ]
     for b in BUILTINS:
