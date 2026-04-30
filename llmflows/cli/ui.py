@@ -55,7 +55,14 @@ def _kill_other_ui_instances() -> None:
     """Terminate any other ``llmflows ui`` processes owned by the current user.
 
     Ensures only one UI instance runs at a time. Excludes the current process.
+
+    Skipped when ``LLMFLOWS_HOME`` is set — in that case the process is an
+    intentionally isolated worktree instance that must not disturb the
+    production UI (and vice-versa).
     """
+    if "LLMFLOWS_HOME" in os.environ:
+        return
+
     import subprocess
     from .daemon import _stop_pid
 
