@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from llmflows.db.models import FlowStep
 from llmflows.services.agent import AgentService
 from llmflows.services.flow import FlowService
@@ -630,6 +632,8 @@ class TestFlowVersioning:
         ])
 
         proposal = {
+            "name": "proposal-test",
+            "version": 2,
             "description": "improved flow",
             "steps": [
                 {"name": "new-step-1", "position": 0, "content": "new content 1"},
@@ -642,10 +646,11 @@ class TestFlowVersioning:
         assert result.description == "improved flow"
         assert len(result.steps) == 2
         assert result.steps[0].name == "new-step-1"
+        assert result.version == 2
 
         versions = svc.list_versions(flow.id)
         assert len(versions) == 1
-        assert "improvement" in versions[0].description.lower()
+        assert "import" in versions[0].description.lower()
 
     def test_version_to_dict(self, test_db, test_space):
         svc = FlowService(test_db)
@@ -687,3 +692,125 @@ class TestFlowVersioning:
         svc = FlowService(test_db)
         result = svc.save_version("nonexistent")
         assert result is None
+
+    def test_import_rejects_same_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-reject", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0},
+        ])
+        assert flow.version == 1
+
+        data = {
+            "flows": [{
+                "name": "ver-reject",
+                "version": 1,
+                "steps": [{"name": "step1", "position": 0, "content": "updated"}],
+            }]
+        }
+        with pytest.raises(ValueError, match="already at version 1"):
+            svc._import_flows_data(data, space_id=test_space.id)
+
+    def test_import_accepts_higher_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-accept", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "original"},
+        ])
+
+        data = {
+            "flows": [{
+                "name": "ver-accept",
+                "version": 2,
+                "steps": [{"name": "step1", "position": 0, "content": "updated"}],
+            }]
+        }
+        count = svc._import_flows_data(data, space_id=test_space.id)
+        assert count == 1
+        test_db.refresh(flow)
+        assert flow.version == 2
+        assert flow.steps[0].content == "updated"
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 1
+        assert versions[0].version == 1
+
+    def test_import_creates_version_snapshot(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-snapshot", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "v1 content"},
+        ])
+
+        data = {
+            "flows": [{
+                "name": "ver-snapshot",
+                "version": 2,
+                "steps": [{"name": "step1", "position": 0, "content": "v2 content"}],
+            }]
+        }
+        svc._import_flows_data(data, space_id=test_space.id)
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 1
+        snap = versions[0].get_snapshot()
+        assert snap["steps"][0]["content"] == "v1 content"
+
+    def test_import_without_version_still_snapshots(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("no-ver-import", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "original"},
+        ])
+
+        data = {
+            "flows": [{
+                "name": "no-ver-import",
+                "steps": [{"name": "step1", "position": 0, "content": "updated"}],
+            }]
+        }
+        count = svc._import_flows_data(data, space_id=test_space.id)
+        assert count == 1
+
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 1
+
+    def test_export_includes_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-export", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0},
+        ])
+        flow.version = 3
+        test_db.commit()
+
+        data = svc.export_flows(test_space.id)
+        flow_data = data["flows"][0]
+        assert flow_data["version"] == 3
+
+    def test_import_new_flow_with_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        data = {
+            "flows": [{
+                "name": "brand-new-flow",
+                "version": 5,
+                "steps": [{"name": "step1", "position": 0}],
+            }]
+        }
+        count = svc._import_flows_data(data, space_id=test_space.id)
+        assert count == 1
+        flow = svc.get_by_name("brand-new-flow", test_space.id)
+        assert flow is not None
+        assert flow.version == 5
+
+    def test_apply_proposal_auto_versions(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("auto-ver", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "v1"},
+        ])
+        assert flow.version == 1
+
+        proposal = {
+            "name": "auto-ver",
+            "description": "improved",
+            "steps": [{"name": "step1", "position": 0, "content": "v2"}],
+        }
+        result = svc.apply_flow_proposal(flow.id, proposal)
+        assert result is not None
+        test_db.refresh(result)
+        assert result.version == 2

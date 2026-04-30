@@ -159,3 +159,45 @@ class TestFlowVersioningAPI:
         data = response.json()
         assert "version" in data
         assert data["version"] >= 1
+
+    def test_import_rejects_same_version(self, client, api_db):
+        import io
+        sid = api_db["space_id"]
+        import json
+        data = json.dumps({
+            "version": 1,
+            "flows": [{
+                "name": "default",
+                "version": 1,
+                "steps": [{"name": "step1", "position": 0}],
+            }]
+        })
+        response = client.post(
+            f"/api/spaces/{sid}/flows/import",
+            files={"file": ("flows.json", io.BytesIO(data.encode()), "application/json")},
+        )
+        assert response.status_code == 400
+        assert "version" in response.json()["detail"].lower()
+
+    def test_import_accepts_higher_version(self, client, api_db):
+        import io
+        sid = api_db["space_id"]
+        import json
+        data = json.dumps({
+            "version": 1,
+            "flows": [{
+                "name": "default",
+                "version": 2,
+                "steps": [{"name": "step1", "position": 0, "content": "updated"}],
+            }]
+        })
+        response = client.post(
+            f"/api/spaces/{sid}/flows/import",
+            files={"file": ("flows.json", io.BytesIO(data.encode()), "application/json")},
+        )
+        assert response.status_code == 200
+        assert response.json()["imported"] == 1
+
+    def test_approve_improvement_not_found(self, client, api_db):
+        response = client.post("/api/inbox/nonexistent/approve-improvement")
+        assert response.status_code == 404
