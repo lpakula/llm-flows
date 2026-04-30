@@ -14,11 +14,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..config import SYSTEM_DIR
+
 logger = logging.getLogger("llmflows.chat")
 
-CHAT_SESSIONS_DIR = Path.home() / ".llmflows" / "chat-sessions"
+CHAT_SESSIONS_DIR = SYSTEM_DIR / "chat-sessions"
 _BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
-_NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
+_NODE_MODULES = SYSTEM_DIR / "node_modules"
 CHAT_SKILLS = ["flows", "overview", "cli", "skills", "connectors"]
 
 SYSTEM_PROMPT = """\

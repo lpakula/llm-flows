@@ -16,11 +16,12 @@ from typing import Optional
 
 from .base import LaunchResult, StepContext, StepExecutor
 from ..agent import AgentService
+from ...config import SYSTEM_DIR
 
 logger = logging.getLogger("llmflows.executor.pi")
 
 _TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
-_NODE_MODULES = Path.home() / ".llmflows" / "node_modules"
+_NODE_MODULES = SYSTEM_DIR / "node_modules"
 MCP_BRIDGE_TOOL = _TOOLS_DIR / "mcp-bridge.ts"
 
 

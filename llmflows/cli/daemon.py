@@ -104,7 +104,8 @@ def daemon_start(foreground):
 
     init_db()
 
-    log_file = os.path.expanduser("~/.llmflows/daemon.log")
+    from ..config import SYSTEM_DIR
+    log_file = str(SYSTEM_DIR / "daemon.log")
     open(log_file, "w").close()
 
     fmt = "%(asctime)s %(name)s %(message)s"

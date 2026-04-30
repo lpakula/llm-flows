@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ...config import SYSTEM_DIR
 from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
 from ..context import ContextService
 from ..flow import FlowService
@@ -836,7 +837,7 @@ class TelegramBot:
         if event == "run.completed":
             run_id = payload.get("run_id")
             if run_id:
-                att_dir = Path.home() / ".llmflows" / "attachments" / run_id
+                att_dir = SYSTEM_DIR / "attachments" / run_id
                 if att_dir.is_dir():
                     try:
                         for f in sorted(att_dir.iterdir()):

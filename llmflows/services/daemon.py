@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..config import load_system_config, resolve_alias, KNOWN_LLM_PROVIDERS
+from ..config import load_system_config, resolve_alias, KNOWN_LLM_PROVIDERS, SYSTEM_DIR
 from ..db.database import get_session, reset_engine
 from ..db.models import Space
 from .agent import AgentService
@@ -529,7 +529,7 @@ class Daemon:
             run_svc.mark_step_completed(step_run.id, outcome="cancelled")
             return
 
-        prompt_file = Path.home() / ".llmflows" / "prompts" / f"{run.id}-{_step_dir_name(step_run.step_position, step_run.step_name)}.md"
+        prompt_file = SYSTEM_DIR / "prompts" / f"{run.id}-{_step_dir_name(step_run.step_position, step_run.step_name)}.md"
         prompt_file.unlink(missing_ok=True)
 
         space_root = Path(space.path)
@@ -632,7 +632,7 @@ class Daemon:
             "flow.dir": str(flow_dir),
             "run.dir": str(artifact_dir),
             "step.dir": str(step_artifact_dir),
-            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
+            "attachment.dir": str(SYSTEM_DIR / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         snap_step = self._get_snapshot_step(run, step_run.step_name)
@@ -751,7 +751,7 @@ class Daemon:
             "flow.name": current_flow,
             "flow.dir": str(flow_dir),
             "run.dir": str(artifacts_dir),
-            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
+            "attachment.dir": str(SYSTEM_DIR / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
         _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
 
@@ -846,7 +846,7 @@ class Daemon:
             "run.id": run.id, "flow.name": flow_name,
             "flow.dir": str(flow_dir),
             "run.dir": str(artifacts_dir),
-            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
+            "attachment.dir": str(SYSTEM_DIR / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
 
         steps = self._get_snapshot_steps(run)
@@ -910,7 +910,7 @@ class Daemon:
             "flow.dir": str(flow_dir),
             "run.dir": str(artifacts_dir),
             "step.dir": str(step_artifact_dir),
-            "attachment.dir": str(Path.home() / ".llmflows" / "attachments" / run.id),
+            "attachment.dir": str(SYSTEM_DIR / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
         _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
         if step_content:
@@ -1218,7 +1218,7 @@ class Daemon:
     @staticmethod
     def _publish_attachments(src_dir: Path, run_id: str) -> None:
         """Copy files from a step's attachments/ subdirectory into the run-scoped attachments dir."""
-        dest_dir = Path.home() / ".llmflows" / "attachments" / run_id
+        dest_dir = SYSTEM_DIR / "attachments" / run_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         import shutil
         for f in src_dir.iterdir():
@@ -1245,7 +1245,6 @@ def write_pid_file(pid: int) -> Path:
 
 def read_pid_file() -> Optional[int]:
     """Read daemon PID from file, return None if not running."""
-    from ..config import SYSTEM_DIR
     pid_file = SYSTEM_DIR / "daemon.pid"
     if not pid_file.exists():
         return None
@@ -1261,6 +1260,5 @@ def read_pid_file() -> Optional[int]:
 
 def remove_pid_file() -> None:
     """Remove the daemon PID file."""
-    from ..config import SYSTEM_DIR
     pid_file = SYSTEM_DIR / "daemon.pid"
     pid_file.unlink(missing_ok=True)

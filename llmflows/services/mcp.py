@@ -11,10 +11,12 @@ import logging
 import os
 from pathlib import Path
 
+from ..config import SYSTEM_DIR
+
 logger = logging.getLogger("llmflows.mcp")
 
-_LLMFLOWS_DIR = Path.home() / ".llmflows"
-_NODE_MODULES = _LLMFLOWS_DIR / "node_modules"
+_LLMFLOWS_DIR = SYSTEM_DIR
+_NODE_MODULES = SYSTEM_DIR / "node_modules"
 _TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
 BUILTIN_COMMANDS: dict[str, str] = {
