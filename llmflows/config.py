@@ -4,13 +4,14 @@ System-wide config lives in ~/.llmflows/config.toml.
 Per-space config is discovered via .llmflows/ in each directory.
 """
 
+import os
 import shutil
 import tomllib
 from pathlib import Path
 from typing import Any, Optional
 
 
-SYSTEM_DIR = Path.home() / ".llmflows"
+SYSTEM_DIR = Path(os.environ["LLMFLOWS_HOME"]).expanduser() if "LLMFLOWS_HOME" in os.environ else Path.home() / ".llmflows"
 SYSTEM_DB = SYSTEM_DIR / "llmflows.db"
 SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 

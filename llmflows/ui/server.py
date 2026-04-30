@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.websockets import WebSocket as _StarletteWebSocket
 
 from .. import __version__
-from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, load_system_config, save_system_config
+from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, SYSTEM_DIR, load_system_config, save_system_config
 from ..db.database import get_session, reset_engine
 from ..services.agent import AgentService
 from ..services.chat import (
@@ -146,7 +146,7 @@ def _get_services():
     return session, SpaceService(session)
 
 
-ATTACHMENTS_DIR = Path.home() / ".llmflows" / "attachments"
+ATTACHMENTS_DIR = SYSTEM_DIR / "attachments"
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
@@ -169,7 +169,7 @@ async def daemon_status():
 
 @app.get("/api/daemon/logs")
 async def daemon_logs(lines: int = 200):
-    log_path = os.path.expanduser("~/.llmflows/daemon.log")
+    log_path = str(SYSTEM_DIR / "daemon.log")
     if not os.path.exists(log_path):
         return {"lines": []}
     with open(log_path, "r") as f:

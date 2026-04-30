@@ -10,9 +10,9 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
+from ...config import SYSTEM_DIR
 from ..chat import ChatService
 
 logger = logging.getLogger("llmflows.slack")
@@ -649,7 +649,7 @@ class SlackChannel:
         if event == "run.completed":
             run_id = payload.get("run_id")
             if run_id:
-                att_dir = Path.home() / ".llmflows" / "attachments" / run_id
+                att_dir = SYSTEM_DIR / "attachments" / run_id
                 if att_dir.is_dir():
                     for f in sorted(att_dir.iterdir()):
                         if f.is_file():

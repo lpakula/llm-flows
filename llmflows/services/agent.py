@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from ..config import AGENT_REGISTRY
+from ..config import AGENT_REGISTRY, SYSTEM_DIR
 from .context import ContextService
 
 logger = logging.getLogger("llmflows.agent")
@@ -80,7 +80,7 @@ class AgentService:
 
         spc_vars = space_variables or {}
         step_dir = str(step_output_dir) if step_output_dir else ""
-        attachment_dir = str(Path.home() / ".llmflows" / "attachments" / run_id)
+        attachment_dir = str(SYSTEM_DIR / "attachments" / run_id)
         prompt_vars = {
             "run_id": run_id,
             "run": {"id": run_id, "dir": str(artifacts_dir)},
@@ -103,7 +103,7 @@ class AgentService:
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)
 
-        prompts_dir = Path.home() / ".llmflows" / "prompts"
+        prompts_dir = SYSTEM_DIR / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
         prompt_md = prompts_dir / f"{run_id}-{ContextService.step_dir_name(step_position, step_name)}.md"
         prompt_md.write_text(prompt_content)
@@ -127,7 +127,7 @@ class AgentService:
     def _rewrite_attachment_urls(text: str) -> str:
         """Replace /api/attachments/<run_id>/<file> with absolute local paths."""
         import re
-        attachments_base = Path.home() / ".llmflows" / "attachments"
+        attachments_base = SYSTEM_DIR / "attachments"
 
         def replace(m: re.Match) -> str:
             run_id, filename = m.group(1), m.group(2)
