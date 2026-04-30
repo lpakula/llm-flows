@@ -195,3 +195,34 @@ def daemon_status():
         click.echo(f"Daemon is running (pid {pid})")
     else:
         click.echo("Daemon is not running.")
+
+
+@daemon.command("tick")
+@click.option("--verbose", "-v", is_flag=True, help="Mirror daemon logs to stdout.")
+def daemon_tick(verbose):
+    """Run a single daemon tick synchronously (for testing/debugging).
+
+    Processes all pending run transitions exactly once, then exits. No PID
+    file is written and no background process is started, making it safe to
+    call inside a worktree or test environment without conflicting with a
+    running daemon.
+    """
+    from ..db.database import init_db
+
+    init_db()
+
+    if verbose:
+        import logging
+        fmt = "%(asctime)s %(name)s %(message)s"
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(fmt))
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(handler)
+        for noisy in ("httpx", "httpcore", "telegram", "telegram.ext"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    d = Daemon()
+    click.echo("Running daemon tick…")
+    d._tick()
+    click.echo("Tick complete.")

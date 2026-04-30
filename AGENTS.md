@@ -29,26 +29,19 @@ scripts/
   test.sh       Preferred test runner (Docker-based)
   build.py      Hatch build hook (compiles frontend if static/index.html missing)
 flows/          Example/exported flow JSON files
-.agents/skills/ Agent skills injected at step runtime (cli/SKILL.md, release/SKILL.md)
+.agents/skills/ Agent skills injected at step runtime (cli/SKILL.md, release/SKILL.md, testing/SKILL.md)
 ```
 
-## Running tests
+## Testing
 
-**Preferred** — Docker-based, matches CI:
+See `.agents/skills/testing/SKILL.md` for the full testing guide (unit tests, daemon tick simulation, Playwright browser testing, worktree isolation).
+
+Quick reference:
 ```bash
-./scripts/test.sh                              # full suite
-./scripts/test.sh tests/test_api.py            # single file
-./scripts/test.sh tests/test_services.py::TestFoo::test_bar  # single test
-./scripts/test.sh --rebuild                    # rebuild image after dep changes
+./scripts/test.sh        # full suite via Docker (matches CI)
+pytest                   # direct, needs pip install -e ".[dev]"
+llmflows daemon tick     # one-shot daemon tick, no background process
 ```
-
-**Direct pytest** (no Docker, needs `pip install -e ".[dev]"`):
-```bash
-pytest
-pytest tests/test_api.py -v
-```
-
-Coverage is reported automatically (`--cov=llmflows --cov-report=term-missing`).
 
 ## Git worktrees
 
@@ -58,62 +51,8 @@ Coverage is reported automatically (`--cov=llmflows --cov-report=term-missing`).
   ```
 - Worktrees are a workflow convention, not enforced by the engine.
 - `llmflows/utils/git.py` has `get_worktree_diff(base, cwd)` for generating LLM-friendly diffs.
-
-## Testing from a worktree
-
-Each worktree must have its own isolated Python environment. **Never** install into the system Python or the main repo's venv when working in a worktree.
-
-```bash
-cd .worktrees/<name>
-
-# Create venv (once)
-python -m venv .venv
-
-# Install project + dev deps
-.venv/bin/pip install -e '.[dev]' -q
-
-# Run tests (always from inside the worktree)
-.venv/bin/pytest
-```
-
-## Running the UI from a worktree (fully isolated)
-
-Set `LLMFLOWS_HOME` to redirect every path (DB, config, PID file, daemon log) to a private directory. This gives the worktree instance its own daemon and DB — it cannot read, write, or disturb production runs.
-
-```bash
-cd .worktrees/<name>
-
-export LLMFLOWS_HOME=~/.llmflows-worktree-<name>
-
-# Register the worktree as a space in the isolated DB (safe to re-run)
-.venv/bin/llmflows register --name worktree-<name>
-
-# Start UI + daemon on a separate port
-.venv/bin/llmflows ui --port 8899
-```
-
-**What `LLMFLOWS_HOME` isolates:**
-- `$LLMFLOWS_HOME/llmflows.db` — separate DB, no production data
-- `$LLMFLOWS_HOME/daemon.pid` — separate PID file, separate daemon process
-- `$LLMFLOWS_HOME/daemon.log` — separate log
-- `$LLMFLOWS_HOME/config.toml` — separate config
-
-The production daemon and UI continue running unaffected on their default port.
-
-**Teardown** — stop the worktree daemon when done:
-```bash
-LLMFLOWS_HOME=~/.llmflows-worktree-<name> .venv/bin/llmflows daemon stop
-```
-
-## Taking UI screenshots from a worktree
-
-Use Playwright from the worktree venv:
-
-```bash
-.venv/bin/pip install playwright -q
-.venv/bin/playwright install chromium --with-deps -q
-.venv/bin/python -m playwright screenshot http://localhost:8899 screenshot.png --wait-until networkidle
-```
+- Each worktree needs its own venv: `python -m venv .venv && .venv/bin/pip install -e '.[dev]' -q`
+- Set `LLMFLOWS_HOME=~/.llmflows-worktree-<name>` for a fully isolated DB, daemon, and config.
 
 ## Key patterns and abstractions
 
