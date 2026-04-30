@@ -66,6 +66,60 @@ Daemon()._tick()
 
 ---
 
+## Testing steps that require agent execution
+
+The daemon calls `AgentService.prepare_and_launch_step` to launch a real agent subprocess. In tests, patch that method out and write the expected artifacts directly, then tick again to let the daemon advance.
+
+**Pattern 1 — mock the agent launch:**
+
+```python
+from unittest.mock import patch
+from pathlib import Path
+from llmflows.db.database import init_db, get_session
+from llmflows.services.daemon import Daemon
+from llmflows.services.run import RunService
+
+init_db()
+session = get_session()
+# ... set up space, flow, enqueue run ...
+
+def fake_agent(self, run_id, step_name, step_position, **kwargs):
+    step_dir = Path(f"/tmp/test-space/.llmflows/my-flow/runs/{run_id}/artifacts"
+                    f"/{step_position:02d}-{step_name.lower().replace(' ', '-')}")
+    step_dir.mkdir(parents=True, exist_ok=True)
+    (step_dir / "_result.md").write_text("done")
+    return True, "", ""
+
+with patch("llmflows.services.agent.AgentService.prepare_and_launch_step", fake_agent):
+    Daemon()._tick()  # starts step → fake writes artifact → step marked complete
+    Daemon()._tick()  # evaluates gates → advances to next step or finalises run
+```
+
+**Pattern 2 — manually complete a step then tick:**
+
+Useful when you only care about run-level transitions, not step content.
+
+```python
+# First tick starts the step
+Daemon()._tick()
+
+# Write the artifact and mark the step done manually
+run_svc = RunService(session)
+step_run = run_svc.get_active_step(run.id)
+step_dir = Path(f".../{step_run.step_position:02d}-{step_run.step_name.lower().replace(' ', '-')}")
+step_dir.mkdir(parents=True, exist_ok=True)
+(step_dir / "_result.md").write_text("done")
+run_svc.mark_step_completed(step_run.id, outcome="completed")
+session.commit()
+
+# Tick to evaluate gates and advance
+Daemon()._tick()
+```
+
+Gates are shell commands evaluated by the daemon between steps. If a gate checks for a file, write that file before the second tick.
+
+---
+
 ## Browser / UI testing with Playwright
 
 ### Setup
