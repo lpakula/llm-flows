@@ -249,6 +249,7 @@ class FlowService:
         return {
             "id": source.id,
             "name": source.name,
+            "version": source.version or 1,
             "description": source.description or "",
             "requirements": source.get_requirements(),
             "variables": source.get_variables(),
@@ -281,6 +282,7 @@ class FlowService:
 
         flow_data: dict = {
             "name": flow.name,
+            "version": flow.version or 1,
             "description": flow.description,
             "steps": [],
         }
@@ -342,6 +344,7 @@ class FlowService:
             reqs = flow.get_requirements()
             flow_data = {
                 "name": flow.name,
+                "version": flow.version or 1,
                 "description": flow.description,
                 "steps": [],
             }
@@ -396,16 +399,34 @@ class FlowService:
         return self._import_flows_data(data, space_id=space_id, skip_existing=False)
 
     def _import_flows_data(self, data: dict, space_id: str, skip_existing: bool = False) -> int:
-        """Import flows from parsed JSON data."""
+        """Import flows from parsed JSON data.
+
+        Version-aware: if the imported flow carries a ``version`` field and a
+        flow with the same name already exists, the import is rejected when the
+        version matches.  On upsert the current state is always snapshotted
+        into ``FlowVersion`` before overwriting.
+        """
         count = 0
         for flow_data in data.get("flows", []):
             name = flow_data["name"]
+            import_version = flow_data.get("version")
             existing = self.get_by_name(name, space_id)
 
             if existing and skip_existing:
                 continue
 
             if existing:
+                if import_version is not None and import_version == (existing.version or 1):
+                    raise ValueError(
+                        f"Flow '{name}' already at version {import_version}. "
+                        f"Increment the version number before importing."
+                    )
+
+                self.save_version(
+                    existing.id,
+                    description=f"Auto-saved before import of v{import_version or 'new'}",
+                )
+
                 for step in list(existing.steps):
                     self.session.delete(step)
                 existing.description = flow_data.get("description", "")
@@ -433,6 +454,8 @@ class FlowService:
                     existing.max_spend_usd = flow_data["max_spend_usd"]
                 if "max_concurrent_runs" in flow_data:
                     existing.max_concurrent_runs = flow_data["max_concurrent_runs"]
+                if import_version is not None:
+                    existing.version = import_version
                 existing.updated_at = datetime.now(timezone.utc)
                 self.session.flush()
 
@@ -453,7 +476,7 @@ class FlowService:
                     )
                     self.session.add(step)
             else:
-                self.create(
+                flow = self.create(
                     name=name,
                     space_id=space_id,
                     description=flow_data.get("description", ""),
@@ -461,6 +484,9 @@ class FlowService:
                     requirements=flow_data.get("requirements"),
                     variables=flow_data.get("variables"),
                 )
+                if import_version is not None:
+                    flow.version = import_version
+                    self.session.flush()
             count += 1
 
         self.session.commit()
@@ -662,40 +688,20 @@ class FlowService:
         return flow
 
     def apply_flow_proposal(self, flow_id: str, proposal: dict) -> Optional[Flow]:
-        """Apply a flow improvement proposal. Saves current version first."""
+        """Apply a flow improvement proposal as a new versioned import.
+
+        The proposal must be a full flow definition (same format as export).
+        The current state is snapshotted before overwriting.
+        """
         flow = self.get(flow_id)
         if not flow:
             return None
 
-        self.save_version(flow_id, description="Auto-saved before applying improvement")
+        proposal_version = proposal.get("version", (flow.version or 1) + 1)
+        proposal.setdefault("name", flow.name)
+        proposal["version"] = proposal_version
 
-        for step in list(flow.steps):
-            self.session.delete(step)
-        self.session.flush()
-
-        if "description" in proposal:
-            flow.description = proposal["description"]
-        if "requirements" in proposal:
-            flow.requirements = json.dumps(proposal["requirements"])
-
-        flow.updated_at = datetime.now(timezone.utc)
-
-        for i, step_data in enumerate(proposal.get("steps", [])):
-            step = FlowStep(
-                flow_id=flow_id,
-                name=step_data["name"],
-                position=step_data.get("position", i),
-                content=step_data.get("content", ""),
-                gates=_serialize_gates(step_data.get("gates")),
-                ifs=_serialize_json_list(step_data.get("ifs")),
-                agent_alias=step_data.get("agent_alias", "normal"),
-                step_type=_normalize_step_type(step_data.get("step_type")),
-                allow_max=step_data.get("allow_max", False),
-                max_gate_retries=step_data.get("max_gate_retries", 5),
-                skills=_serialize_json_list(step_data.get("skills")),
-                connectors=_serialize_json_list(step_data.get("connectors")),
-            )
-            self.session.add(step)
-
-        self.session.commit()
+        wrapped = {"version": 1, "flows": [proposal]}
+        self._import_flows_data(wrapped, space_id=flow.space_id, skip_existing=False)
+        self.session.refresh(flow)
         return flow

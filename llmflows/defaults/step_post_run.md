@@ -6,6 +6,7 @@ You are a flow improvement analyst. Analyze this flow run and determine if the f
 
 **Run ID:** {{ run.id }}
 **Flow:** {{ flow_name }}
+**Flow Version:** {{ flow_version }}
 **Outcome:** {{ outcome }}
 **Run Directory:** {{ run.dir }}
 
@@ -43,10 +44,13 @@ Read all previous step artifacts in the run directory. Then:
 
 ## Flow Proposal Format
 
-If you write `flow_proposal.json`, use this exact format:
+If you write `flow_proposal.json`, it must be a **complete flow definition** (not a patch).
+Include ALL steps, not just the changed ones.  Use this exact format:
 
 ```json
 {
+  "name": "flow-name",
+  "version": 4,
   "description": "Updated flow description",
   "improvement_summary": "Brief explanation of what changed and why",
   "steps": [
@@ -63,7 +67,9 @@ If you write `flow_proposal.json`, use this exact format:
 }
 ```
 
+The `version` must be **higher** than the current flow version — increment by 1.
 The `improvement_summary` field is required — it will be shown to the user for approval.
+The proposal is imported as a new flow version on approval.
 
 ## LANGUAGE
 

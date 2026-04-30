@@ -1281,7 +1281,7 @@ async def get_run_steps(run_id: str):
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
 
-        for sys_step_name in ("__summarizer__", "__post_run__", "__review_improvement__"):
+        for sys_step_name in ("__summarizer__", "__post_run__"):
             sys_sr = step_run_map.get(sys_step_name)
             if sys_sr and not any(s["name"] == sys_step_name for s in result):
                 result.append({
@@ -1829,7 +1829,87 @@ async def get_inbox():
                     "attachments": attachments,
                 })
 
+            elif item.type == "flow_improvement":
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                if not run or not space:
+                    continue
+
+                artifacts_dir = ContextService.get_artifacts_dir(
+                    Path(space.path), run.id, run.flow_name or "",
+                )
+                proposal = ContextService.read_flow_proposal(artifacts_dir)
+                if not proposal:
+                    run_svc.archive_inbox_item(item.id)
+                    continue
+
+                awaiting.append({
+                    "inbox_id": item.id,
+                    "step_run_id": "",
+                    "step_name": "flow-improvement",
+                    "step_type": "flow_improvement",
+                    "step_position": -1,
+                    "space_id": space.id,
+                    "space_name": space.name,
+                    "run_id": run.id,
+                    "flow_id": run.flow_id or "",
+                    "flow_name": run.flow_name or "",
+                    "prompt": "",
+                    "user_message": proposal.get("improvement_summary", "Flow improvement proposed."),
+                    "log_path": "",
+                    "awaiting_since": (item.created_at.isoformat() + "Z") if item.created_at else None,
+                })
+
         return {"awaiting": awaiting, "completed": completed, "count": len(awaiting) + len(completed)}
+    finally:
+        session.close()
+
+
+@app.post("/api/inbox/{item_id}/approve-improvement")
+async def approve_flow_improvement(item_id: str):
+    """Approve a flow improvement proposal — imports it as a new flow version."""
+    from ..services.context import ContextService
+    from ..db.models import InboxItem, FlowRun, Space as SpaceModel
+
+    session, _ = _get_services()
+    try:
+        item = session.query(InboxItem).filter_by(id=item_id).first()
+        if not item or item.type != "flow_improvement":
+            raise HTTPException(status_code=404, detail="Flow improvement inbox item not found")
+        if item.archived_at:
+            raise HTTPException(status_code=400, detail="Already archived")
+
+        run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+        space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+        if not run or not space:
+            raise HTTPException(status_code=404, detail="Run or space not found")
+
+        artifacts_dir = ContextService.get_artifacts_dir(
+            Path(space.path), run.id, run.flow_name or "",
+        )
+        proposal = ContextService.read_flow_proposal(artifacts_dir)
+        if not proposal or not proposal.get("steps"):
+            raise HTTPException(status_code=400, detail="No valid proposal found")
+
+        if not run.flow_id:
+            raise HTTPException(status_code=400, detail="Run has no associated flow")
+
+        flow_svc = FlowService(session)
+        flow = flow_svc.apply_flow_proposal(run.flow_id, proposal)
+        if not flow:
+            raise HTTPException(status_code=500, detail="Failed to apply proposal")
+
+        run_svc = RunService(session)
+        run_svc.archive_inbox_item(item_id)
+
+        return {"ok": True, "flow_id": flow.id, "version": flow.version}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -2018,6 +2098,8 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
         return {"imported": count}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         session.close()
 
