@@ -152,6 +152,38 @@ def _ensure_daemon_running() -> None:
     click.echo("  Daemon:          did not register a PID within 5s — check daemon.log", err=True)
 
 
+def _maybe_reexec_for_dev(dev: bool) -> None:
+    """Re-exec with ``LLMFLOWS_HOME`` pointing at ``<cwd>/.llmflows``.
+
+    Module-level constants in ``config.py`` (``SYSTEM_DIR``, ``SYSTEM_DB``, …)
+    are frozen at import time.  The only way to redirect them for ``--dev`` is
+    to set the env var *before* the Python interpreter imports the package, so
+    we ``os.execve`` ourselves with the var already in the environment.
+
+    ``LLMFLOWS_DEV_HOME`` is a sentinel that prevents an infinite re-exec loop.
+    """
+    if not dev:
+        return
+    if "LLMFLOWS_DEV_HOME" in os.environ:
+        return
+    dev_home = str(Path.cwd() / ".llmflows")
+    env = {**os.environ, "LLMFLOWS_HOME": dev_home, "LLMFLOWS_DEV_HOME": dev_home}
+    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+
+
+def _find_free_port(start: int) -> int:
+    """Return the first free TCP port at or above *start*."""
+    import socket
+    for port in range(start, start + 100):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start}\u2013{start + 99}")
+
+
 def _free_port(port: int) -> None:
     """Kill any process currently listening on *port*."""
     import socket
@@ -193,13 +225,14 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True,
                    stdout=subprocess.DEVNULL)
 
-    vite_port = port
-    api_port = port + 1
-    _free_port(vite_port)
-    _free_port(api_port)
-    click.echo(f"llmflows UI (dev): http://{host}:{vite_port}")
-    click.echo(f"  Vite dev server: :{vite_port}  (open this in browser)")
-    click.echo(f"  FastAPI backend:  :{api_port}")
+    vite_port = _find_free_port(port)
+    api_port = _find_free_port(vite_port + 1)
+
+    dev_home = os.environ.get("LLMFLOWS_HOME", "~/.llmflows")
+    click.echo("llmflows UI (dev)")
+    click.echo(f"  Home:            {dev_home}")
+    click.echo(f"  Open:            http://{host}:{vite_port}")
+    click.echo(f"  API:             http://{host}:{api_port}")
     if not no_daemon:
         _ensure_daemon_running()
 
@@ -256,6 +289,8 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
               help="Skip starting the daemon (useful for testing/screenshots).")
 def ui(port, host, reload, dev, no_daemon):
     """Launch web UI on localhost (Ctrl+C to stop)."""
+    _maybe_reexec_for_dev(dev)
+
     from ..db.database import init_db
 
     _kill_other_ui_instances()
