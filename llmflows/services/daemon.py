@@ -150,7 +150,7 @@ class Daemon:
         self._finalize_run(run.id)
         run.outcome = "max_spend"
         run_svc.session.commit()
-        self._launch_summary_step(
+        self._launch_post_run_step(
             run, working_path,
             step_run.step_position + 1, run_svc, flow_svc,
             error_context={
@@ -533,7 +533,7 @@ class Daemon:
                     self._finalize_run(run.id)
                     run.outcome = "timeout"
                     run_svc.session.commit()
-                    self._launch_summary_step(
+                    self._launch_post_run_step(
                         run, working_path,
                         step_run.step_position + 1, run_svc, flow_svc,
                         error_context={
@@ -691,7 +691,7 @@ class Daemon:
 
         gates = list(snap_step.get("gates", []) if snap_step else (step_obj.get_gates() if step_obj else []))
 
-        if step_run.step_name != "__summarizer__":
+        if step_run.step_name != "__post_run__":
             gates.insert(0, {
                 "command": f'test -d "{step_artifact_dir}" && test "$(ls -A "{step_artifact_dir}")"',
                 "message": f"Step '{step_run.step_name}' must produce output artifacts in {step_artifact_dir}",
@@ -756,7 +756,7 @@ class Daemon:
                     self._finalize_run(run.id)
                     run.outcome = "interrupted"
                     run_svc.session.commit()
-                    self._launch_summary_step(
+                    self._launch_post_run_step(
                         run, working_path,
                         step_run.step_position + 1, run_svc, flow_svc,
                         error_context={
@@ -799,15 +799,6 @@ class Daemon:
             "attachment.dir": str(SYSTEM_DIR / "attachments" / run.id),
         }, space, flow_snapshot=self._get_snapshot(run))
         _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
-
-        if current_step_name == "__summarizer__":
-            summary = ContextService.read_summary_artifact(artifacts_dir) or ContextService.read_inbox_message(artifacts_dir)
-            outcome = run.outcome or "completed"
-            logger.info("Run %s completed (outcome=%s)", run.id, outcome)
-            self._finalize_run(run.id)
-            run_svc.mark_completed(run.id, outcome=outcome, summary=summary)
-            self._maybe_create_completed_inbox(run, run_svc, artifacts_dir)
-            return
 
         if current_step_name == "__post_run__":
             self._handle_post_run_completion(
@@ -989,7 +980,7 @@ class Daemon:
             self._finalize_run(run.id)
             run.outcome = "error"
             run_svc.session.commit()
-            self._launch_summary_step(
+            self._launch_post_run_step(
                 run, working_path,
                 step_position, run_svc, flow_svc,
                 error_context={
@@ -1136,7 +1127,7 @@ class Daemon:
             self._finalize_run(run.id)
             run.outcome = "error"
             run_svc.session.commit()
-            self._launch_summary_step(
+            self._launch_post_run_step(
                 run, working_path,
                 step_run.step_position + 1, run_svc, flow_svc,
                 error_context={
@@ -1182,22 +1173,6 @@ class Daemon:
         except Exception:
             logger.exception("Post-run step failed to launch for run %s (run already completed)", run.id)
 
-    def _launch_summary_step(
-        self, run, working_path: Path,
-        step_position: int, run_svc: RunService, flow_svc: FlowService,
-        error_context: dict | None = None,
-    ) -> None:
-        """Launch the post-run analysis step (replaces the old summarizer).
-
-        Handles both error and success cases. The post-run step analyses the
-        run, writes a summary, and optionally proposes flow improvements in
-        ``flow_proposal.json``.
-        """
-        self._launch_post_run_step(
-            run, working_path, step_position, run_svc, flow_svc,
-            error_context=error_context,
-        )
-
     def _launch_post_run_step(
         self, run, working_path: Path,
         step_position: int, run_svc: RunService, flow_svc: FlowService,
@@ -1206,13 +1181,14 @@ class Daemon:
         """Launch the post-run analysis step.
 
         Analyses the run for errors/inefficiencies and optionally proposes
-        flow improvements via ``flow_proposal.json``.
+        flow improvements via ``improvement.md`` + ``flow.json``.
         """
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = ContextService(working_path / ".llmflows")
-        summarizer_language = load_system_config().get("daemon", {}).get("summarizer_language", "English")
+        daemon_config = load_system_config().get("daemon", {})
+        language = daemon_config.get("post_run_language") or daemon_config.get("summarizer_language", "English")
 
         flow_version = 1
         flow = run.flow
@@ -1224,7 +1200,7 @@ class Daemon:
             "flow_name": run.flow_name or "",
             "flow_version": flow_version,
             "outcome": run.outcome or "completed",
-            "summarizer_language": summarizer_language,
+            "language": language,
         }
         if error_context:
             post_run_vars.update(error_context)
@@ -1283,8 +1259,9 @@ class Daemon:
     ) -> None:
         """Check post-run artifacts for a flow proposal.
 
-        The run is already completed at this point.  If a proposal is found,
-        create an inbox item so the user can approve/reject it independently.
+        The run may still have ``completed_at = NULL`` (error/interrupt paths
+        set outcome but skip ``mark_completed``).  We must finalise it here so
+        it stops being treated as active.
         """
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
@@ -1295,30 +1272,47 @@ class Daemon:
             run.summary = new_summary
             run_svc.session.commit()
 
-        proposal = ContextService.read_flow_proposal(artifacts_dir)
-        if proposal and proposal.get("improvement_summary"):
-            logger.info(
-                "Run %s post-run found flow improvement proposal, creating inbox item",
-                run.id,
+        from ..db.models import StepRun as StepRunModel, InboxItem as InboxItemModel
+        step_run = (
+            run_svc.session.query(StepRunModel)
+            .filter_by(flow_run_id=run.id, step_name="__post_run__")
+            .first()
+        )
+        if step_run and not step_run.completed_at:
+            run_svc.mark_step_completed(step_run.id, outcome="completed")
+
+        if not run.completed_at:
+            run_svc.mark_completed(run.id, outcome=run.outcome or "completed")
+
+        flow_json = ContextService.read_flow_json(artifacts_dir)
+        if flow_json:
+            already_exists = (
+                run_svc.session.query(InboxItemModel)
+                .filter_by(type="flow_improvement", reference_id=run.id)
+                .filter(InboxItemModel.archived_at.is_(None))
+                .first()
             )
-            try:
-                inbox_item = run_svc.create_inbox_item(
-                    type="flow_improvement",
-                    reference_id=run.id,
-                    space_id=run.space_id,
-                    title=f"{run.flow_name or run.id} — Flow Improvement Proposal",
+            if not already_exists:
+                logger.info(
+                    "Run %s post-run found flow improvement proposal, creating inbox item",
+                    run.id,
                 )
-                self.notifications.notify("step.awaiting_user", {
-                    "flow_name": run.flow_name or run.id,
-                    "run_id": run.id,
-                    "step_name": "flow-improvement",
-                    "step_run_id": "",
-                    "step_type": "hitl",
-                    "inbox_id": inbox_item.id,
-                    "user_message": proposal.get("improvement_summary", ""),
-                })
-            except Exception:
-                logger.exception("Failed to create flow improvement inbox for run %s", run.id)
+                improvement = ContextService.read_improvement(artifacts_dir)
+                try:
+                    inbox_item = run_svc.create_inbox_item(
+                        type="flow_improvement",
+                        reference_id=run.id,
+                        space_id=run.space_id,
+                        title=f"{run.flow_name or run.id} — Flow Improvement Proposal",
+                    )
+                    self.notifications.notify("flow.improvement", {
+                        "flow_name": run.flow_name or run.id,
+                        "run_id": run.id,
+                        "inbox_id": inbox_item.id,
+                        "improvement": improvement,
+                    })
+                except Exception:
+                    logger.exception("Failed to create flow improvement inbox for run %s", run.id)
         logger.info("Post-run step finished for run %s", run.id)
 
     def _maybe_create_completed_inbox(self, run, run_svc: RunService, artifacts_dir: Path) -> None:

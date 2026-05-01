@@ -199,7 +199,6 @@ class TestFlowService:
         svc.export_flows(test_space.id, path)
 
         data = json.loads(path.read_text())
-        assert data["version"] == 1
         assert len(data["flows"]) == 1
         assert data["flows"][0]["name"] == "export-test"
         assert len(data["flows"][0]["steps"]) == 2
@@ -710,6 +709,53 @@ class TestFlowVersioning:
         with pytest.raises(ValueError, match="already at version 1"):
             svc._import_flows_data(data, space_id=test_space.id)
 
+    def test_import_rejects_lower_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("ver-lower", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0},
+        ])
+        flow.version = 3
+        test_db.commit()
+
+        data = {
+            "flows": [{
+                "name": "ver-lower",
+                "version": 2,
+                "steps": [{"name": "step1", "position": 0, "content": "old"}],
+            }]
+        }
+        with pytest.raises(ValueError, match="Import version must be higher"):
+            svc._import_flows_data(data, space_id=test_space.id)
+
+    def test_import_rejects_version_after_rollback(self, test_db, test_space):
+        """After rollback the flow version is higher, so old versions are still rejected."""
+        svc = FlowService(test_db)
+        flow = svc.create("ver-hist", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "v1"},
+        ])
+        v1 = svc.save_version(flow.id, "v1 snapshot")
+        test_db.refresh(flow)
+
+        data_v3 = {
+            "flows": [{
+                "name": "ver-hist",
+                "version": 3,
+                "steps": [{"name": "step1", "position": 0, "content": "v3"}],
+            }]
+        }
+        svc._import_flows_data(data_v3, space_id=test_space.id)
+        test_db.refresh(flow)
+        assert flow.version == 3
+
+        svc.rollback_to_version(flow.id, v1.id)
+        test_db.refresh(flow)
+        assert flow.version > 3
+
+        with pytest.raises(ValueError, match="Import version must be higher"):
+            svc._import_flows_data({
+                "flows": [{"name": "ver-hist", "version": 3, "steps": []}]
+            }, space_id=test_space.id)
+
     def test_import_accepts_higher_version(self, test_db, test_space):
         svc = FlowService(test_db)
         flow = svc.create("ver-accept", space_id=test_space.id, steps=[
@@ -753,9 +799,9 @@ class TestFlowVersioning:
         snap = versions[0].get_snapshot()
         assert snap["steps"][0]["content"] == "v1 content"
 
-    def test_import_without_version_still_snapshots(self, test_db, test_space):
+    def test_import_without_version_rejects_existing(self, test_db, test_space):
         svc = FlowService(test_db)
-        flow = svc.create("no-ver-import", space_id=test_space.id, steps=[
+        svc.create("no-ver-import", space_id=test_space.id, steps=[
             {"name": "step1", "position": 0, "content": "original"},
         ])
 
@@ -765,11 +811,8 @@ class TestFlowVersioning:
                 "steps": [{"name": "step1", "position": 0, "content": "updated"}],
             }]
         }
-        count = svc._import_flows_data(data, space_id=test_space.id)
-        assert count == 1
-
-        versions = svc.list_versions(flow.id)
-        assert len(versions) == 1
+        with pytest.raises(ValueError, match="Import version must be higher"):
+            svc._import_flows_data(data, space_id=test_space.id)
 
     def test_export_includes_version(self, test_db, test_space):
         svc = FlowService(test_db)

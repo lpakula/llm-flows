@@ -67,7 +67,16 @@ If this is the first time setting up OAuth for this project, you'll see a "Get s
 3. **Audience / User type**: choose **External** (or Internal if using Google Workspace)
 4. **Developer contact email**: enter the user's email
 5. Click through to save the basic settings.
-6. Navigate to `https://console.cloud.google.com/auth/audience?project=PROJECT_ID`, click **Add users**, add the user's Google account email, and save. This is required because the app is in "Testing" mode.
+
+#### Publish to production (required)
+
+Apps left in "Testing" mode issue tokens that **expire after 7 days**. To avoid this, publish the app to production:
+
+1. Navigate to `https://console.cloud.google.com/auth/audience?project=PROJECT_ID`
+2. Under **Publishing status**, click **Publish App** and confirm.
+3. The status should change from "Testing" to "In production".
+
+Because the app only requests non-sensitive or basic scopes and is used by the project owner, Google does **not** require a verification review — the app can be published immediately. No test users need to be added.
 
 ### Step 4 — Create OAuth Desktop credentials (browser)
 
@@ -97,7 +106,7 @@ The YouTube connector uses `@mrsknetwork/ytmcp`. It needs **Client ID** and **Cl
 
 ### Setup
 
-If Google Workspace was already set up, the Google Cloud project, consent screen, and test users are already configured. Just enable the YouTube API via gcloud:
+If Google Workspace was already set up, the Google Cloud project and consent screen are already configured (and published to production). Just enable the YouTube API via gcloud:
 
 ```bash
 gcloud services enable youtube.googleapis.com

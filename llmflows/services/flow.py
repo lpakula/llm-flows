@@ -336,7 +336,6 @@ class FlowService:
         """Export all flows for a space to a dict (optionally write to file)."""
         flows = self.list_by_space(space_id)
         data = {
-            "version": 1,
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "flows": [],
         }
@@ -416,10 +415,12 @@ class FlowService:
                 continue
 
             if existing:
-                if import_version is not None and import_version == (existing.version or 1):
+                current_ver = existing.version or 1
+                effective_import_ver = import_version if import_version is not None else 1
+                if effective_import_ver <= current_ver:
                     raise ValueError(
-                        f"Flow '{name}' already at version {import_version}. "
-                        f"Increment the version number before importing."
+                        f"Flow '{name}' already at version {current_ver}. "
+                        f"Import version must be higher (got {effective_import_ver})."
                     )
 
                 self.save_version(
@@ -515,7 +516,7 @@ class FlowService:
             if "flows" in data:
                 count += self._import_flows_data(data, space_id=space_id, skip_existing=True)
             elif "name" in data and "steps" in data:
-                wrapped = {"version": 1, "flows": [data]}
+                wrapped = {"flows": [data]}
                 count += self._import_flows_data(wrapped, space_id=space_id, skip_existing=True)
 
         return count
@@ -701,7 +702,7 @@ class FlowService:
         proposal.setdefault("name", flow.name)
         proposal["version"] = proposal_version
 
-        wrapped = {"version": 1, "flows": [proposal]}
+        wrapped = {"flows": [proposal]}
         self._import_flows_data(wrapped, space_id=flow.space_id, skip_existing=False)
         self.session.refresh(flow)
         return flow

@@ -37,9 +37,7 @@ function formatTimestamp(iso: string | undefined | null): string {
 }
 
 function systemStepLabel(name: string): string {
-  if (name === "__summarizer__") return "summarizer";
   if (name === "__post_run__") return "post-run analysis";
-  if (name === "__review_improvement__") return "improvement review";
   return name;
 }
 

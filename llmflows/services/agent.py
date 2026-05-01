@@ -12,11 +12,16 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
 
-from ..config import AGENT_REGISTRY, SYSTEM_DIR
+import re
+
+from ..config import AGENT_REGISTRY, KNOWN_LLM_PROVIDERS, SYSTEM_DIR
+from ..db.database import get_session
+from ..db.models import AgentConfig
 from .context import ContextService
 
 logger = logging.getLogger("llmflows.agent")
@@ -75,7 +80,7 @@ class AgentService:
 
         previous_artifacts = context_svc.collect_artifacts(artifacts_dir)
 
-        is_summary = step_name == "__summarizer__"
+        is_summary = step_name == "__post_run__"
         step_output_dir = artifacts_dir / ContextService.step_dir_name(step_position, step_name) if not is_summary else None
 
         spc_vars = space_variables or {}
@@ -126,7 +131,6 @@ class AgentService:
     @staticmethod
     def _rewrite_attachment_urls(text: str) -> str:
         """Replace /api/attachments/<run_id>/<file> with absolute local paths."""
-        import re
         attachments_base = SYSTEM_DIR / "attachments"
 
         def replace(m: re.Match) -> str:
@@ -172,11 +176,9 @@ class AgentService:
         try:
             cmd = self._build_agent_command(reg, prompt_file, prompt_content, model, extensions=extensions)
             env = os.environ.copy()
-            env["IS_SANDBOX"] = "1"
+            venv_bin = str(Path(sys.prefix) / "bin")
+            env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
 
-            from ..config import KNOWN_LLM_PROVIDERS
-            from ..db.database import get_session
-            from ..db.models import AgentConfig
             session = get_session()
             try:
                 for cfg in session.query(AgentConfig).filter_by(agent=agent).all():

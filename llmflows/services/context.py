@@ -42,41 +42,17 @@ class ContextService:
         except TemplateError:
             return ""
 
-    def render_summary_step(self, context: dict) -> str:
-        """Render summary_step.md as step content for the auto-appended summary step."""
-        template_file = DEFAULTS_DIR / "step_summary.md"
-        if not template_file.exists():
-            return ""
-        try:
-            env = Environment(autoescape=False)
-            template = env.from_string(template_file.read_text())
-            return template.render(context)
-        except TemplateError:
-            return ""
-
-    def render_error_summary_step(self, context: dict) -> str:
-        """Render step_error_summary.md for failed runs. Falls back to the normal summary template."""
-        template_file = DEFAULTS_DIR / "step_error_summary.md"
-        if not template_file.exists():
-            return self.render_summary_step(context)
-        try:
-            env = Environment(autoescape=False)
-            template = env.from_string(template_file.read_text())
-            return template.render(context)
-        except TemplateError:
-            return self.render_summary_step(context)
-
     def render_post_run_step(self, context: dict) -> str:
         """Render step_post_run.md for the post-run analysis step."""
         template_file = DEFAULTS_DIR / "step_post_run.md"
         if not template_file.exists():
-            return self.render_error_summary_step(context) if context.get("error_details") else self.render_summary_step(context)
+            return ""
         try:
             env = Environment(autoescape=False)
             template = env.from_string(template_file.read_text())
             return template.render(context)
         except TemplateError:
-            return self.render_summary_step(context)
+            return ""
 
     @staticmethod
     def collect_artifacts(artifacts_dir: Path) -> list[dict]:
@@ -202,14 +178,25 @@ class ContextService:
         return ""
 
     @staticmethod
-    def read_flow_proposal(artifacts_dir: Path) -> dict | None:
-        """Read flow_proposal.json from the artifacts root, if it exists."""
+    def read_improvement(artifacts_dir: Path) -> str:
+        """Read improvement.md from the artifacts root, if it exists."""
+        f = artifacts_dir / "improvement.md"
+        if not f.exists():
+            return ""
+        try:
+            return f.read_text(errors="replace").strip()
+        except (PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def read_flow_json(artifacts_dir: Path) -> dict | None:
+        """Read flow.json from the artifacts root, if it exists."""
         import json
-        proposal_file = artifacts_dir / "flow_proposal.json"
-        if not proposal_file.exists():
+        f = artifacts_dir / "flow.json"
+        if not f.exists():
             return None
         try:
-            data = json.loads(proposal_file.read_text())
+            data = json.loads(f.read_text())
             if isinstance(data, dict) and data.get("steps"):
                 return data
         except (json.JSONDecodeError, PermissionError, OSError):

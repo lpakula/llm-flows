@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
-import type { InboxItem, CompletedRunItem } from "@/api/types";
-import { Check, UserCheck, ArrowRight, ChevronRight, ChevronDown, Archive, ExternalLink } from "lucide-react";
+import type { InboxItem, FlowImprovementItem, CompletedRunItem } from "@/api/types";
+import { Check, UserCheck, ArrowRight, ChevronRight, ChevronDown, Archive, ExternalLink, Sparkles } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { AttachmentsGrid } from "@/components/AttachmentsGrid";
 import { formatSeconds } from "@/lib/format";
@@ -137,6 +137,91 @@ function InboxCard({
   );
 }
 
+function FlowImprovementCard({
+  item,
+  onApprove,
+  onReject,
+}: {
+  item: FlowImprovementItem;
+  onApprove: (inboxId: string) => Promise<void>;
+  onReject: (inboxId: string) => Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [acting, setActing] = useState(false);
+  const navigate = useNavigate();
+
+  const handle = async (action: "approve" | "reject") => {
+    setActing(true);
+    try {
+      if (action === "approve") await onApprove(item.inbox_id);
+      else await onReject(item.inbox_id);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full px-5 py-3.5 flex items-center gap-3 text-left hover:bg-gray-800/40 transition"
+      >
+        <Sparkles size={14} className="text-purple-400 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-200">
+              Flow analysis report
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1">
+            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
+            <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="text-[11px] text-gray-600">{timeAgo(item.awaiting_since)}</span>
+          {expanded ? (
+            <ChevronDown size={16} className="text-gray-500" />
+          ) : (
+            <ChevronRight size={16} className="text-gray-500" />
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-5 pb-4 border-t border-gray-800">
+          <div className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-4 py-3 mt-4 mb-4 max-h-80 overflow-y-auto">
+            <MarkdownContent text={item.summary} className="text-sm text-gray-300" />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handle("approve")}
+              disabled={acting}
+              className="text-xs font-medium text-green-500 hover:text-green-400 disabled:opacity-40 transition"
+            >
+              {acting ? "..." : "Approve"}
+            </button>
+            <button
+              onClick={() => handle("reject")}
+              disabled={acting}
+              className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+            >
+              Reject
+            </button>
+            <span className="flex-1" />
+            <button
+              onClick={() => navigate(flowUrl(item.space_id, item.flow_id))}
+              className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
+            >
+              View flow <ArrowRight size={10} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchive: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
@@ -202,8 +287,12 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
   );
 }
 
+function isFlowImprovement(item: InboxItem | FlowImprovementItem): item is FlowImprovementItem {
+  return "type" in item && item.type === "flow_improvement";
+}
+
 export function InboxView() {
-  const [awaiting, setAwaiting] = useState<InboxItem[]>([]);
+  const [awaiting, setAwaiting] = useState<(InboxItem | FlowImprovementItem)[]>([]);
   const [completed, setCompleted] = useState<CompletedRunItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -239,6 +328,26 @@ export function InboxView() {
     }
   };
 
+  const handleApproveImprovement = async (inboxId: string) => {
+    try {
+      await api.approveImprovement(inboxId);
+      await refresh();
+      window.dispatchEvent(new Event("inbox-updated"));
+    } catch (e) {
+      console.error("Approve improvement error:", e);
+    }
+  };
+
+  const handleRejectImprovement = async (inboxId: string) => {
+    try {
+      await api.archiveInboxItem(inboxId);
+      await refresh();
+      window.dispatchEvent(new Event("inbox-updated"));
+    } catch (e) {
+      console.error("Reject improvement error:", e);
+    }
+  };
+
   const isEmpty = awaiting.length === 0 && completed.length === 0;
 
   return (
@@ -262,9 +371,18 @@ export function InboxView() {
 
         {awaiting.length > 0 && (
           <div className="space-y-3 mb-6">
-            {awaiting.map((item) => (
-              <InboxCard key={item.step_run_id} item={item} onRespond={handleRespond} />
-            ))}
+            {awaiting.map((item) =>
+              isFlowImprovement(item) ? (
+                <FlowImprovementCard
+                  key={item.inbox_id}
+                  item={item}
+                  onApprove={handleApproveImprovement}
+                  onReject={handleRejectImprovement}
+                />
+              ) : (
+                <InboxCard key={item.step_run_id} item={item} onRespond={handleRespond} />
+              ),
+            )}
           </div>
         )}
 

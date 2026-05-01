@@ -122,6 +122,7 @@ export const api = {
   // Inbox
   getInbox: () => get<InboxResponse>("/api/inbox"),
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
+  approveImprovement: (itemId: string) => post<{ ok: boolean; flow_id: string; version: number }>(`/api/inbox/${itemId}/improvement/approve`),
 
   // Queue
   getQueue: () => get<FlowRun[]>("/api/queue"),
@@ -152,7 +153,11 @@ export const api = {
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then((r) => r.json());
+    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || `Import failed (${r.status})`);
+      return data;
+    });
   },
 
   // Skills

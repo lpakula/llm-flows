@@ -123,7 +123,7 @@ export interface DaemonConfig {
   poll_interval_seconds: number;
   run_timeout_minutes: number;
   gate_timeout_seconds: number;
-  summarizer_language: string;
+  post_run_language: string;
 }
 
 export interface GatewayConfig {
@@ -235,6 +235,18 @@ export interface InboxItem {
   awaiting_since: string;
 }
 
+export interface FlowImprovementItem {
+  type: "flow_improvement";
+  inbox_id: string;
+  space_id: string;
+  space_name: string;
+  run_id: string;
+  flow_id: string;
+  flow_name: string;
+  summary: string;
+  awaiting_since: string;
+}
+
 export interface CompletedRunItem {
   inbox_id: string;
   run_id: string;
@@ -251,7 +263,7 @@ export interface CompletedRunItem {
 }
 
 export interface InboxResponse {
-  awaiting: InboxItem[];
+  awaiting: (InboxItem | FlowImprovementItem)[];
   completed: CompletedRunItem[];
   count: number;
 }

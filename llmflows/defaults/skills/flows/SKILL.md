@@ -20,7 +20,7 @@ A flow is an ordered list of steps that `llm-flows` executes sequentially. Each 
 5. If all gates pass, the daemon advances to the next step
 6. If a gate fails, the agent is relaunched with failure context to fix the problem
 7. After the last step, the run completes
-8. If the run fails (timeout, gate failure, etc.), a `__summarizer__` step runs to produce an error diagnosis to `inbox.md`
+8. After every run (success or failure), a `__post_run__` step analyses the run, writes a summary to `inbox.md`, and optionally proposes flow improvements via `improvement.md` + `flow.json`
 9. If any step wrote `inbox.md` in the run artifacts root, a notification is sent via Telegram/Slack on completion
 
 ### Artifacts are the backbone
@@ -47,7 +47,7 @@ Other files saved to `{{step.dir}}/` are also collected, but with a lower per-fi
 
 ### Special files
 
-- **`inbox.md`** (run directory) — Optional. When the flow author includes an instruction in the step content to write to `{{run.dir}}/inbox.md`, the agent produces a human-facing message. If any step writes this file, its content is sent as a notification via Telegram/Slack when the run completes. If no step writes it, no notification is sent. The failure summarizer writes this file automatically for failed runs. This is not auto-injected — the flow author decides which steps should write to it. To guarantee the notification is sent, add a gate: `test -f {{run.dir}}/inbox.md`.
+- **`inbox.md`** (run directory) — Optional. When the flow author includes an instruction in the step content to write to `{{run.dir}}/inbox.md`, the agent produces a human-facing message. If any step writes this file, its content is sent as a notification via Telegram/Slack when the run completes. If no step writes it, no notification is sent. The post-run step writes this file automatically for failed runs. This is not auto-injected — the flow author decides which steps should write to it. To guarantee the notification is sent, add a gate: `test -f {{run.dir}}/inbox.md`.
 - **`hitl.md`** (step directory) — For `hitl` steps only. The message shown to the user in the inbox UI and notifications. The agent writes the user-facing question here, separate from `_result.md` which passes context to subsequent steps.
 
 ### Artifact directory layout

@@ -138,8 +138,12 @@ def _migrate_tool_config_to_mcp(session):
         save_system_config(config)
 
 
-def init_db() -> Path:
-    """Initialize the database and run any pending migrations."""
+def init_db(*, seed: bool = True) -> Path:
+    """Initialize the database and run any pending migrations.
+
+    When *seed* is False the default agent aliases are not created,
+    which is useful for dev/worktree databases that copy production config instead.
+    """
     ensure_system_dir()
     url = f"sqlite:///{SYSTEM_DB}"
     _alembic.upgrade(_alembic_cfg(url), "head")
@@ -147,7 +151,8 @@ def init_db() -> Path:
     engine = create_engine(url, echo=False)
     session = sessionmaker(bind=engine)()
     try:
-        _seed_agent_aliases(session)
+        if seed:
+            _seed_agent_aliases(session)
         _seed_mcp_connectors(session)
         _migrate_tool_config_to_mcp(session)
     finally:

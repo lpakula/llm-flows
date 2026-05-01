@@ -165,7 +165,6 @@ class TestFlowVersioningAPI:
         sid = api_db["space_id"]
         import json
         data = json.dumps({
-            "version": 1,
             "flows": [{
                 "name": "default",
                 "version": 1,
@@ -184,7 +183,6 @@ class TestFlowVersioningAPI:
         sid = api_db["space_id"]
         import json
         data = json.dumps({
-            "version": 1,
             "flows": [{
                 "name": "default",
                 "version": 2,
@@ -199,5 +197,5 @@ class TestFlowVersioningAPI:
         assert response.json()["imported"] == 1
 
     def test_approve_improvement_not_found(self, client, api_db):
-        response = client.post("/api/inbox/nonexistent/approve-improvement")
+        response = client.post("/api/inbox/nonexistent/improvement/approve")
         assert response.status_code == 404

@@ -34,25 +34,32 @@ Read all previous step artifacts in the run directory. Then:
 1. Analyze the error and determine the root cause
 2. Write a concise error analysis to `{{ run.dir }}/inbox.md`
 3. Determine if the flow definition itself could be changed to prevent this error
-4. If you can propose a concrete fix to the flow, write it to `{{ run.dir }}/flow_proposal.json`
+4. If you can propose a concrete fix, write two files (see format below)
 {% else -%}
 1. Review the run artifacts and step results
 2. Look for inefficiencies, unnecessary steps, missing gates, or suboptimal configurations
-3. If the run completed smoothly with no issues, write a brief summary to `{{ run.dir }}/summary.md` and stop
-4. If you identify concrete improvements, write them to `{{ run.dir }}/flow_proposal.json`
+3. If the run completed smoothly with no issues, stop — do not write any files
+4. If you identify concrete improvements, write two files (see format below)
 {% endif -%}
 
 ## Flow Proposal Format
 
-If you write `flow_proposal.json`, it must be a **complete flow definition** (not a patch).
-Include ALL steps, not just the changed ones.  Use this exact format:
+To propose a flow improvement, write **two files** in the run directory:
+
+### `{{ run.dir }}/improvement.md`
+
+A markdown explanation of what changed and why. This is shown to the user for approval.
+
+### `{{ run.dir }}/flow.json`
+
+A **complete flow definition** (not a patch). Same format as `llmflows flow export`.
+Include ALL steps, not just the changed ones:
 
 ```json
 {
   "name": "flow-name",
   "version": 4,
   "description": "Updated flow description",
-  "improvement_summary": "Brief explanation of what changed and why",
   "steps": [
     {
       "name": "step-name",
@@ -68,12 +75,11 @@ Include ALL steps, not just the changed ones.  Use this exact format:
 ```
 
 The `version` must be **higher** than the current flow version — increment by 1.
-The `improvement_summary` field is required — it will be shown to the user for approval.
-The proposal is imported as a new flow version on approval.
+Both files are required — `improvement.md` is shown to the user, `flow.json` is imported on approval.
 
 ## LANGUAGE
 
-Write all output in {{ summarizer_language }}.
+Write all output in {{ language }}.
 
 ## RULES
 
