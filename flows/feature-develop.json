@@ -1,0 +1,67 @@
+{
+  "flows": [
+    {
+      "name": "feature-develop",
+      "version": 1,
+      "description": "Develop a feature in a git worktree: pick or create a worktree (branch name = worktree name), implement, test, screenshot, commit, and open a PR.",
+      "variables": {
+        "TASK_DESCRIPTION": ""
+      },
+      "steps": [
+        {
+          "name": "Select Worktree",
+          "position": 0,
+          "step_type": "hitl",
+          "content": "# SELECT WORKTREE\n\n## PURPOSE\n\nList all existing git worktrees and ask the user which one to use, or whether to create a new one.\n\n## WORKFLOW\n\n1. Run `git worktree list` to get all existing worktrees.\n2. Write to `{{step.dir}}/hitl.md`:\n   - List the existing worktrees (path and branch for each).\n   - Ask the user to either type the name of an existing worktree to continue work there, or provide a new short name (e.g. `feat-my-feature`) to create a fresh one. The name will be used as both the worktree directory name and the git branch name.\n3. Write to `{{step.dir}}/_result.md`: the full output of `git worktree list` for subsequent steps."
+        },
+        {
+          "name": "Research and Implement",
+          "position": 1,
+          "step_type": "code",
+          "agent_alias": "max",
+          "skills": ["testing"],
+          "content": "# RESEARCH AND IMPLEMENT\n\n## PURPOSE\n\nResearch the codebase, implement the feature `{{flow.TASK_DESCRIPTION}}`, run tests, and take a screenshot of the new feature.\n\n## WORKFLOW\n\n### 1. Set up the worktree\n\nThe user's chosen worktree name is `{{hitl.response.0}}`.\n\n- If `{{hitl.response.0}}` is an absolute path that already exists, use it as-is.\n- If it is a short name (no slashes), check `.worktrees/{{hitl.response.0}}`:\n  - If it exists, use it.\n  - If it does not exist, create it: `git worktree add .worktrees/{{hitl.response.0}} -b {{hitl.response.0}}`\n\nSave the absolute path of the worktree to `{{step.dir}}/worktree-path.txt` (one line, no trailing newline).\n\nRun `git diff` and `git status` inside the worktree to understand its current state.\n\n### 2. Set up an isolated Python environment\n\nAll commands from this point forward run inside the worktree directory.\n\n- Create a venv if it does not already exist: `python -m venv .venv`\n- Install the project and dev deps: `.venv/bin/pip install -e '.[dev]' -q`\n\n### 3. Research and implement\n\n- Explore the codebase to understand where changes are needed.\n- Select the best implementation approach. Document your reasoning in `{{step.dir}}/_result.md`.\n- Implement the feature. All code changes must stay inside the worktree.\n- Write unit tests for the new code.\n\n### 4. Run tests\n\nFrom inside the worktree: `.venv/bin/pytest`\n\nAll tests must pass before continuing.\n\n### 5. Screenshot the new feature\n\n**Pre-flight cleanup** (kills any leftover UI process from a previous attempt):\n\n```bash\nlsof -ti tcp:4500 2>/dev/null | xargs kill -15 2>/dev/null || true\n```\n\n**Start the isolated UI** with `--no-daemon` to skip daemon auto-spawning (not needed for screenshots). Prepend `.venv/bin` to `PATH` so every `llmflows` invocation uses the worktree's own binary:\n\n```bash\nexport LLMFLOWS_HOME=~/.llmflows-worktree-{{hitl.response.0}}\nexport PATH=\"$(pwd)/.venv/bin:$PATH\"\nllmflows register --name worktree-{{hitl.response.0}}\nllmflows ui --port 4500 --no-daemon &\nsleep 5\n```\n\n**Install Playwright** (if not already present):\n\n```bash\n.venv/bin/pip install playwright -q\n.venv/bin/playwright install chromium --with-deps -q\n```\n\n**Take targeted screenshots that actually show the new feature.** Do NOT screenshot the root `http://localhost:4500` — it renders an empty chat view with no space or flow selected. Instead:\n\n1. Identify the URL path where the feature is visible (e.g. a flow detail page, a run step view, a settings panel).\n2. Use the llmflows API at `http://localhost:4501` to create the minimum test data required to render the feature (import a flow, trigger a run, etc.).\n3. Navigate Playwright directly to that URL and capture the screenshot.\n\nExample using the Python Playwright API:\n\n```python\nimport requests\nfrom playwright.sync_api import sync_playwright\n\napi = \"http://localhost:4501\"\n# Create test data — adapt as needed for the feature being built\nspace = requests.get(f\"{api}/api/spaces\").json()[0]\n# e.g. flow = requests.post(f\"{api}/api/spaces/{space['id']}/flows\", json={...}).json()\n\nwith sync_playwright() as p:\n    browser = p.chromium.launch()\n    page = browser.new_page()\n    page.goto(\"http://localhost:4500/<relevant-path>\")\n    page.wait_for_load_state(\"networkidle\")\n    page.screenshot(path=\"{{attachment.dir}}/feature.png\")\n    browser.close()\n```\n\nLeave the UI running — it will be cleaned up by the next run's pre-flight.\n\n### 6. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Approach rationale\n- Full list of changed files with brief description of each change\n- Full test output\n\n## FORBIDDEN\n\n- Do not commit or push.\n- Do not make changes outside the worktree.\n- Do not touch the production daemon (`llmflows daemon start/stop` without `LLMFLOWS_HOME` set).",
+          "gates": [
+            {
+              "command": "test -f {{step.dir}}/worktree-path.txt",
+              "message": "worktree-path.txt must exist with the absolute path to the worktree."
+            },
+            {
+              "command": "cd $(cat {{step.dir}}/worktree-path.txt) && .venv/bin/pip install -e '.[dev]' -q",
+              "message": "Dependency installation inside the worktree venv must succeed."
+            },
+            {
+              "command": "cd $(cat {{step.dir}}/worktree-path.txt) && .venv/bin/pytest",
+              "message": "All tests must pass inside the worktree."
+            },
+            {
+              "command": "ls {{attachment.dir}}/*.png 2>/dev/null | grep -q .",
+              "message": "At least one screenshot must be saved to the attachments directory as a .png file."
+            }
+          ]
+        },
+        {
+          "name": "Commit and PR",
+          "position": 2,
+          "step_type": "code",
+          "agent_alias": "normal",
+          "content": "# COMMIT AND PR\n\n## PURPOSE\n\nCommit the implemented changes, push the branch, then create a new PR or add a progress comment to an existing one. Screenshots are delivered via Telegram only — do not commit them.\n\n## WORKFLOW\n\n### 1. Navigate to the worktree\n\nThe worktree path is in the context from the previous step (`worktree-path.txt`). Read it and navigate there.\n\nSave the worktree path to `{{step.dir}}/worktree-path.txt` as well (for gate access).\n\n### 2. Commit\n\nStage only source code changes — do not stage `.screenshots/`, `.venv/`, or any other generated files:\n\n```bash\ngit add -A\ngit reset HEAD .screenshots/ 2>/dev/null || true\ngit commit -m \"feat: {{flow.TASK_DESCRIPTION}}\"\n```\n\nIf there is nothing to commit (resuming after a previous run), skip the commit.\n\n### 3. Push\n\n```bash\nBRANCH=$(git branch --show-current)\ngit push -u origin \"$BRANCH\"\n```\n\n### 4. Build the PR/comment body\n\n```\n## Summary\n<one-paragraph summary of what was implemented and why this approach>\n\n## Changes\n<file tree with one-line description per changed file>\n\n## Testing\n<test results: pass count, any notable coverage>\n```\n\n### 5. Create PR or comment on existing\n\nCheck whether a PR already exists for this branch:\n\n```bash\nPR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)\n```\n\n- **No existing PR** — create one:\n  ```bash\n  PR_URL=$(gh pr create \\\n    --title \"feat: {{flow.TASK_DESCRIPTION}}\" \\\n    --body \"$BODY\" \\\n    --base main)\n  ```\n\n- **Existing PR** — add a progress comment with the same body:\n  ```bash\n  gh pr comment \"$PR_URL\" --body \"$BODY\"\n  ```\n\nSave the PR URL to `{{step.dir}}/pr-url.txt` (one line).\n\n### 6. Write inbox notification\n\nWrite to `{{run.dir}}/inbox.md` (the Telegram/Slack notification — screenshots are attached automatically from the attachments directory):\n- PR URL as a clickable link\n- One-paragraph summary of what was implemented\n- File tree of changed files with a one-line description of each change\n- Test results (pass count)\n\n## FORBIDDEN\n\n- Do not commit `.screenshots/`, `.venv/`, or any non-source files.\n- Do not push to `main` or `master`.\n- Do not merge the PR.\n- Do not delete the worktree.",
+          "gates": [
+            {
+              "command": "test -f {{step.dir}}/pr-url.txt",
+              "message": "pr-url.txt must exist with the GitHub PR URL."
+            },
+            {
+              "command": "grep -q 'github.com' {{step.dir}}/pr-url.txt",
+              "message": "pr-url.txt must contain a valid GitHub URL."
+            },
+            {
+              "command": "test -f {{run.dir}}/inbox.md",
+              "message": "inbox.md must exist at the run directory root with the PR link and summary."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
