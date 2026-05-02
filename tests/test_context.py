@@ -183,6 +183,102 @@ class TestContextService:
         result = ContextService.read_flow_json(temp_dir)
         assert result is None
 
+    def test_list_memory_files(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "notes.md").write_text("Some notes here.")
+        (mem_dir / "rejected-proposals.md").write_text("## Rejected\nDon't add steps.")
+        result = ContextService.list_memory_files(flow_dir)
+        assert len(result) == 2
+        names = [f["name"] for f in result]
+        assert "notes.md" in names
+        assert "rejected-proposals.md" in names
+
+    def test_list_memory_files_empty(self, temp_dir):
+        result = ContextService.list_memory_files(temp_dir)
+        assert result == []
+
+    def test_list_memory_files_skips_empty(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "empty.md").write_text("")
+        (mem_dir / "has-content.md").write_text("content")
+        result = ContextService.list_memory_files(flow_dir)
+        assert len(result) == 1
+        assert result[0]["name"] == "has-content.md"
+
+    def test_write_memory_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        ContextService.write_memory_file(flow_dir, "notes.md", "# Notes\nImportant.")
+        mem_file = flow_dir / "memory" / "notes.md"
+        assert mem_file.exists()
+        assert "Important" in mem_file.read_text()
+
+    def test_write_memory_file_overwrite(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        ContextService.write_memory_file(flow_dir, "notes.md", "v1")
+        ContextService.write_memory_file(flow_dir, "notes.md", "v2")
+        content = (flow_dir / "memory" / "notes.md").read_text()
+        assert content == "v2"
+
+    def test_delete_memory_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "notes.md").write_text("content")
+        assert ContextService.delete_memory_file(flow_dir, "notes.md") is True
+        assert not (mem_dir / "notes.md").exists()
+
+    def test_delete_memory_file_missing(self, temp_dir):
+        assert ContextService.delete_memory_file(temp_dir, "nope.md") is False
+
+    def test_append_memory_new_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        ContextService.append_memory(flow_dir, "## First entry\nSome content.")
+        memory_file = flow_dir / "memory" / "rejected-proposals.md"
+        assert memory_file.exists()
+        content = memory_file.read_text()
+        assert "First entry" in content
+        assert "Some content" in content
+
+    def test_append_memory_existing_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "rejected-proposals.md").write_text("## First\nOld entry.")
+        ContextService.append_memory(flow_dir, "## Second\nNew entry.")
+        content = (mem_dir / "rejected-proposals.md").read_text()
+        assert "First" in content
+        assert "Old entry" in content
+        assert "---" in content
+        assert "Second" in content
+        assert "New entry" in content
+
+    def test_append_memory_creates_directory(self, temp_dir):
+        flow_dir = temp_dir / "nonexistent" / "flow"
+        ContextService.append_memory(flow_dir, "## Entry\nContent.")
+        assert (flow_dir / "memory" / "rejected-proposals.md").exists()
+
+    def test_read_rejected_proposals(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "rejected-proposals.md").write_text("Don't add steps.")
+        result = ContextService.read_rejected_proposals(flow_dir)
+        assert result == "Don't add steps."
+
+    def test_read_rejected_proposals_empty(self, temp_dir):
+        result = ContextService.read_rejected_proposals(temp_dir)
+        assert result == ""
+
+    def test_get_memory_dir(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        result = ContextService.get_memory_dir(flow_dir)
+        assert result == flow_dir / "memory"
+
     def test_render_post_run_step(self, temp_dir):
         ctx = ContextService(temp_dir)
         result = ctx.render_post_run_step({
@@ -208,3 +304,59 @@ class TestContextService:
         assert "Error Details" in result
         assert "OOM" in result
         assert "build" in result
+
+    def test_post_run_template_includes_rejected_proposals(self, temp_dir):
+        """Verify the post-run template renders rejected proposals when provided."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 2,
+            "outcome": "completed",
+            "language": "English",
+            "rejected_proposals": "Don't split the research step.",
+        })
+        assert "Rejected Proposals" in result
+        assert "Don't split the research step" in result
+
+    def test_post_run_template_excludes_memory_when_empty(self, temp_dir):
+        """Verify the post-run template omits rejected proposals section when not provided."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 1,
+            "outcome": "completed",
+            "language": "English",
+        })
+        assert "Rejected Proposals" not in result
+
+    def test_step_template_does_not_include_memory(self, temp_dir):
+        """Step prompts do not inject memory files — steps manage their own."""
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_step_instructions({
+            "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
+            "step_name": "implement",
+            "step": {"dir": "/tmp/artifacts/01-implement"},
+            "step_content": "# Do the work",
+            "flow_name": "default",
+            "flow": {"name": "default", "dir": "/tmp/flow"},
+            "artifacts": [],
+            "artifacts_dir": "/tmp/artifacts/01-implement",
+            "attachment": {"dir": "/tmp/attachments"},
+            "gate_failures": None,
+        })
+        assert "Flow Memory" not in result

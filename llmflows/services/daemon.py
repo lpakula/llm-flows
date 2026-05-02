@@ -1221,12 +1221,16 @@ class Daemon:
         if flow:
             flow_version = flow.version or 1
 
+        flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
+        rejected_proposals = ContextService.read_rejected_proposals(flow_dir)
+
         post_run_vars = {
             "run": {"id": run.id, "dir": str(artifacts_dir)},
             "flow_name": run.flow_name or "",
             "flow_version": flow_version,
             "outcome": run.outcome or "completed",
             "language": language,
+            "rejected_proposals": rejected_proposals,
         }
         if error_context:
             post_run_vars.update(error_context)

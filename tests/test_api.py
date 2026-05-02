@@ -201,7 +201,7 @@ class TestFlowVersioningAPI:
         assert response.status_code == 404
 
 
-class TestGatewayAPI:
+<class TestGatewayAPI:
     def test_get_gateway_config(self, client, api_db):
         with patch("llmflows.ui.server.load_system_config", return_value={}):
             response = client.get("/api/config/gateway")
@@ -284,3 +284,114 @@ class TestGatewayAPI:
         assert data["telegram_enabled"] is True
         assert data["telegram_bot_token"] == "old-tok"
         assert data["telegram_allowed_chat_ids"] == [1, 2, 3]
+
+
+class TestFlowMemoryAPI:
+    def test_get_memory_empty(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.get(f"/api/flows/{fid}/memory")
+        assert response.status_code == 200
+        assert response.json()["files"] == []
+
+    def test_get_memory_not_found(self, client):
+        response = client.get("/api/flows/nope/memory")
+        assert response.status_code == 404
+
+    def test_clear_memory_empty(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.delete(f"/api/flows/{fid}/memory")
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+
+    def test_delete_memory_file_not_found(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.delete(f"/api/flows/{fid}/memory/nonexistent.md")
+        assert response.status_code == 404
+
+    def test_reject_improvement_not_found(self, client):
+        response = client.post(
+            "/api/inbox/nonexistent/improvement/reject",
+            json={"reason": "not useful"},
+        )
+        assert response.status_code == 404
+
+    def test_reject_improvement_saves_memory(self, client, api_db):
+        import json
+        import tempfile
+        from pathlib import Path
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from unittest.mock import patch
+
+        from llmflows.db.models import Base, Space, Flow, FlowStep, FlowRun, InboxItem
+        from llmflows.services.space import SpaceService
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            space_path = Path(tmpdir) / "test-space"
+            space_path.mkdir()
+
+            engine = create_engine(
+                "sqlite:///:memory:",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(engine)
+            Session = sessionmaker(bind=engine)
+            session = Session()
+
+            space = Space(name="test-space", path=str(space_path))
+            session.add(space)
+            session.flush()
+
+            flow = Flow(name="my-flow", description="test", space_id=space.id)
+            session.add(flow)
+            session.flush()
+            step = FlowStep(flow_id=flow.id, name="step1", position=0, content="# Step")
+            session.add(step)
+            session.flush()
+
+            from datetime import datetime, timezone
+            run = FlowRun(space_id=space.id, flow_id=flow.id, completed_at=datetime.now(timezone.utc), outcome="completed")
+            session.add(run)
+            session.flush()
+
+            from llmflows.services.context import ContextService
+            artifacts_dir = ContextService.get_artifacts_dir(space_path, run.id, run.flow_name)
+            artifacts_dir.mkdir(parents=True)
+            (artifacts_dir / "improvement.md").write_text("Add retry logic to step 1.")
+            (artifacts_dir / "flow.json").write_text(json.dumps({
+                "steps": [{"name": "step1", "position": 0}],
+            }))
+
+            inbox = InboxItem(type="flow_improvement", reference_id=run.id, space_id=space.id, title="Proposal")
+            session.add(inbox)
+            session.commit()
+            inbox_id = inbox.id
+
+            def mock_services():
+                s = Session()
+                return s, SpaceService(s)
+
+            with patch("llmflows.ui.server._get_services", mock_services):
+                from fastapi.testclient import TestClient
+                from llmflows.ui.server import app
+                c = TestClient(app)
+
+                response = c.post(
+                    f"/api/inbox/{inbox_id}/improvement/reject",
+                    json={"reason": "I prefer manual retries"},
+                )
+                assert response.status_code == 200
+                assert response.json()["ok"] is True
+
+                flow_dir = ContextService.get_flow_dir(space_path, "my-flow")
+                files = ContextService.list_memory_files(flow_dir)
+                assert len(files) == 1
+                assert files[0]["name"] == "rejected-proposals.md"
+                assert "Add retry logic" in files[0]["content"]
+                assert "I prefer manual retries" in files[0]["content"]
+                assert "Rejected proposal" in files[0]["content"]
+
+            session.close()
+            Base.metadata.drop_all(engine)

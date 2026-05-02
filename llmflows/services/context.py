@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from jinja2 import Environment, TemplateError
+from jinja2 import ChainableUndefined, Environment, TemplateError
 
 from ..defaults import get_defaults_dir
 
@@ -51,7 +51,7 @@ class ContextService:
         if not template_file.exists():
             return ""
         try:
-            env = Environment(autoescape=False)
+            env = Environment(autoescape=False, undefined=ChainableUndefined)
             template = env.from_string(template_file.read_text())
             return template.render(context)
         except TemplateError:
@@ -206,6 +206,78 @@ class ContextService:
         except (json.JSONDecodeError, PermissionError, OSError):
             pass
         return None
+
+    @staticmethod
+    def get_memory_dir(flow_dir: Path) -> Path:
+        """Return the memory directory for a flow: ``flow_dir/memory/``."""
+        return flow_dir / "memory"
+
+    @staticmethod
+    def list_memory_files(flow_dir: Path) -> list[dict]:
+        """Return ``[{name, content}]`` for every file in the memory directory."""
+        mem_dir = flow_dir / "memory"
+        if not mem_dir.is_dir():
+            return []
+        files: list[dict] = []
+        try:
+            for f in sorted(mem_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() in BINARY_EXTENSIONS:
+                    continue
+                try:
+                    content = f.read_text(errors="replace").strip()
+                    if content:
+                        files.append({"name": f.name, "content": content})
+                except (PermissionError, OSError):
+                    continue
+        except (PermissionError, OSError):
+            pass
+        return files
+
+    @staticmethod
+    def read_rejected_proposals(flow_dir: Path) -> str:
+        """Read the rejected-proposals.md file content as a single string."""
+        f = flow_dir / "memory" / "rejected-proposals.md"
+        if not f.exists():
+            return ""
+        try:
+            return f.read_text(errors="replace").strip()
+        except (PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def write_memory_file(flow_dir: Path, filename: str, content: str) -> None:
+        """Write (or overwrite) a single memory file."""
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        (mem_dir / filename).write_text(content)
+
+    @staticmethod
+    def delete_memory_file(flow_dir: Path, filename: str) -> bool:
+        """Delete a single memory file.  Returns True if a file was actually removed."""
+        f = flow_dir / "memory" / filename
+        if f.exists():
+            f.unlink()
+            return True
+        return False
+
+    @staticmethod
+    def append_memory(flow_dir: Path, entry: str) -> None:
+        """Append an entry to the rejected-proposals memory file."""
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        f = mem_dir / "rejected-proposals.md"
+        existing = ""
+        if f.exists():
+            try:
+                existing = f.read_text(errors="replace")
+            except (PermissionError, OSError):
+                pass
+        separator = "\n\n---\n\n" if existing.strip() else ""
+        f.write_text(existing + separator + entry + "\n")
 
     @staticmethod
     def _safe_flow_dir(flow_name: str) -> str:

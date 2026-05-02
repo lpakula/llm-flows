@@ -99,6 +99,10 @@ class StepRespondBody(BaseModel):
     response: str = ""
 
 
+class RejectImprovementBody(BaseModel):
+    reason: str = ""
+
+
 class ReorderSteps(BaseModel):
     step_ids: list[str]
 
@@ -1912,6 +1916,57 @@ async def approve_flow_improvement(item_id: str):
         session.close()
 
 
+@app.post("/api/inbox/{item_id}/improvement/reject")
+async def reject_flow_improvement(item_id: str, body: RejectImprovementBody):
+    """Reject a flow improvement proposal and save it to flow memory."""
+    from ..services.context import ContextService
+    from ..db.models import InboxItem, FlowRun, Space as SpaceModel
+
+    session, _ = _get_services()
+    try:
+        item = session.query(InboxItem).filter_by(id=item_id).first()
+        if not item or item.type != "flow_improvement":
+            raise HTTPException(status_code=404, detail="Flow improvement inbox item not found")
+        if item.archived_at:
+            raise HTTPException(status_code=400, detail="Already archived")
+
+        run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+        space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+        if not run or not space:
+            raise HTTPException(status_code=404, detail="Run or space not found")
+
+        artifacts_dir = ContextService.get_artifacts_dir(
+            Path(space.path), run.id, run.flow_name or "",
+        )
+        improvement = ContextService.read_improvement(artifacts_dir)
+
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        entry_parts = [f"## Rejected proposal ({ts})", ""]
+        if improvement:
+            entry_parts.append(f"**Proposal:** {improvement}")
+            entry_parts.append("")
+        if body.reason.strip():
+            entry_parts.append(f"**Reason for rejection:** {body.reason.strip()}")
+            entry_parts.append("")
+        entry_parts.append(f"**Run:** {run.id}")
+
+        flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+        ContextService.append_memory(flow_dir, "\n".join(entry_parts))
+
+        run_svc = RunService(session)
+        run_svc.archive_inbox_item(item_id)
+
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 @app.post("/api/inbox/{item_id}/archive")
 async def archive_inbox_item(item_id: str):
     """Archive an inbox item (dismiss it)."""
@@ -2159,6 +2214,74 @@ async def rollback_flow(flow_id: str, version_id: str):
         if not flow:
             raise HTTPException(status_code=404, detail="Flow or version not found")
         return flow.to_dict()
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/memory")
+async def get_flow_memory(flow_id: str):
+    """Return all memory files for a flow."""
+    from ..services.context import ContextService
+    from ..db.models import Space as SpaceModel
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space = session.query(SpaceModel).filter_by(id=flow.space_id).first()
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
+        files = ContextService.list_memory_files(flow_dir)
+        return {"files": files}
+    finally:
+        session.close()
+
+
+@app.delete("/api/flows/{flow_id}/memory")
+async def clear_flow_memory(flow_id: str):
+    """Clear all flow memory files."""
+    from ..services.context import ContextService
+    from ..db.models import Space as SpaceModel
+    import shutil
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space = session.query(SpaceModel).filter_by(id=flow.space_id).first()
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
+        mem_dir = ContextService.get_memory_dir(flow_dir)
+        if mem_dir.is_dir():
+            shutil.rmtree(mem_dir)
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.delete("/api/flows/{flow_id}/memory/{filename}")
+async def delete_flow_memory_file(flow_id: str, filename: str):
+    """Delete a single memory file."""
+    from ..services.context import ContextService
+    from ..db.models import Space as SpaceModel
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space = session.query(SpaceModel).filter_by(id=flow.space_id).first()
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
+        removed = ContextService.delete_memory_file(flow_dir, filename)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Memory file not found")
+        return {"ok": True}
     finally:
         session.close()
 
