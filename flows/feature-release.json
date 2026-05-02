@@ -1,8 +1,8 @@
 {
-  "version": 1,
   "flows": [
     {
       "name": "feature-release",
+      "version": 3,
       "description": "Release a feature branch: select the worktree, merge the branch into main, and remove the worktree directory.",
       "variables": {},
       "steps": [

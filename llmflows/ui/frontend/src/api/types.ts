@@ -64,6 +64,7 @@ export interface Flow {
   description: string;
   requirements: FlowRequirements;
   variables: Record<string, { value: string; is_env: boolean }>;
+  version: number;
   step_count: number;
   steps: FlowStep[];
   warnings?: FlowWarning[];
@@ -82,6 +83,15 @@ export interface Flow {
   queued_run_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface FlowVersion {
+  id: string;
+  flow_id: string;
+  version: number;
+  description: string;
+  created_at: string;
+  snapshot?: Record<string, unknown>;
 }
 
 export interface FlowStep {
@@ -113,7 +123,7 @@ export interface DaemonConfig {
   poll_interval_seconds: number;
   run_timeout_minutes: number;
   gate_timeout_seconds: number;
-  summarizer_language: string;
+  post_run_language: string;
 }
 
 export interface GatewayConfig {
@@ -225,6 +235,18 @@ export interface InboxItem {
   awaiting_since: string;
 }
 
+export interface FlowImprovementItem {
+  type: "flow_improvement";
+  inbox_id: string;
+  space_id: string;
+  space_name: string;
+  run_id: string;
+  flow_id: string;
+  flow_name: string;
+  summary: string;
+  awaiting_since: string;
+}
+
 export interface CompletedRunItem {
   inbox_id: string;
   run_id: string;
@@ -241,7 +263,7 @@ export interface CompletedRunItem {
 }
 
 export interface InboxResponse {
-  awaiting: InboxItem[];
+  awaiting: (InboxItem | FlowImprovementItem)[];
   completed: CompletedRunItem[];
   count: number;
 }

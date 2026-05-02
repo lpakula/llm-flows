@@ -71,10 +71,14 @@ export function SpaceFlowsView() {
     if (!spaceId) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await api.importFlows(spaceId, file);
-    alert(`Imported ${result.imported} flow(s)`);
-    load();
-    reload();
+    try {
+      const result = await api.importFlows(spaceId, file);
+      alert(`Imported ${result.imported} flow(s)`);
+      load();
+      reload();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Import failed");
+    }
     e.target.value = "";
   };
 
@@ -168,7 +172,7 @@ export function SpaceFlowsView() {
                   <Circle key={i} size={8} className="text-blue-400 fill-blue-400 shrink-0" />
                 ))}
               </div>
-              <span className="text-xs text-gray-500">{flow.step_count} steps</span>
+              <span className="text-xs text-gray-500">v{flow.version || 1}</span>
             </div>
             <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2 min-h-[2.5em]">
               {flow.description || "\u00A0"}

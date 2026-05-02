@@ -42,9 +42,9 @@ class ContextService:
         except TemplateError:
             return ""
 
-    def render_summary_step(self, context: dict) -> str:
-        """Render summary_step.md as step content for the auto-appended summary step."""
-        template_file = DEFAULTS_DIR / "step_summary.md"
+    def render_post_run_step(self, context: dict) -> str:
+        """Render step_post_run.md for the post-run analysis step."""
+        template_file = DEFAULTS_DIR / "step_post_run.md"
         if not template_file.exists():
             return ""
         try:
@@ -53,18 +53,6 @@ class ContextService:
             return template.render(context)
         except TemplateError:
             return ""
-
-    def render_error_summary_step(self, context: dict) -> str:
-        """Render step_error_summary.md for failed runs. Falls back to the normal summary template."""
-        template_file = DEFAULTS_DIR / "step_error_summary.md"
-        if not template_file.exists():
-            return self.render_summary_step(context)
-        try:
-            env = Environment(autoescape=False)
-            template = env.from_string(template_file.read_text())
-            return template.render(context)
-        except TemplateError:
-            return self.render_summary_step(context)
 
     @staticmethod
     def collect_artifacts(artifacts_dir: Path) -> list[dict]:
@@ -188,6 +176,32 @@ class ContextService:
                 except (PermissionError, OSError):
                     continue
         return ""
+
+    @staticmethod
+    def read_improvement(artifacts_dir: Path) -> str:
+        """Read improvement.md from the artifacts root, if it exists."""
+        f = artifacts_dir / "improvement.md"
+        if not f.exists():
+            return ""
+        try:
+            return f.read_text(errors="replace").strip()
+        except (PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def read_flow_json(artifacts_dir: Path) -> dict | None:
+        """Read flow.json from the artifacts root, if it exists."""
+        import json
+        f = artifacts_dir / "flow.json"
+        if not f.exists():
+            return None
+        try:
+            data = json.loads(f.read_text())
+            if isinstance(data, dict) and data.get("steps"):
+                return data
+        except (json.JSONDecodeError, PermissionError, OSError):
+            pass
+        return None
 
     @staticmethod
     def _safe_flow_dir(flow_name: str) -> str:

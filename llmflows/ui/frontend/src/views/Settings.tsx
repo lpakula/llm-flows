@@ -45,9 +45,9 @@ const ROWS: SettingRow[] = [
     min: 1,
   },
   {
-    key: "summarizer_language",
-    label: "Summarizer language",
-    description: "Language for auto-generated run summaries",
+    key: "post_run_language",
+    label: "Post-run language",
+    description: "Language for post-run analysis and summaries",
     type: "select",
     options: [
       { value: "English", label: "English" },

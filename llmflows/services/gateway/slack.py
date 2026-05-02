@@ -80,6 +80,7 @@ class SlackChannel:
         "run.completed",
         "run.timeout",
         "step.awaiting_user",
+        "flow.improvement",
     ]
 
     def __init__(self, config: dict[str, Any], session_factory):
@@ -706,6 +707,13 @@ class SlackChannel:
             user_message = payload.get("user_message")
             if user_message:
                 text += f"\n\n{user_message}"
+            return text
+
+        if event == "flow.improvement":
+            text = f"*{name}* — flow improvement proposed."
+            improvement = payload.get("improvement")
+            if improvement:
+                text += f"\n\n{improvement}"
             return text
 
         return None

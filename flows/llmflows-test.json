@@ -1,0 +1,24 @@
+{
+  "name": "llmflows-test",
+  "version": 1,
+  "description": "Simple smoke test: write a haiku to verify the flow pipeline works end-to-end.",
+  "steps": [
+    {
+      "name": "Write haiku",
+      "position": 0,
+      "content": "# WRITE A HAIKU\n\nWrite a haiku about software engineering.\n\nSave it to `{{step.dir}}/_result.md`.",
+      "gates": [
+        {
+          "command": "test -f {{step.dir}}/_result.md",
+          "message": "_result.md must exist with the haiku."
+        },
+        {
+          "command": "False",
+          "message": "Dummy gate"
+        }
+      ],
+      "agent_alias": "mini",
+      "max_gate_retries": 1
+    }
+  ]
+}

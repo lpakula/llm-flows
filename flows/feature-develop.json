@@ -1,8 +1,8 @@
 {
-  "version": 1,
   "flows": [
     {
       "name": "feature-develop",
+      "version": 1,
       "description": "Develop a feature in a git worktree: pick or create a worktree (branch name = worktree name), implement, test, screenshot, commit, and open a PR.",
       "variables": {
         "TASK_DESCRIPTION": ""

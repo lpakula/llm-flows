@@ -186,7 +186,10 @@ def flow_import(file):
     try:
         space = _resolve_space(session)
         flow_svc = FlowService(session)
-        count = flow_svc.import_flows(Path(file), space.id)
+        try:
+            count = flow_svc.import_flows(Path(file), space.id)
+        except ValueError as e:
+            raise click.ClickException(str(e))
         click.echo(f"Imported {count} flow(s) from {file}")
     finally:
         session.close()

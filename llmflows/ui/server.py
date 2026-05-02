@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +18,7 @@ from starlette.websockets import WebSocket as _StarletteWebSocket
 
 from .. import __version__
 from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, SYSTEM_DIR, load_system_config, save_system_config
-from ..db.database import get_session, reset_engine
+from ..db.database import get_session, init_db, reset_engine
 from ..services.agent import AgentService
 from ..services.chat import (
     CHAT_SESSIONS_DIR,
@@ -35,7 +36,14 @@ from ..services.skill import SkillService
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="llmflows", version=__version__)
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="llmflows", version=__version__, lifespan=_lifespan)
 
 
 # --- Pydantic models ---
@@ -104,7 +112,7 @@ class DaemonConfigBody(BaseModel):
     poll_interval_seconds: Optional[int] = None
     run_timeout_minutes: Optional[int] = None
     gate_timeout_seconds: Optional[int] = None
-    summarizer_language: Optional[str] = None
+    post_run_language: Optional[str] = None
 
 
 class GatewayConfigBody(BaseModel):
@@ -197,8 +205,8 @@ async def update_daemon_config(body: DaemonConfigBody):
         config["daemon"]["run_timeout_minutes"] = body.run_timeout_minutes
     if body.gate_timeout_seconds is not None:
         config["daemon"]["gate_timeout_seconds"] = body.gate_timeout_seconds
-    if body.summarizer_language is not None:
-        config["daemon"]["summarizer_language"] = body.summarizer_language
+    if body.post_run_language is not None:
+        config["daemon"]["post_run_language"] = body.post_run_language
     save_system_config(config)
     return config["daemon"]
 
@@ -730,9 +738,8 @@ async def kill_all_agents():
 
 @app.post("/api/daemon/start")
 async def start_daemon():
-    import shutil
     import subprocess
-    import sys
+    from ..cli.ui import _llmflows_bin
     from ..services.daemon import read_pid_file
 
     if read_pid_file():
@@ -744,11 +751,7 @@ async def start_daemon():
     for opid in orphans:
         _stop_pid(opid)
 
-    llmflows_bin = shutil.which("llmflows")
-    if llmflows_bin:
-        cmd = [llmflows_bin, "daemon", "start"]
-    else:
-        cmd = [sys.executable, "-m", "llmflows", "daemon", "start"]
+    cmd = [_llmflows_bin(), "daemon", "start"]
 
     subprocess.Popen(
         cmd,
@@ -757,7 +760,7 @@ async def start_daemon():
         start_new_session=True,
     )
 
-    for _ in range(10):
+    for _ in range(20):
         await asyncio.sleep(0.5)
         new_pid = read_pid_file()
         if new_pid:
@@ -1281,15 +1284,15 @@ async def get_run_steps(run_id: str):
                 "max_gate_retries": step_src.get("max_gate_retries", 5),
             })
 
-        summary_sr = step_run_map.get("__summarizer__")
-        if summary_sr and not any(s["name"] == "__summarizer__" for s in result):
+        post_run_sr = step_run_map.get("__post_run__")
+        if post_run_sr and not any(s["name"] == "__post_run__" for s in result):
             result.append({
-                "name": "__summarizer__",
+                "name": "__post_run__",
                 "flow": run.flow_name or "",
-                "status": summary_sr.status,
+                "status": post_run_sr.status,
                 "has_ifs": False,
-                "step_run": summary_sr.to_dict(),
-                "attempts": [summary_sr.to_dict()],
+                "step_run": post_run_sr.to_dict(),
+                "attempts": [post_run_sr.to_dict()],
             })
 
         return {"steps": result}
@@ -1828,7 +1831,83 @@ async def get_inbox():
                     "attachments": attachments,
                 })
 
+            elif item.type == "flow_improvement":
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                if not run or not space:
+                    continue
+
+                artifacts_dir = ContextService.get_artifacts_dir(
+                    Path(space.path), run.id, run.flow_name or "",
+                )
+                flow_json = ContextService.read_flow_json(artifacts_dir)
+                if not flow_json:
+                    run_svc.archive_inbox_item(item.id)
+                    continue
+
+                improvement = ContextService.read_improvement(artifacts_dir)
+                awaiting.append({
+                    "type": "flow_improvement",
+                    "inbox_id": item.id,
+                    "space_id": space.id,
+                    "space_name": space.name,
+                    "run_id": run.id,
+                    "flow_id": run.flow_id or "",
+                    "flow_name": run.flow_name or "",
+                    "summary": improvement or "Flow improvement proposed.",
+                    "awaiting_since": (item.created_at.isoformat() + "Z") if item.created_at else None,
+                })
+
         return {"awaiting": awaiting, "completed": completed, "count": len(awaiting) + len(completed)}
+    finally:
+        session.close()
+
+
+@app.post("/api/inbox/{item_id}/improvement/approve")
+async def approve_flow_improvement(item_id: str):
+    """Approve a flow improvement proposal — imports it as a new flow version."""
+    from ..services.context import ContextService
+    from ..db.models import InboxItem, FlowRun, Space as SpaceModel
+
+    session, _ = _get_services()
+    try:
+        item = session.query(InboxItem).filter_by(id=item_id).first()
+        if not item or item.type != "flow_improvement":
+            raise HTTPException(status_code=404, detail="Flow improvement inbox item not found")
+        if item.archived_at:
+            raise HTTPException(status_code=400, detail="Already archived")
+
+        run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+        space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+        if not run or not space:
+            raise HTTPException(status_code=404, detail="Run or space not found")
+
+        artifacts_dir = ContextService.get_artifacts_dir(
+            Path(space.path), run.id, run.flow_name or "",
+        )
+        flow_json = ContextService.read_flow_json(artifacts_dir)
+        if not flow_json or not flow_json.get("steps"):
+            raise HTTPException(status_code=400, detail="No valid flow.json found")
+
+        if not run.flow_id:
+            raise HTTPException(status_code=400, detail="Run has no associated flow")
+
+        flow_svc = FlowService(session)
+        flow = flow_svc.apply_flow_proposal(run.flow_id, flow_json)
+        if not flow:
+            raise HTTPException(status_code=500, detail="Failed to apply proposal")
+
+        run_svc = RunService(session)
+        run_svc.archive_inbox_item(item_id)
+
+        return {"ok": True, "flow_id": flow.id, "version": flow.version}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -1947,6 +2026,7 @@ async def list_space_flows(space_id: str):
                 "space_id": f.space_id,
                 "name": f.name,
                 "description": f.description,
+                "version": f.version or 1,
                 "step_count": len(f.steps),
                 "steps": [
                     {"name": st.name, "position": st.position, "step_type": st.step_type or "agent"}
@@ -2017,6 +2097,8 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
         return {"imported": count}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         session.close()
 
@@ -2032,6 +2114,51 @@ async def get_flow(flow_id: str):
         result = flow.to_dict()
         result["warnings"] = flow_svc.validate_flow(flow_id)
         return result
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/versions")
+async def list_flow_versions(flow_id: str):
+    """List all saved versions of a flow."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        versions = flow_svc.list_versions(flow_id)
+        return [v.to_dict() for v in versions]
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/versions/{version_id}")
+async def get_flow_version(flow_id: str, version_id: str):
+    """Get a specific flow version with its full snapshot."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        version = flow_svc.get_version(version_id)
+        if not version or version.flow_id != flow_id:
+            raise HTTPException(status_code=404, detail="Version not found")
+        result = version.to_dict()
+        result["snapshot"] = version.get_snapshot()
+        return result
+    finally:
+        session.close()
+
+
+@app.post("/api/flows/{flow_id}/rollback/{version_id}")
+async def rollback_flow(flow_id: str, version_id: str):
+    """Rollback a flow to a previous version."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.rollback_to_version(flow_id, version_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow or version not found")
+        return flow.to_dict()
     finally:
         session.close()
 

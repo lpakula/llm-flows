@@ -62,6 +62,7 @@ import type {
   GatewayConfig,
   ConnectorConfig,
   SkillInfo,
+  FlowVersion,
 } from "./types";
 
 export const api = {
@@ -121,6 +122,7 @@ export const api = {
   // Inbox
   getInbox: () => get<InboxResponse>("/api/inbox"),
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
+  approveImprovement: (itemId: string) => post<{ ok: boolean; flow_id: string; version: number }>(`/api/inbox/${itemId}/improvement/approve`),
 
   // Queue
   getQueue: () => get<FlowRun[]>("/api/queue"),
@@ -145,10 +147,17 @@ export const api = {
   exportFlows: (spaceId: string) => post<unknown>(`/api/spaces/${spaceId}/flows/export`),
   exportFlowToDisk: (flowId: string) =>
     post<{ ok: boolean; path: string }>(`/api/flows/${flowId}/export`),
+  listFlowVersions: (flowId: string) => get<FlowVersion[]>(`/api/flows/${flowId}/versions`),
+  rollbackFlow: (flowId: string, versionId: string) =>
+    post<Flow>(`/api/flows/${flowId}/rollback/${versionId}`),
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then((r) => r.json());
+    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || `Import failed (${r.status})`);
+      return data;
+    });
   },
 
   // Skills

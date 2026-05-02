@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from llmflows.db.models import Base, Flow, FlowStep, Space
+from llmflows.db.models import AgentAlias, Base, Flow, FlowStep, Space
 from llmflows.services.flow import FlowService
 from llmflows.services.space import SpaceService
 from llmflows.ui.server import app
@@ -35,6 +35,8 @@ def api_db():
     setup_session.flush()
     step = FlowStep(flow_id=flow.id, name="research", position=0, content="# Research")
     setup_session.add(step)
+    alias = AgentAlias(name="normal", type="pi", agent="cursor", model="default")
+    setup_session.add(alias)
     setup_session.commit()
 
     space_id = space.id
@@ -126,4 +128,74 @@ class TestScheduleAPI:
             f"/api/spaces/{sid}/schedule",
             json={"flow_id": "nope"},
         )
+        assert response.status_code == 404
+
+
+class TestFlowVersioningAPI:
+    def test_list_versions_empty(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.get(f"/api/flows/{fid}/versions")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_rollback_not_found(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.post(f"/api/flows/{fid}/rollback/nonexistent")
+        assert response.status_code == 404
+
+    def test_list_versions_not_found(self, client):
+        response = client.get("/api/flows/nope/versions")
+        assert response.status_code == 404
+
+    def test_get_version_not_found(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.get(f"/api/flows/{fid}/versions/nope")
+        assert response.status_code == 404
+
+    def test_flow_includes_version(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.get(f"/api/flows/{fid}")
+        assert response.status_code == 200
+        data = response.json()
+        assert "version" in data
+        assert data["version"] >= 1
+
+    def test_import_rejects_same_version(self, client, api_db):
+        import io
+        sid = api_db["space_id"]
+        import json
+        data = json.dumps({
+            "flows": [{
+                "name": "default",
+                "version": 1,
+                "steps": [{"name": "step1", "position": 0}],
+            }]
+        })
+        response = client.post(
+            f"/api/spaces/{sid}/flows/import",
+            files={"file": ("flows.json", io.BytesIO(data.encode()), "application/json")},
+        )
+        assert response.status_code == 400
+        assert "version" in response.json()["detail"].lower()
+
+    def test_import_accepts_higher_version(self, client, api_db):
+        import io
+        sid = api_db["space_id"]
+        import json
+        data = json.dumps({
+            "flows": [{
+                "name": "default",
+                "version": 2,
+                "steps": [{"name": "step1", "position": 0, "content": "updated"}],
+            }]
+        })
+        response = client.post(
+            f"/api/spaces/{sid}/flows/import",
+            files={"file": ("flows.json", io.BytesIO(data.encode()), "application/json")},
+        )
+        assert response.status_code == 200
+        assert response.json()["imported"] == 1
+
+    def test_approve_improvement_not_found(self, client, api_db):
+        response = client.post("/api/inbox/nonexistent/improvement/approve")
         assert response.status_code == 404

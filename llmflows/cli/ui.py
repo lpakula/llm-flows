@@ -14,6 +14,22 @@ FRONTEND_DIR = Path(__file__).parent.parent / "ui" / "frontend"
 STATIC_DIR = Path(__file__).parent.parent / "ui" / "static"
 
 
+def _llmflows_bin() -> str:
+    """Return the ``llmflows`` entry-point from the same venv as the running interpreter.
+
+    ``sys.prefix`` reliably points at the venv root even when
+    ``sys.executable`` resolves to a framework Python on macOS.
+    """
+    venv_bin = Path(sys.prefix) / "bin" / "llmflows"
+    if venv_bin.is_file():
+        return str(venv_bin)
+    import shutil
+    found = shutil.which("llmflows")
+    if found:
+        return found
+    return str(venv_bin)
+
+
 def _ensure_frontend_built() -> bool:
     """Build the React frontend if the static directory is missing. Returns True if ready."""
     if (STATIC_DIR / "index.html").is_file():
@@ -104,7 +120,6 @@ def _ensure_daemon_running() -> None:
     process has a recognisable cmdline (``llmflows daemon start``) and goes
     through the single canonical start path that writes the PID file.
     """
-    import shutil
     import subprocess
     import time
     from ..services.daemon import read_pid_file, remove_pid_file
@@ -129,11 +144,7 @@ def _ensure_daemon_running() -> None:
         for opid in orphans:
             _stop_pid(opid)
 
-    llmflows_bin = shutil.which("llmflows")
-    if llmflows_bin:
-        cmd = [llmflows_bin, "daemon", "start"]
-    else:
-        cmd = [sys.executable, "-m", "llmflows", "daemon", "start"]
+    cmd = [_llmflows_bin(), "daemon", "start"]
 
     subprocess.Popen(
         cmd,
@@ -143,13 +154,13 @@ def _ensure_daemon_running() -> None:
         start_new_session=True,
     )
 
-    for _ in range(20):  # up to ~5s
+    for _ in range(40):  # up to ~10s
         time.sleep(0.25)
         new_pid = read_pid_file()
         if new_pid:
             click.echo(f"  Daemon:          started (pid {new_pid})")
             return
-    click.echo("  Daemon:          did not register a PID within 5s — check daemon.log", err=True)
+    click.echo("  Daemon:          did not register a PID within 10s — check daemon.log", err=True)
 
 
 def _maybe_reexec_for_dev(dev: bool) -> None:
@@ -166,9 +177,115 @@ def _maybe_reexec_for_dev(dev: bool) -> None:
         return
     if "LLMFLOWS_DEV_HOME" in os.environ:
         return
-    dev_home = str(Path.cwd() / ".llmflows")
-    env = {**os.environ, "LLMFLOWS_HOME": dev_home, "LLMFLOWS_DEV_HOME": dev_home}
-    os.execve(sys.executable, [sys.executable, *sys.argv], env)
+    dev_home = Path.cwd() / ".llmflows"
+    dev_home.mkdir(parents=True, exist_ok=True)
+
+    prod_home = Path.home() / ".llmflows"
+    prod_pkg = prod_home / "package.json"
+    dev_node_modules = dev_home / "node_modules"
+    if prod_pkg.is_file() and not dev_node_modules.exists():
+        import shutil
+        import subprocess
+        shutil.copy2(prod_pkg, dev_home / "package.json")
+        subprocess.run(
+            ["npm", "install", "--prefix", str(dev_home)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    local_bin = Path.cwd() / ".venv" / "bin" / "llmflows"
+    if local_bin.is_file():
+        exe = str(local_bin)
+        argv = [exe, *sys.argv[1:]]
+    else:
+        exe = sys.executable
+        argv = [exe, *sys.argv]
+
+    env = {**os.environ, "LLMFLOWS_HOME": str(dev_home), "LLMFLOWS_DEV_HOME": str(dev_home)}
+    os.execve(exe, argv, env)
+
+
+def _auto_register_dev_space() -> None:
+    """Register the CWD as a space in the dev DB if not already registered."""
+    from ..db.database import init_db, get_session
+    from ..services.space import SpaceService
+    from ..services.flow import FlowService
+
+    init_db(seed=False)
+    session = get_session()
+    try:
+        cwd = str(Path.cwd())
+        space_svc = SpaceService(session)
+        existing = space_svc.get_by_path(cwd)
+        if existing:
+            click.echo(f"  Space:           {existing.name} ({cwd})")
+            return
+        name = Path(cwd).name
+        s = space_svc.register(name=name, path=cwd)
+        dot_dir = Path(cwd) / ".llmflows"
+        dot_dir.mkdir(parents=True, exist_ok=True)
+        flow_svc = FlowService(session)
+        flow_svc.sync_from_disk(cwd, s.id)
+        click.echo(f"  Space:           registered '{name}' ({cwd})")
+    finally:
+        session.close()
+
+
+def _copy_prod_config_to_dev() -> None:
+    """Copy the OpenAI API key and agent aliases from production into the dev DB.
+
+    Aliases are matched by ``(type, name)`` (their unique constraint) and
+    upserted so the dev DB mirrors production configuration.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from ..db.database import get_session
+    from ..db.models import AgentConfig, AgentAlias
+
+    prod_db = Path.home() / ".llmflows" / "llmflows.db"
+    if not prod_db.exists():
+        return
+
+    dev_session = get_session()
+    try:
+        prod_engine = create_engine(f"sqlite:///{prod_db}")
+        prod_session = Session(prod_engine)
+        try:
+            copied_key = False
+            gemini = prod_session.query(AgentConfig).filter_by(agent="google", key="GEMINI_API_KEY").first()
+            if gemini:
+                exists = dev_session.query(AgentConfig).filter_by(agent=gemini.agent, key=gemini.key).first()
+                if not exists:
+                    dev_session.add(AgentConfig(agent=gemini.agent, key=gemini.key, value=gemini.value))
+                    copied_key = True
+
+            copied_aliases = 0
+            for alias in prod_session.query(AgentAlias).all():
+                exists = dev_session.query(AgentAlias).filter_by(type=alias.type, name=alias.name).first()
+                if exists:
+                    exists.agent = alias.agent
+                    exists.model = alias.model
+                    exists.position = alias.position
+                else:
+                    dev_session.add(AgentAlias(
+                        name=alias.name, type=alias.type,
+                        agent=alias.agent, model=alias.model,
+                        position=alias.position,
+                    ))
+                copied_aliases += 1
+
+            if copied_key or copied_aliases:
+                dev_session.commit()
+                parts = []
+                if copied_key:
+                    parts.append("Gemini key")
+                if copied_aliases:
+                    parts.append(f"{copied_aliases} alias(es)")
+                click.echo(f"  Config:          copied {', '.join(parts)} from production")
+        finally:
+            prod_session.close()
+            prod_engine.dispose()
+    finally:
+        dev_session.close()
 
 
 def _find_free_port(start: int) -> int:
@@ -225,7 +342,7 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     subprocess.run(["npm", "install"], cwd=str(FRONTEND_DIR), check=True,
                    stdout=subprocess.DEVNULL)
 
-    vite_port = _find_free_port(port)
+    vite_port = _find_free_port(port + 100)
     api_port = _find_free_port(vite_port + 1)
 
     dev_home = os.environ.get("LLMFLOWS_HOME", "~/.llmflows")
@@ -233,6 +350,10 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     click.echo(f"  Home:            {dev_home}")
     click.echo(f"  Open:            http://{host}:{vite_port}")
     click.echo(f"  API:             http://{host}:{api_port}")
+
+    _auto_register_dev_space()
+    _copy_prod_config_to_dev()
+
     if not no_daemon:
         _ensure_daemon_running()
 
@@ -254,9 +375,11 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    llmflows_pkg_dir = str(Path(__file__).parent.parent)
     api_proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "llmflows.ui.server:app",
-         "--host", host, "--port", str(api_port), "--log-level", "info"],
+         "--host", host, "--port", str(api_port), "--log-level", "info",
+         "--reload", "--reload-dir", llmflows_pkg_dir],
         cwd=os.getcwd(),
     )
     procs.append(api_proc)
@@ -285,9 +408,7 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
 @click.option("--host", default=None, help="Host (default from config)")
 @click.option("--reload", is_flag=True, default=False, help="Auto-reload on code changes")
 @click.option("--dev", is_flag=True, default=False, help="Dev mode: Vite HMR + FastAPI")
-@click.option("--no-daemon", "no_daemon", is_flag=True, default=False,
-              help="Skip starting the daemon (useful for testing/screenshots).")
-def ui(port, host, reload, dev, no_daemon):
+def ui(port, host, reload, dev):
     """Launch web UI on localhost (Ctrl+C to stop)."""
     _maybe_reexec_for_dev(dev)
 
@@ -301,7 +422,7 @@ def ui(port, host, reload, dev, no_daemon):
     host = host or config["ui"]["host"]
 
     if dev:
-        _run_dev_mode(host, port, no_daemon=no_daemon)
+        _run_dev_mode(host, port)
         return
 
     import uvicorn
@@ -309,8 +430,7 @@ def ui(port, host, reload, dev, no_daemon):
     click.echo(f"llmflows UI: http://{host}:{port}")
     if not _ensure_frontend_built():
         sys.exit(1)
-    if not no_daemon:
-        _ensure_daemon_running()
+    _ensure_daemon_running()
     kwargs = dict(host=host, port=port, log_level="warning")
     if reload:
         import llmflows

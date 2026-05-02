@@ -1,8 +1,8 @@
 {
-  "version": 1,
   "flows": [
     {
-      "name": "browser-test",
+      "name": "llmflows-test-browser",
+      "version": 1,
       "description": "Open the Google login page, wait for the user to log in, then navigate to Gmail.",
       "steps": [
         {

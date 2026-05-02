@@ -186,6 +186,7 @@ class Flow(Base):
     description: str = Column(Text, default="")
     requirements: str = Column(Text, default="{}")
     variables: str = Column(Text, default="{}")
+    version: int = Column(Integer, nullable=False, default=1)
     max_concurrent_runs: int = Column(Integer, default=1)
     max_spend_usd: float = Column(Float, nullable=True)
     starred: bool = Column(Boolean, default=False)
@@ -200,6 +201,8 @@ class Flow(Base):
     space = relationship("Space", back_populates="flows")
     steps = relationship("FlowStep", back_populates="flow", cascade="all, delete-orphan",
                          order_by="FlowStep.position")
+    versions = relationship("FlowVersion", back_populates="flow", cascade="all, delete-orphan",
+                            order_by="FlowVersion.version.desc()")
 
     def get_requirements(self) -> dict:
         import json
@@ -239,6 +242,7 @@ class Flow(Base):
             "description": self.description,
             "requirements": self.get_requirements(),
             "variables": self.get_variables(),
+            "version": self.version or 1,
             "max_concurrent_runs": self.max_concurrent_runs if self.max_concurrent_runs is not None else 1,
             "max_spend_usd": self.max_spend_usd,
             "starred": bool(self.starred),
@@ -249,6 +253,34 @@ class Flow(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "steps": [s.to_dict() for s in self.steps],
+        }
+
+
+class FlowVersion(Base):
+    __tablename__ = "flow_versions"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    flow_id: str = Column(String(6), ForeignKey("flows.id"), nullable=False)
+    version: int = Column(Integer, nullable=False)
+    snapshot: str = Column(Text, nullable=False)
+    description: str = Column(Text, default="")
+    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    flow = relationship("Flow", back_populates="versions")
+
+    def get_snapshot(self) -> dict:
+        try:
+            return _json.loads(self.snapshot or "{}")
+        except (_json.JSONDecodeError, TypeError):
+            return {}
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "flow_id": self.flow_id,
+            "version": self.version,
+            "description": self.description,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
