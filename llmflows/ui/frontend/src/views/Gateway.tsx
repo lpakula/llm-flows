@@ -1,20 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
 import type { GatewayConfig } from "@/api/types";
-import { ChevronRight } from "lucide-react";
+import { X } from "lucide-react";
+
+type ChannelFieldDef = {
+  key: keyof GatewayConfig;
+  label: string;
+  type: "secret" | "tags-number" | "tags-string";
+  placeholder: string;
+  description: string;
+};
 
 type ChannelDef = {
   id: string;
   name: string;
   description: string;
   enabledKey: keyof GatewayConfig;
-  fields: {
-    key: keyof GatewayConfig;
-    label: string;
-    type: "secret" | "tags-number" | "tags-string";
-    placeholder: string;
-    description: string;
-  }[];
+  fields: ChannelFieldDef[];
 };
 
 const CHANNELS: ChannelDef[] = [
@@ -41,13 +43,34 @@ const CHANNELS: ChannelDef[] = [
   },
 ];
 
-function ChannelCard({
+/* ---------- Modal shell ---------- */
+
+function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+  if (!open) return null;
+  return (
+    <div ref={backdropRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Channel config modal ---------- */
+
+function ChannelConfigModal({
   channel,
   gateway,
+  open,
+  onClose,
   onSave,
 }: {
   channel: ChannelDef;
   gateway: GatewayConfig;
+  open: boolean;
+  onClose: () => void;
   onSave: (key: keyof GatewayConfig, value: unknown) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<Partial<GatewayConfig>>({});
@@ -55,14 +78,12 @@ function ChannelCard({
   const [saved, setSaved] = useState<string | null>(null);
   const [newTag, setNewTag] = useState("");
   const [togglingEnabled, setTogglingEnabled] = useState(false);
-  const [expanded, setExpanded] = useState(false);
 
   const enabled = gateway[channel.enabledKey] as boolean;
 
   const toggleEnabled = async () => {
     setTogglingEnabled(true);
     await onSave(channel.enabledKey, !enabled);
-    if (!enabled) setExpanded(true);
     setTogglingEnabled(false);
   };
 
@@ -80,142 +101,192 @@ function ChannelCard({
   };
 
   return (
-    <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
-      <div
-        className="flex items-center justify-between p-4 cursor-pointer"
-        onClick={() => enabled && setExpanded((v) => !v)}
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {enabled && (
-            <ChevronRight size={14} className={`text-gray-500 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`} />
-          )}
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">{channel.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{channel.description}</p>
-          </div>
+    <Modal open={open} onClose={onClose}>
+      <div className="p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">{channel.name}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 p-1"><X size={16} /></button>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
-          disabled={togglingEnabled}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-            enabled ? "bg-blue-500" : "bg-gray-700"
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              enabled ? "translate-x-6" : "translate-x-1"
+
+        <p className="text-sm text-gray-500">{channel.description}</p>
+
+        {/* Enable / Disable toggle */}
+        <div className="flex items-center justify-between py-2">
+          <span className="text-sm text-gray-300">{enabled ? "Enabled" : "Disabled"}</span>
+          <button
+            onClick={toggleEnabled}
+            disabled={togglingEnabled}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+              enabled ? "bg-blue-500" : "bg-gray-700"
             }`}
-          />
-        </button>
-      </div>
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                enabled ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
 
-      {enabled && expanded && (
-        <div className="border-t border-gray-800 p-4 space-y-4">
-          {channel.fields.map((field) => (
-            <div key={field.key}>
-              <label className="text-xs font-medium text-gray-400 mb-1.5 block">
-                {field.label}
-                <span className="font-normal text-gray-600 ml-2">{field.description}</span>
-              </label>
+        {/* Configuration fields */}
+        {channel.fields.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">Configuration</h3>
+            {channel.fields.map((field) => (
+              <div key={field.key}>
+                <label className="text-xs font-medium text-gray-400 mb-1.5 block">
+                  {field.label}
+                  <span className="font-normal text-gray-600 ml-2">{field.description}</span>
+                </label>
 
-              {field.type === "secret" && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    value={(editing[field.key] as string | undefined) ?? (gateway[field.key] as string)}
-                    onChange={(e) => setEditing((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && editing[field.key] !== undefined && saveField(field.key, editing[field.key])}
-                    placeholder={field.placeholder}
-                    className="bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm w-72 font-mono focus:outline-none focus:border-gray-500"
-                  />
-                  {saved === field.key ? (
-                    <span className="text-xs text-green-400">Saved</span>
-                  ) : (
-                    <button
-                      onClick={() => editing[field.key] !== undefined && saveField(field.key, editing[field.key])}
-                      disabled={editing[field.key] === undefined || saving === field.key}
-                      className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
-                    >
-                      {saving === field.key ? "Saving…" : "Save"}
-                    </button>
-                  )}
-                </div>
-              )}
+                {field.type === "secret" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={(editing[field.key] as string | undefined) ?? (gateway[field.key] as string)}
+                      onChange={(e) => setEditing((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      onKeyDown={(e) => e.key === "Enter" && editing[field.key] !== undefined && saveField(field.key, editing[field.key])}
+                      placeholder={field.placeholder}
+                      className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-gray-500"
+                    />
+                    {saved === field.key ? (
+                      <span className="text-xs text-green-400 whitespace-nowrap">Saved</span>
+                    ) : (
+                      <button
+                        onClick={() => editing[field.key] !== undefined && saveField(field.key, editing[field.key])}
+                        disabled={editing[field.key] === undefined || saving === field.key}
+                        className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors whitespace-nowrap"
+                      >
+                        {saving === field.key ? "Saving…" : "Save"}
+                      </button>
+                    )}
+                  </div>
+                )}
 
-              {(field.type === "tags-number" || field.type === "tags-string") && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  {(gateway[field.key] as (string | number)[])?.map((id) => (
-                    <span
-                      key={String(id)}
-                      className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
-                    >
-                      {String(id)}
+                {(field.type === "tags-number" || field.type === "tags-string") && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(gateway[field.key] as (string | number)[])?.map((id) => (
+                      <span
+                        key={String(id)}
+                        className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
+                      >
+                        {String(id)}
+                        <button
+                          onClick={() => {
+                            const current = gateway[field.key] as (string | number)[];
+                            onSave(field.key, current.filter((c) => c !== id));
+                          }}
+                          className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const current = (gateway[field.key] as (string | number)[]) || [];
+                          if (field.type === "tags-number") {
+                            const num = parseInt(newTag);
+                            if (isNaN(num) || current.includes(num)) return;
+                            onSave(field.key, [...current, num]);
+                          } else {
+                            const val = newTag.trim();
+                            if (!val || current.includes(val)) return;
+                            onSave(field.key, [...current, val]);
+                          }
+                          setNewTag("");
+                        }}
+                        placeholder={field.placeholder}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-28 focus:outline-none focus:border-gray-500"
+                      />
                       <button
                         onClick={() => {
-                          const current = gateway[field.key] as (string | number)[];
-                          onSave(field.key, current.filter((c) => c !== id));
+                          const current = (gateway[field.key] as (string | number)[]) || [];
+                          if (field.type === "tags-number") {
+                            const num = parseInt(newTag);
+                            if (isNaN(num) || current.includes(num)) return;
+                            onSave(field.key, [...current, num]);
+                          } else {
+                            const val = newTag.trim();
+                            if (!val || current.includes(val)) return;
+                            onSave(field.key, [...current, val]);
+                          }
+                          setNewTag("");
                         }}
-                        className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                        disabled={!newTag.trim() || (field.type === "tags-number" && isNaN(parseInt(newTag)))}
+                        className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
                       >
-                        ×
+                        Add
                       </button>
-                    </span>
-                  ))}
-                  <div className="inline-flex items-center gap-1">
-                    <input
-                      value={newTag}
-                      onChange={(e) => setNewTag(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter") return;
-                        const current = (gateway[field.key] as (string | number)[]) || [];
-                        if (field.type === "tags-number") {
-                          const num = parseInt(newTag);
-                          if (isNaN(num) || current.includes(num)) return;
-                          onSave(field.key, [...current, num]);
-                        } else {
-                          const val = newTag.trim();
-                          if (!val || current.includes(val)) return;
-                          onSave(field.key, [...current, val]);
-                        }
-                        setNewTag("");
-                      }}
-                      placeholder={field.placeholder}
-                      className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-28 focus:outline-none focus:border-gray-500"
-                    />
-                    <button
-                      onClick={() => {
-                        const current = (gateway[field.key] as (string | number)[]) || [];
-                        if (field.type === "tags-number") {
-                          const num = parseInt(newTag);
-                          if (isNaN(num) || current.includes(num)) return;
-                          onSave(field.key, [...current, num]);
-                        } else {
-                          const val = newTag.trim();
-                          if (!val || current.includes(val)) return;
-                          onSave(field.key, [...current, val]);
-                        }
-                        setNewTag("");
-                      }}
-                      disabled={!newTag.trim() || (field.type === "tags-number" && isNaN(parseInt(newTag)))}
-                      className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
-                    >
-                      Add
-                    </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex justify-end pt-2 border-t border-gray-800">
+          <button onClick={onClose}
+            className="px-4 py-2 text-xs font-medium rounded-lg bg-gray-800 text-white hover:bg-gray-700 transition-colors">
+            Close
+          </button>
         </div>
-      )}
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Channel card ---------- */
+
+function ChannelCard({
+  channel,
+  gateway,
+  onClick,
+}: {
+  channel: ChannelDef;
+  gateway: GatewayConfig;
+  onClick: () => void;
+}) {
+  const enabled = gateway[channel.enabledKey] as boolean;
+
+  return (
+    <div
+      onClick={onClick}
+      className="text-left rounded-xl border border-gray-800 bg-gray-900 hover:border-gray-600 transition-colors p-5 flex items-center gap-4 cursor-pointer"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${enabled ? "bg-green-400" : "bg-gray-600"}`} />
+          <span className="text-sm font-medium text-white truncate">{channel.name}</span>
+        </div>
+        <span className="text-[11px] text-gray-500 block truncate">{channel.description}</span>
+      </div>
+      <div className="shrink-0">
+        <span className={`text-[11px] font-medium px-3 py-1 rounded-lg ${
+          enabled
+            ? "text-green-400 bg-green-400/10 border border-green-400/20"
+            : "text-gray-500 bg-gray-800 border border-gray-700"
+        }`}>
+          {enabled ? "Enabled" : "Disabled"}
+        </span>
+      </div>
     </div>
   );
 }
+
+/* ---------- Main view ---------- */
 
 export function GatewayView() {
   const [gateway, setGateway] = useState<GatewayConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [restarting, setRestarting] = useState(false);
+  const [modalChannel, setModalChannel] = useState<ChannelDef | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -247,33 +318,65 @@ export function GatewayView() {
     setTimeout(() => setRestarting(false), 2000);
   };
 
+  const enabledChannels = gateway ? CHANNELS.filter((ch) => gateway[ch.enabledKey] as boolean) : [];
+  const disabledChannels = gateway ? CHANNELS.filter((ch) => !(gateway[ch.enabledKey] as boolean)) : [];
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xl font-semibold">Gateway</h2>
-        <button
-          onClick={handleRestart}
-          disabled={restarting}
-          className="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors"
-        >
-          {restarting ? "Restarting…" : "Restart Gateway"}
-        </button>
-      </div>
-      <p className="text-xs text-gray-500 mb-6">
-        Enable channels to receive notifications and control flows remotely. Click "Restart Gateway" after changes.
-      </p>
-
-      {loading && <div className="text-gray-500">Loading...</div>}
-
-      {!loading && gateway && (
+      <div className="space-y-8">
         <div>
-          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3">Channels</h3>
-          <div className="space-y-3">
-            {CHANNELS.map((ch) => (
-              <ChannelCard key={ch.id} channel={ch} gateway={gateway} onSave={handleSave} />
-            ))}
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-xl font-semibold">Gateway</h2>
+            <button
+              onClick={handleRestart}
+              disabled={restarting}
+              className="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 transition-colors"
+            >
+              {restarting ? "Restarting…" : "Restart Gateway"}
+            </button>
           </div>
+          <p className="text-xs text-gray-500">
+            Enable channels to receive notifications and control flows remotely. Click a channel to configure it.
+          </p>
         </div>
+
+        {loading && <div className="text-gray-500">Loading...</div>}
+
+        {!loading && gateway && (
+          <>
+            {enabledChannels.length > 0 && (
+              <section>
+                <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-3">Enabled</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {enabledChannels.map((ch) => (
+                    <ChannelCard key={ch.id} channel={ch} gateway={gateway} onClick={() => setModalChannel(ch)} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {disabledChannels.length > 0 && (
+              <section>
+                <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-3">Not Enabled</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {disabledChannels.map((ch) => (
+                    <ChannelCard key={ch.id} channel={ch} gateway={gateway} onClick={() => setModalChannel(ch)} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </div>
+
+      {modalChannel && gateway && (
+        <ChannelConfigModal
+          channel={modalChannel}
+          gateway={gateway}
+          open={!!modalChannel}
+          onClose={() => setModalChannel(null)}
+          onSave={handleSave}
+        />
       )}
     </div>
   );

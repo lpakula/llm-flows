@@ -199,3 +199,88 @@ class TestFlowVersioningAPI:
     def test_approve_improvement_not_found(self, client, api_db):
         response = client.post("/api/inbox/nonexistent/improvement/approve")
         assert response.status_code == 404
+
+
+class TestGatewayAPI:
+    def test_get_gateway_config(self, client, api_db):
+        with patch("llmflows.ui.server.load_system_config", return_value={}):
+            response = client.get("/api/config/gateway")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_enabled"] is False
+        assert data["telegram_bot_token"] == ""
+        assert data["telegram_allowed_chat_ids"] == []
+        assert data["slack_enabled"] is False
+        assert data["slack_bot_token"] == ""
+        assert data["slack_app_token"] == ""
+        assert data["slack_allowed_channel_ids"] == []
+
+    def test_get_gateway_config_with_channels(self, client, api_db):
+        config = {
+            "channels": {
+                "telegram": {"enabled": True, "bot_token": "tok123", "allowed_chat_ids": [111]},
+                "slack": {"enabled": False, "bot_token": "", "app_token": "", "allowed_channel_ids": []},
+            }
+        }
+        with patch("llmflows.ui.server.load_system_config", return_value=config):
+            response = client.get("/api/config/gateway")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_enabled"] is True
+        assert data["telegram_bot_token"] == "tok123"
+        assert data["telegram_allowed_chat_ids"] == [111]
+
+    def test_update_gateway_config_telegram(self, client, api_db):
+        stored = {}
+        with (
+            patch("llmflows.ui.server.load_system_config", return_value=stored),
+            patch("llmflows.ui.server.save_system_config") as mock_save,
+            patch("llmflows.ui.server._signal_gateway_restart"),
+        ):
+            response = client.patch(
+                "/api/config/gateway",
+                json={"telegram_enabled": True, "telegram_bot_token": "new-tok"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_enabled"] is True
+        assert data["telegram_bot_token"] == "new-tok"
+        mock_save.assert_called_once()
+
+    def test_update_gateway_config_slack(self, client, api_db):
+        stored = {"channels": {"slack": {}}}
+        with (
+            patch("llmflows.ui.server.load_system_config", return_value=stored),
+            patch("llmflows.ui.server.save_system_config"),
+            patch("llmflows.ui.server._signal_gateway_restart"),
+        ):
+            response = client.patch(
+                "/api/config/gateway",
+                json={"slack_enabled": True, "slack_bot_token": "xoxb-test", "slack_app_token": "xapp-test"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["slack_enabled"] is True
+        assert data["slack_bot_token"] == "xoxb-test"
+        assert data["slack_app_token"] == "xapp-test"
+
+    def test_update_gateway_partial(self, client, api_db):
+        stored = {
+            "channels": {
+                "telegram": {"enabled": True, "bot_token": "old-tok", "allowed_chat_ids": [1, 2]},
+            }
+        }
+        with (
+            patch("llmflows.ui.server.load_system_config", return_value=stored),
+            patch("llmflows.ui.server.save_system_config"),
+            patch("llmflows.ui.server._signal_gateway_restart"),
+        ):
+            response = client.patch(
+                "/api/config/gateway",
+                json={"telegram_allowed_chat_ids": [1, 2, 3]},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_enabled"] is True
+        assert data["telegram_bot_token"] == "old-tok"
+        assert data["telegram_allowed_chat_ids"] == [1, 2, 3]
