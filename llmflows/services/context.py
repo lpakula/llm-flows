@@ -209,39 +209,8 @@ class ContextService:
         return flow_dir / "memory"
 
     @staticmethod
-    def _migrate_legacy_memory(flow_dir: Path) -> None:
-        """Move ``flow_dir/memory.md`` into ``flow_dir/memory/rejected-proposals.md``."""
-        legacy = flow_dir / "memory.md"
-        if not legacy.exists():
-            return
-        try:
-            content = legacy.read_text(errors="replace")
-        except (PermissionError, OSError):
-            return
-        if not content.strip():
-            legacy.unlink(missing_ok=True)
-            return
-        mem_dir = flow_dir / "memory"
-        mem_dir.mkdir(parents=True, exist_ok=True)
-        dest = mem_dir / "rejected-proposals.md"
-        if dest.exists():
-            try:
-                existing = dest.read_text(errors="replace")
-            except (PermissionError, OSError):
-                existing = ""
-            separator = "\n\n---\n\n" if existing.strip() else ""
-            dest.write_text(existing + separator + content)
-        else:
-            dest.write_text(content)
-        legacy.unlink(missing_ok=True)
-
-    @staticmethod
     def list_memory_files(flow_dir: Path) -> list[dict]:
-        """Return ``[{name, content}]`` for every file in the memory directory.
-
-        Also migrates a legacy ``memory.md`` file on first access.
-        """
-        ContextService._migrate_legacy_memory(flow_dir)
+        """Return ``[{name, content}]`` for every file in the memory directory."""
         mem_dir = flow_dir / "memory"
         if not mem_dir.is_dir():
             return []
@@ -263,39 +232,15 @@ class ContextService:
         return files
 
     @staticmethod
-    def read_all_memory(flow_dir: Path) -> str:
-        """Concatenate all memory files into a single string for prompt injection."""
-        files = ContextService.list_memory_files(flow_dir)
-        if not files:
-            return ""
-        parts = []
-        for f in files:
-            parts.append(f"### {f['name']}\n\n{f['content']}")
-        return "\n\n---\n\n".join(parts)
-
-    @staticmethod
-    def read_rejected_proposals(flow_dir: Path) -> list[dict]:
-        """Return only the rejected-proposals memory file as ``[{name, content}]``.
-
-        Used by the post-run step so it knows which improvements were already
-        rejected, without injecting every memory file into the prompt.
-        """
-        ContextService._migrate_legacy_memory(flow_dir)
+    def read_rejected_proposals(flow_dir: Path) -> str:
+        """Read the rejected-proposals.md file content as a single string."""
         f = flow_dir / "memory" / "rejected-proposals.md"
         if not f.exists():
-            return []
+            return ""
         try:
-            content = f.read_text(errors="replace").strip()
-            if content:
-                return [{"name": f.name, "content": content}]
+            return f.read_text(errors="replace").strip()
         except (PermissionError, OSError):
-            pass
-        return []
-
-    @staticmethod
-    def read_memory(flow_dir: Path) -> str:
-        """Read combined memory content (backward-compatible)."""
-        return ContextService.read_all_memory(flow_dir)
+            return ""
 
     @staticmethod
     def write_memory_file(flow_dir: Path, filename: str, content: str) -> None:

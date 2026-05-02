@@ -2258,9 +2258,6 @@ async def clear_flow_memory(flow_id: str):
         mem_dir = ContextService.get_memory_dir(flow_dir)
         if mem_dir.is_dir():
             shutil.rmtree(mem_dir)
-        legacy = flow_dir / "memory.md"
-        if legacy.exists():
-            legacy.unlink()
         return {"ok": True}
     finally:
         session.close()

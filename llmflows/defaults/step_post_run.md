@@ -26,13 +26,13 @@ You are a flow improvement analyst. Analyze this flow run and determine if the f
 {% endif -%}
 {% endif -%}
 
-{% if memory_files -%}
+{% if rejected_proposals -%}
 ## Rejected Proposals
 
 The following proposals were previously rejected by the user. Do **not** propose similar changes again.
-{% for mf in memory_files %}
-{{ mf.content }}
-{% endfor %}
+
+{{ rejected_proposals }}
+
 {% endif -%}
 ## Instructions
 

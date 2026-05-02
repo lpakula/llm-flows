@@ -209,26 +209,6 @@ class TestContextService:
         assert len(result) == 1
         assert result[0]["name"] == "has-content.md"
 
-    def test_read_all_memory(self, temp_dir):
-        flow_dir = temp_dir / "flow"
-        mem_dir = flow_dir / "memory"
-        mem_dir.mkdir(parents=True)
-        (mem_dir / "a.md").write_text("First file.")
-        (mem_dir / "b.md").write_text("Second file.")
-        result = ContextService.read_all_memory(flow_dir)
-        assert "a.md" in result
-        assert "First file." in result
-        assert "b.md" in result
-        assert "Second file." in result
-
-    def test_read_memory_backward_compat(self, temp_dir):
-        flow_dir = temp_dir / "flow"
-        mem_dir = flow_dir / "memory"
-        mem_dir.mkdir(parents=True)
-        (mem_dir / "data.md").write_text("Some data.")
-        result = ContextService.read_memory(flow_dir)
-        assert "Some data." in result
-
     def test_write_memory_file(self, temp_dir):
         flow_dir = temp_dir / "flow"
         ContextService.write_memory_file(flow_dir, "notes.md", "# Notes\nImportant.")
@@ -282,47 +262,17 @@ class TestContextService:
         ContextService.append_memory(flow_dir, "## Entry\nContent.")
         assert (flow_dir / "memory" / "rejected-proposals.md").exists()
 
-    def test_migrate_legacy_memory(self, temp_dir):
-        flow_dir = temp_dir / "flow"
-        flow_dir.mkdir(parents=True)
-        (flow_dir / "memory.md").write_text("## Old rejected\nLegacy content.")
-        files = ContextService.list_memory_files(flow_dir)
-        assert len(files) == 1
-        assert files[0]["name"] == "rejected-proposals.md"
-        assert "Legacy content" in files[0]["content"]
-        assert not (flow_dir / "memory.md").exists()
-
-    def test_migrate_legacy_memory_empty(self, temp_dir):
-        flow_dir = temp_dir / "flow"
-        flow_dir.mkdir(parents=True)
-        (flow_dir / "memory.md").write_text("   ")
-        files = ContextService.list_memory_files(flow_dir)
-        assert files == []
-        assert not (flow_dir / "memory.md").exists()
-
     def test_read_rejected_proposals(self, temp_dir):
         flow_dir = temp_dir / "flow"
         mem_dir = flow_dir / "memory"
         mem_dir.mkdir(parents=True)
         (mem_dir / "rejected-proposals.md").write_text("Don't add steps.")
-        (mem_dir / "context.md").write_text("Extra context.")
         result = ContextService.read_rejected_proposals(flow_dir)
-        assert len(result) == 1
-        assert result[0]["name"] == "rejected-proposals.md"
-        assert "Don't add steps" in result[0]["content"]
+        assert result == "Don't add steps."
 
     def test_read_rejected_proposals_empty(self, temp_dir):
         result = ContextService.read_rejected_proposals(temp_dir)
-        assert result == []
-
-    def test_read_rejected_proposals_migrates_legacy(self, temp_dir):
-        flow_dir = temp_dir / "flow"
-        flow_dir.mkdir(parents=True)
-        (flow_dir / "memory.md").write_text("Legacy rejected content.")
-        result = ContextService.read_rejected_proposals(flow_dir)
-        assert len(result) == 1
-        assert "Legacy rejected content" in result[0]["content"]
-        assert not (flow_dir / "memory.md").exists()
+        assert result == ""
 
     def test_get_memory_dir(self, temp_dir):
         flow_dir = temp_dir / "flow"
@@ -370,9 +320,7 @@ class TestContextService:
             "flow_version": 2,
             "outcome": "completed",
             "language": "English",
-            "memory_files": [
-                {"name": "rejected-proposals.md", "content": "Don't split the research step."},
-            ],
+            "rejected_proposals": "Don't split the research step.",
         })
         assert "Rejected Proposals" in result
         assert "Don't split the research step" in result
