@@ -1732,6 +1732,23 @@ async def dashboard():
 
 # --- Inbox endpoints ---
 
+@app.get("/api/inbox/muted")
+async def get_inbox_muted():
+    config = load_system_config()
+    return {"muted": config.get("daemon", {}).get("inbox_muted", False)}
+
+
+@app.post("/api/inbox/muted")
+async def set_inbox_muted(body: dict):
+    muted = bool(body.get("muted", False))
+    config = load_system_config()
+    if "daemon" not in config:
+        config["daemon"] = {}
+    config["daemon"]["inbox_muted"] = muted
+    save_system_config(config)
+    return {"muted": muted}
+
+
 @app.get("/api/inbox")
 async def get_inbox():
     """Return inbox items (awaiting_user + completed_run), enriched with context."""

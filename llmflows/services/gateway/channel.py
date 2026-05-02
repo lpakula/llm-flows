@@ -59,6 +59,10 @@ class ChannelManager:
 
     def notify(self, event: str, payload: dict[str, Any]) -> None:
         """Emit an event to all channels that subscribe to it."""
+        from ...config import load_system_config
+        if load_system_config().get("daemon", {}).get("inbox_muted", False):
+            logger.debug("Inbox muted — suppressing %s notification", event)
+            return
         for channel in self.channels:
             if event not in channel.subscribed_events:
                 continue

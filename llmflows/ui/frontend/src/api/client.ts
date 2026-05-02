@@ -121,6 +121,8 @@ export const api = {
 
   // Inbox
   getInbox: () => get<InboxResponse>("/api/inbox"),
+  getInboxMuted: () => get<{ muted: boolean }>("/api/inbox/muted"),
+  setInboxMuted: (muted: boolean) => post<{ muted: boolean }>("/api/inbox/muted", { muted }),
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
   approveImprovement: (itemId: string) => post<{ ok: boolean; flow_id: string; version: number }>(`/api/inbox/${itemId}/improvement/approve`),
   rejectImprovement: (itemId: string, reason: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/improvement/reject`, { reason }),
