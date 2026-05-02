@@ -421,10 +421,11 @@ class TelegramBot:
     # ── /help — show commands and chat ID ───────────────────────────────────
 
     async def _handle_help_command(self, update, context) -> None:
+        from ... import __version__
         chat_id = update.effective_chat.id
         self._active_chats.add(chat_id)
         await update.message.reply_text(
-            f"<b>llmflows bot</b>\n\n"
+            f"<b>llmflows bot</b> v{__version__}\n\n"
             f"Chat ID: <code>{chat_id}</code>\n\n"
             f"<b>Commands:</b>\n"
             f"/run — Start a flow\n"
@@ -530,6 +531,14 @@ class TelegramBot:
             await self._cb_cancel_run(query, data[len("cancelrun:"):])
             return
 
+        if data.startswith("accept_improvement:"):
+            await self._cb_accept_improvement(query, data[len("accept_improvement:"):])
+            return
+
+        if data.startswith("decline_improvement:"):
+            await self._cb_decline_improvement(query, data[len("decline_improvement:"):])
+            return
+
         if data.startswith("respond:"):
             step_run_id = data[len("respond:"):]
             self._awaiting_response[chat_id] = step_run_id
@@ -606,6 +615,72 @@ class TelegramBot:
             await query.edit_message_text(f"Cancelled <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
         finally:
             session.close()
+
+    # ── Flow improvement callbacks ─────────────────────────────────────────
+
+    async def _cb_accept_improvement(self, query, inbox_id: str) -> None:
+        session = self.session_factory()
+        try:
+            from ...db.models import InboxItem, FlowRun, Space as SpaceModel
+            item = session.query(InboxItem).filter_by(id=inbox_id).first()
+            if not item or item.type != "flow_improvement":
+                await query.edit_message_text("Improvement proposal not found.")
+                return
+            if item.archived_at:
+                await query.edit_message_text("Already handled.")
+                return
+
+            run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+            space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+            if not run or not space or not run.flow_id:
+                await query.edit_message_text("Run or flow not found.")
+                return
+
+            artifacts_dir = ContextService.get_artifacts_dir(
+                Path(space.path), run.id, run.flow_name or "",
+            )
+            flow_json = ContextService.read_flow_json(artifacts_dir)
+            if not flow_json or not flow_json.get("steps"):
+                await query.edit_message_text("No valid flow proposal found.")
+                return
+
+            flow = FlowService(session).apply_flow_proposal(run.flow_id, flow_json)
+            if not flow:
+                await query.edit_message_text("Failed to apply proposal.")
+                return
+
+            RunService(session).archive_inbox_item(inbox_id)
+            flow_name = run.flow_name or "?"
+            await query.edit_message_text(
+                f"✅ Accepted improvement for <b>{flow_name}</b> (v{flow.version})",
+                parse_mode="HTML",
+            )
+        finally:
+            session.close()
+
+    async def _cb_decline_improvement(self, query, inbox_id: str) -> None:
+        session = self.session_factory()
+        try:
+            RunService(session).archive_inbox_item(inbox_id)
+        finally:
+            session.close()
+
+        tracked = self._notification_photos.pop(inbox_id, [])
+        chat_id = query.message.chat_id
+        try:
+            await self._app.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+        except Exception:
+            try:
+                await query.edit_message_text("Declined.")
+            except Exception:
+                pass
+        for cid, message_id in tracked:
+            if message_id == query.message.message_id:
+                continue
+            try:
+                await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
+            except Exception:
+                logger.debug("Failed to delete message %s", message_id)
 
     # ── /run callback helpers ────────────────────────────────────────────────
 
@@ -762,6 +837,43 @@ class TelegramBot:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
                     pass
+
+            elif item.type == "flow_improvement":
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                if not run:
+                    await query.edit_message_text("Run not found.")
+                    return
+                flow_name = run.flow_name or "?"
+
+                improvement_text = ""
+                if space:
+                    try:
+                        artifacts_dir = ContextService.get_artifacts_dir(
+                            Path(space.path), run.id, run.flow_name or "",
+                        )
+                        improvement_text = ContextService.read_improvement(artifacts_dir)
+                    except (PermissionError, OSError):
+                        pass
+
+                text = f"<b>{flow_name}</b> — flow improvement proposed\n"
+                if improvement_text:
+                    detail_html = _to_telegram_html(improvement_text)
+                    text += f"\n{detail_html}"
+                else:
+                    text += "\n<i>No improvement details available.</i>"
+
+                markup = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"),
+                        InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"),
+                    ],
+                ])
+                sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
+                self._notification_photos[inbox_id] = sent_ids
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
         finally:
             session.close()
 
@@ -829,7 +941,10 @@ class TelegramBot:
         buttons = []
         if event == "step.awaiting_user" and step_run_id:
             buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
-        if inbox_id:
+        if event == "flow.improvement" and inbox_id:
+            buttons.append(InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"))
+            buttons.append(InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"))
+        elif inbox_id:
             buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
         if buttons:
             markup = InlineKeyboardMarkup([buttons])
