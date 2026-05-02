@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from llmflows.services.upgrade import (
+    _build_upgrade_cmd,
+    _detect_installer,
     _get_installed_version,
     kill_ui_processes,
     pip_upgrade,
@@ -14,16 +16,51 @@ from llmflows.services.upgrade import (
 )
 
 
-class TestPipUpgrade:
-    """pip_upgrade runs pip and captures version changes."""
+class TestDetectInstaller:
 
+    def test_uv(self):
+        with patch("llmflows.services.upgrade.sys") as mock_sys:
+            mock_sys.prefix = "/Users/me/.local/share/uv/tools/llmflows"
+            assert _detect_installer() == "uv"
+
+    def test_pipx(self):
+        with patch("llmflows.services.upgrade.sys") as mock_sys:
+            mock_sys.prefix = "/Users/me/.local/pipx/venvs/llmflows"
+            assert _detect_installer() == "pipx"
+
+    def test_pip_fallback(self):
+        with patch("llmflows.services.upgrade.sys") as mock_sys:
+            mock_sys.prefix = "/Users/me/venv"
+            assert _detect_installer() == "pip"
+
+
+class TestBuildUpgradeCmd:
+
+    @patch("llmflows.services.upgrade._detect_installer", return_value="uv")
+    @patch("llmflows.services.upgrade.shutil.which", return_value="/usr/local/bin/uv")
+    def test_uv_cmd(self, _which, _det):
+        cmd = _build_upgrade_cmd()
+        assert cmd[:2] == ["/usr/local/bin/uv", "tool"]
+        assert "upgrade" in cmd
+        assert "llmflows" in cmd
+
+    @patch("llmflows.services.upgrade._detect_installer", return_value="pipx")
+    @patch("llmflows.services.upgrade.shutil.which", return_value="/usr/local/bin/pipx")
+    def test_pipx_cmd(self, _which, _det):
+        cmd = _build_upgrade_cmd()
+        assert cmd == ["/usr/local/bin/pipx", "upgrade", "llmflows"]
+
+
+class TestPipUpgrade:
+    """pip_upgrade runs the appropriate upgrade command."""
+
+    @patch("llmflows.services.upgrade._get_installed_version", return_value="1.0.0")
     @patch("llmflows.services.upgrade.subprocess.run")
-    @patch("llmflows.services.upgrade._pip_executable", return_value="/usr/bin/pip")
-    def test_successful_upgrade(self, _mock_pip, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout="Successfully installed llmflows-1.0.0\n", stderr=""),
-            MagicMock(returncode=0, stdout="Name: llmflows\nVersion: 1.0.0\n"),
-        ]
+    @patch("llmflows.services.upgrade._build_upgrade_cmd", return_value=["uv", "tool", "upgrade", "llmflows"])
+    def test_successful_upgrade(self, _cmd, mock_run, _ver):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="Successfully installed llmflows-1.0.0\n", stderr=""
+        )
 
         success, old_ver, new_ver, output = pip_upgrade()
 
@@ -31,9 +68,10 @@ class TestPipUpgrade:
         assert new_ver == "1.0.0"
         assert "Successfully installed" in output
 
+    @patch("llmflows.services.upgrade._get_installed_version", return_value="0.21.0")
     @patch("llmflows.services.upgrade.subprocess.run")
-    @patch("llmflows.services.upgrade._pip_executable", return_value="/usr/bin/pip")
-    def test_failed_upgrade(self, _mock_pip, mock_run):
+    @patch("llmflows.services.upgrade._build_upgrade_cmd", return_value=["uv", "tool", "upgrade", "llmflows"])
+    def test_failed_upgrade(self, _cmd, mock_run, _ver):
         mock_run.return_value = MagicMock(
             returncode=1, stdout="", stderr="ERROR: No matching distribution"
         )
@@ -44,10 +82,10 @@ class TestPipUpgrade:
         assert "No matching distribution" in output
 
     @patch("llmflows.services.upgrade.subprocess.run")
-    @patch("llmflows.services.upgrade._pip_executable", return_value="/usr/bin/pip")
-    def test_timeout(self, _mock_pip, mock_run):
+    @patch("llmflows.services.upgrade._build_upgrade_cmd", return_value=["uv", "tool", "upgrade", "llmflows"])
+    def test_timeout(self, _cmd, mock_run):
         import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="pip", timeout=120)
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="uv", timeout=120)
 
         success, old_ver, new_ver, output = pip_upgrade()
 
@@ -57,17 +95,13 @@ class TestPipUpgrade:
 
 class TestGetInstalledVersion:
 
-    @patch("llmflows.services.upgrade.subprocess.run")
-    def test_parses_version(self, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout="Name: llmflows\nVersion: 0.22.0\nSummary: ...\n"
-        )
-        assert _get_installed_version("/usr/bin/pip", "0.21.0") == "0.22.0"
+    @patch("llmflows.services.upgrade.version", return_value="0.22.0")
+    def test_reads_from_metadata(self, _ver):
+        assert _get_installed_version("0.21.0") == "0.22.0"
 
-    @patch("llmflows.services.upgrade.subprocess.run")
-    def test_fallback_on_error(self, mock_run):
-        mock_run.side_effect = Exception("oops")
-        assert _get_installed_version("/usr/bin/pip", "0.21.0") == "0.21.0"
+    @patch("llmflows.services.upgrade.version", side_effect=Exception("oops"))
+    def test_fallback_on_error(self, _ver):
+        assert _get_installed_version("0.21.0") == "0.21.0"
 
 
 class TestKillUIProcesses:

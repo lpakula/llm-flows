@@ -2,56 +2,80 @@
 
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 logger = logging.getLogger("llmflows.upgrade")
 
 
-def _pip_executable() -> str:
-    return str(Path(sys.prefix) / "bin" / "pip")
+REPO_URL = "git+https://github.com/lpakula/llm-flows"
+
+
+def _detect_installer() -> str:
+    """Detect how llmflows was installed: ``'uv'``, ``'pipx'``, or ``'pip'``."""
+    prefix = sys.prefix
+    if "/uv/tools/" in prefix:
+        return "uv"
+    if "/pipx/venvs/" in prefix:
+        return "pipx"
+    return "pip"
 
 
 def _llmflows_bin() -> str:
     venv_bin = Path(sys.prefix) / "bin" / "llmflows"
     if venv_bin.is_file():
         return str(venv_bin)
-    import shutil
     return shutil.which("llmflows") or str(venv_bin)
 
 
+def _build_upgrade_cmd() -> list[str]:
+    """Return the command list to upgrade llmflows based on install method."""
+    installer = _detect_installer()
+    if installer == "uv":
+        uv = shutil.which("uv")
+        if uv:
+            return [uv, "tool", "upgrade", "--no-cache", "llmflows"]
+    elif installer == "pipx":
+        pipx = shutil.which("pipx")
+        if pipx:
+            return [pipx, "upgrade", "llmflows"]
+    pip_bin = Path(sys.prefix) / "bin" / "pip"
+    if pip_bin.is_file():
+        return [str(pip_bin), "install", "--upgrade", "llmflows"]
+    return [sys.executable, "-m", "pip", "install", "--upgrade", "llmflows"]
+
+
 def pip_upgrade() -> tuple[bool, str, str, str]:
-    """Upgrade llmflows via pip.
+    """Upgrade llmflows via the appropriate package manager.
 
     Returns ``(success, old_version, new_version, output)``.
     """
     from .. import __version__ as old_version
 
-    pip = _pip_executable()
+    cmd = _build_upgrade_cmd()
     try:
         result = subprocess.run(
-            [pip, "install", "--upgrade", "llmflows"],
+            cmd,
             capture_output=True, text=True, timeout=120,
         )
         output = (result.stdout + result.stderr).strip()
         success = result.returncode == 0
     except subprocess.TimeoutExpired:
-        return False, old_version, old_version, "pip install timed out after 120s"
+        return False, old_version, old_version, "upgrade timed out after 120s"
     except Exception as e:
         return False, old_version, old_version, str(e)
 
-    new_version = _get_installed_version(pip, old_version)
+    new_version = _get_installed_version(old_version)
     return success, old_version, new_version, output
 
 
-def _get_installed_version(pip: str, fallback: str) -> str:
+def _get_installed_version(fallback: str) -> str:
     try:
-        r = subprocess.run([pip, "show", "llmflows"], capture_output=True, text=True)
-        for line in r.stdout.splitlines():
-            if line.startswith("Version:"):
-                return line.split(":", 1)[1].strip()
+        return version("llmflows")
     except Exception:
         pass
     return fallback

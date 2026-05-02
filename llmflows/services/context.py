@@ -1,11 +1,13 @@
 """Context service -- renders step prompts and collects artifacts."""
 
-
+import logging
 from pathlib import Path
 
 from jinja2 import Environment, TemplateError
 
 from ..defaults import get_defaults_dir
+
+logger = logging.getLogger(__name__)
 
 DEFAULTS_DIR = get_defaults_dir()
 
@@ -40,6 +42,7 @@ class ContextService:
             template = env.from_string(template_file.read_text())
             return template.render(context)
         except TemplateError:
+            logger.exception("Failed to render step_start.md template")
             return ""
 
     def render_post_run_step(self, context: dict) -> str:
@@ -52,6 +55,7 @@ class ContextService:
             template = env.from_string(template_file.read_text())
             return template.render(context)
         except TemplateError:
+            logger.exception("Failed to render step_post_run.md template")
             return ""
 
     @staticmethod
