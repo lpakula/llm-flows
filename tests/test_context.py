@@ -300,6 +300,30 @@ class TestContextService:
         assert files == []
         assert not (flow_dir / "memory.md").exists()
 
+    def test_read_rejected_proposals(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "rejected-proposals.md").write_text("Don't add steps.")
+        (mem_dir / "context.md").write_text("Extra context.")
+        result = ContextService.read_rejected_proposals(flow_dir)
+        assert len(result) == 1
+        assert result[0]["name"] == "rejected-proposals.md"
+        assert "Don't add steps" in result[0]["content"]
+
+    def test_read_rejected_proposals_empty(self, temp_dir):
+        result = ContextService.read_rejected_proposals(temp_dir)
+        assert result == []
+
+    def test_read_rejected_proposals_migrates_legacy(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "memory.md").write_text("Legacy rejected content.")
+        result = ContextService.read_rejected_proposals(flow_dir)
+        assert len(result) == 1
+        assert "Legacy rejected content" in result[0]["content"]
+        assert not (flow_dir / "memory.md").exists()
+
     def test_get_memory_dir(self, temp_dir):
         flow_dir = temp_dir / "flow"
         result = ContextService.get_memory_dir(flow_dir)
@@ -331,8 +355,8 @@ class TestContextService:
         assert "OOM" in result
         assert "build" in result
 
-    def test_post_run_template_includes_memory_files(self, temp_dir):
-        """Verify the post-run template renders memory files when provided."""
+    def test_post_run_template_includes_rejected_proposals(self, temp_dir):
+        """Verify the post-run template renders rejected proposals when provided."""
         from jinja2 import Environment, ChainableUndefined
         from llmflows.services.context import DEFAULTS_DIR
         template_file = DEFAULTS_DIR / "step_post_run.md"
@@ -348,36 +372,13 @@ class TestContextService:
             "language": "English",
             "memory_files": [
                 {"name": "rejected-proposals.md", "content": "Don't split the research step."},
-                {"name": "context.md", "content": "Project uses Python 3.12."},
             ],
         })
-        assert "Flow Memory" in result
-        assert "rejected-proposals.md" in result
+        assert "Rejected Proposals" in result
         assert "Don't split the research step" in result
-        assert "context.md" in result
-
-    def test_post_run_template_falls_back_to_legacy_memory(self, temp_dir):
-        """Verify the template falls back to old memory string if no memory_files."""
-        from jinja2 import Environment, ChainableUndefined
-        from llmflows.services.context import DEFAULTS_DIR
-        template_file = DEFAULTS_DIR / "step_post_run.md"
-        if not template_file.exists():
-            return
-        env = Environment(autoescape=False, undefined=ChainableUndefined)
-        template = env.from_string(template_file.read_text())
-        result = template.render({
-            "run": {"id": "abc123", "dir": "/tmp/run"},
-            "flow_name": "test-flow",
-            "flow_version": 2,
-            "outcome": "completed",
-            "language": "English",
-            "memory": "## Legacy rejected proposal",
-        })
-        assert "Flow Memory" in result
-        assert "Legacy rejected proposal" in result
 
     def test_post_run_template_excludes_memory_when_empty(self, temp_dir):
-        """Verify the post-run template omits memory section when not provided."""
+        """Verify the post-run template omits rejected proposals section when not provided."""
         from jinja2 import Environment, ChainableUndefined
         from llmflows.services.context import DEFAULTS_DIR
         template_file = DEFAULTS_DIR / "step_post_run.md"
@@ -392,10 +393,10 @@ class TestContextService:
             "outcome": "completed",
             "language": "English",
         })
-        assert "Flow Memory" not in result
+        assert "Rejected Proposals" not in result
 
-    def test_step_template_includes_memory_files(self, temp_dir):
-        """Verify step_start.md renders memory files when provided."""
+    def test_step_template_does_not_include_memory(self, temp_dir):
+        """Step prompts do not inject memory files — steps manage their own."""
         svc = self._setup_dirs(temp_dir)
         result = svc.render_step_instructions({
             "run_id": "abc123",
@@ -409,10 +410,5 @@ class TestContextService:
             "artifacts_dir": "/tmp/artifacts/01-implement",
             "attachment": {"dir": "/tmp/attachments"},
             "gate_failures": None,
-            "memory_files": [
-                {"name": "context.md", "content": "Use Python 3.12."},
-            ],
         })
-        assert "Flow Memory" in result
-        assert "context.md" in result
-        assert "Use Python 3.12" in result
+        assert "Flow Memory" not in result

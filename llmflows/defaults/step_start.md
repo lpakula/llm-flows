@@ -63,24 +63,6 @@ Read each skill file and follow its instructions before starting the step.
 - **{{ skill.name }}** — {{ skill.description or "No description" }} → `{{ skill.path }}`
 {%- endfor %}
 {%- endif %}
-{%- if memory_files %}
-
----
-
-## Flow Memory
-
-Persistent data shared across runs of this flow. Located in `{{ flow.dir }}/memory/`.
-
-You may create or update memory files by writing to this directory. Each file persists across runs and is visible to all steps.
-{%- for mf in memory_files %}
-
-### {{ mf.name }}
-
-```
-{{ mf.content }}
-```
-{%- endfor %}
-{%- endif %}
 
 ---
 

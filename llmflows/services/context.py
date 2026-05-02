@@ -274,6 +274,25 @@ class ContextService:
         return "\n\n---\n\n".join(parts)
 
     @staticmethod
+    def read_rejected_proposals(flow_dir: Path) -> list[dict]:
+        """Return only the rejected-proposals memory file as ``[{name, content}]``.
+
+        Used by the post-run step so it knows which improvements were already
+        rejected, without injecting every memory file into the prompt.
+        """
+        ContextService._migrate_legacy_memory(flow_dir)
+        f = flow_dir / "memory" / "rejected-proposals.md"
+        if not f.exists():
+            return []
+        try:
+            content = f.read_text(errors="replace").strip()
+            if content:
+                return [{"name": f.name, "content": content}]
+        except (PermissionError, OSError):
+            pass
+        return []
+
+    @staticmethod
     def read_memory(flow_dir: Path) -> str:
         """Read combined memory content (backward-compatible)."""
         return ContextService.read_all_memory(flow_dir)

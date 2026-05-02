@@ -27,21 +27,12 @@ You are a flow improvement analyst. Analyze this flow run and determine if the f
 {% endif -%}
 
 {% if memory_files -%}
-## Flow Memory
+## Rejected Proposals
 
-The following memory files contain persistent data for this flow. Pay special attention to `rejected-proposals.md` — do **not** propose changes that were previously rejected.
+The following proposals were previously rejected by the user. Do **not** propose similar changes again.
 {% for mf in memory_files %}
-### {{ mf.name }}
-
 {{ mf.content }}
 {% endfor %}
-{% elif memory -%}
-## Flow Memory
-
-The following proposals were previously rejected by the user. Do **not** propose similar changes again:
-
-{{ memory }}
-
 {% endif -%}
 ## Instructions
 

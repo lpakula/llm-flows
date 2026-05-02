@@ -1196,8 +1196,7 @@ class Daemon:
             flow_version = flow.version or 1
 
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
-        memory_files = ContextService.list_memory_files(flow_dir)
-        memory = ContextService.read_all_memory(flow_dir)
+        memory_files = ContextService.read_rejected_proposals(flow_dir)
 
         post_run_vars = {
             "run": {"id": run.id, "dir": str(artifacts_dir)},
@@ -1205,7 +1204,6 @@ class Daemon:
             "flow_version": flow_version,
             "outcome": run.outcome or "completed",
             "language": language,
-            "memory": memory,
             "memory_files": memory_files,
         }
         if error_context:
