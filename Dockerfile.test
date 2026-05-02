@@ -17,6 +17,7 @@ WORKDIR /app
 # Copy project structure for installation
 COPY pyproject.toml README.md ./
 COPY llmflows/ llmflows/
+COPY scripts/ scripts/
 
 # Install package with dev dependencies
 RUN pip install --no-cache-dir -e ".[dev]"
