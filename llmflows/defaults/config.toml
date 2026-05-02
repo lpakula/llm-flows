@@ -3,6 +3,7 @@ poll_interval_seconds = 10
 run_timeout_minutes = 90
 gate_timeout_seconds = 60
 summarizer_language = "English"
+inbox_muted = false
 [ui]
 port = 4300
 host = "localhost"

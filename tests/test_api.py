@@ -395,3 +395,41 @@ class TestFlowMemoryAPI:
 
             session.close()
             Base.metadata.drop_all(engine)
+
+
+class TestInboxMuteAPI:
+    def test_get_inbox_muted_default(self, client):
+        with patch("llmflows.ui.server.load_system_config", return_value={"daemon": {}}):
+            response = client.get("/api/inbox/muted")
+            assert response.status_code == 200
+            assert response.json()["muted"] is False
+
+    def test_get_inbox_muted_true(self, client):
+        with patch("llmflows.ui.server.load_system_config", return_value={"daemon": {"inbox_muted": True}}):
+            response = client.get("/api/inbox/muted")
+            assert response.status_code == 200
+            assert response.json()["muted"] is True
+
+    def test_set_inbox_muted(self, client):
+        saved = {}
+        def mock_save(config):
+            saved["config"] = config
+
+        with patch("llmflows.ui.server.load_system_config", return_value={"daemon": {}}), \
+             patch("llmflows.ui.server.save_system_config", mock_save):
+            response = client.post("/api/inbox/muted", json={"muted": True})
+            assert response.status_code == 200
+            assert response.json()["muted"] is True
+            assert saved["config"]["daemon"]["inbox_muted"] is True
+
+    def test_set_inbox_unmuted(self, client):
+        saved = {}
+        def mock_save(config):
+            saved["config"] = config
+
+        with patch("llmflows.ui.server.load_system_config", return_value={"daemon": {"inbox_muted": True}}), \
+             patch("llmflows.ui.server.save_system_config", mock_save):
+            response = client.post("/api/inbox/muted", json={"muted": False})
+            assert response.status_code == 200
+            assert response.json()["muted"] is False
+            assert saved["config"]["daemon"]["inbox_muted"] is False

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle, FolderPlus, Folder, FolderGit2, ChevronUp, Loader2 } from "lucide-react";
+import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle, FolderPlus, Folder, FolderGit2, ChevronUp, Loader2, BellOff, Bell } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
@@ -168,6 +168,7 @@ export function Sidebar() {
   const [showRegister, setShowRegister] = useState(false);
   const spacePickerRef = useRef<HTMLDivElement>(null);
   const [inboxCount, setInboxCount] = useState(0);
+  const [inboxMuted, setInboxMuted] = useState(false);
 
   const selectedSpace = spaces.find((s) => s.id === selectedSpaceId) || null;
 
@@ -179,6 +180,18 @@ export function Sidebar() {
   }, []);
   useEffect(() => { refreshInbox(); }, [refreshInbox]);
   useInterval(refreshInbox, 10000);
+
+  useEffect(() => {
+    api.getInboxMuted().then((d) => setInboxMuted(d.muted)).catch(() => {});
+  }, []);
+
+  const toggleMute = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = !inboxMuted;
+    setInboxMuted(next);
+    try { await api.setInboxMuted(next); } catch { setInboxMuted(!next); }
+  };
 
   useEffect(() => {
     const onInboxChanged = () => { refreshInbox(); };
@@ -226,15 +239,28 @@ export function Sidebar() {
 
       {/* Inbox + Chat — space-agnostic, always visible */}
       <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2 space-y-0.5">
-        <NavLink to="/inbox" className={navClass}>
-          <Inbox size={14} className="flex-shrink-0" />
-          <span className="flex-1">Inbox</span>
-          {inboxCount > 0 && (
-            <span className="ml-auto bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-              {inboxCount}
-            </span>
-          )}
-        </NavLink>
+        <div className="flex items-center">
+          <NavLink to="/inbox" className={(p) => `flex-1 min-w-0 ${navClass(p)}`}>
+            <Inbox size={14} className="flex-shrink-0" />
+            <span className="flex-1">Inbox</span>
+            {inboxCount > 0 && (
+              <span className="ml-auto bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                {inboxCount}
+              </span>
+            )}
+          </NavLink>
+          <button
+            onClick={toggleMute}
+            title={inboxMuted ? "Unmute notifications" : "Mute notifications"}
+            className={`flex-shrink-0 p-1.5 rounded-lg transition ${
+              inboxMuted
+                ? "text-amber-400 hover:bg-gray-800"
+                : "text-gray-600 hover:text-gray-400 hover:bg-gray-800/50"
+            }`}
+          >
+            {inboxMuted ? <BellOff size={13} /> : <Bell size={13} />}
+          </button>
+        </div>
         <NavLink to="/chat" className={navClass}>
           <MessageCircle size={14} className="flex-shrink-0" />
           Chat

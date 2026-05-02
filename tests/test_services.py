@@ -857,3 +857,52 @@ class TestFlowVersioning:
         assert result is not None
         test_db.refresh(result)
         assert result.version == 2
+
+
+class TestChannelManagerMute:
+    def test_notify_suppressed_when_muted(self):
+        from llmflows.services.gateway.channel import ChannelManager
+        from unittest.mock import MagicMock
+
+        ch = MagicMock()
+        ch.name = "test"
+        ch.subscribed_events = ["run.completed"]
+        mgr = ChannelManager()
+        mgr.register(ch)
+
+        muted_config = {"daemon": {"inbox_muted": True}}
+        with patch("llmflows.config.load_system_config", return_value=muted_config):
+            mgr.notify("run.completed", {"flow_name": "test"})
+
+        ch.send.assert_not_called()
+
+    def test_notify_sent_when_not_muted(self):
+        from llmflows.services.gateway.channel import ChannelManager
+        from unittest.mock import MagicMock
+
+        ch = MagicMock()
+        ch.name = "test"
+        ch.subscribed_events = ["run.completed"]
+        mgr = ChannelManager()
+        mgr.register(ch)
+
+        unmuted_config = {"daemon": {"inbox_muted": False}}
+        with patch("llmflows.config.load_system_config", return_value=unmuted_config):
+            mgr.notify("run.completed", {"flow_name": "test"})
+
+        ch.send.assert_called_once_with("run.completed", {"flow_name": "test"})
+
+    def test_notify_sent_when_no_mute_key(self):
+        from llmflows.services.gateway.channel import ChannelManager
+        from unittest.mock import MagicMock
+
+        ch = MagicMock()
+        ch.name = "test"
+        ch.subscribed_events = ["step.awaiting_user"]
+        mgr = ChannelManager()
+        mgr.register(ch)
+
+        with patch("llmflows.config.load_system_config", return_value={"daemon": {}}):
+            mgr.notify("step.awaiting_user", {"step_name": "ask"})
+
+        ch.send.assert_called_once()
