@@ -672,7 +672,6 @@ class TelegramBot:
     async def _cb_accept_improvement(self, query, inbox_id: str) -> None:
         session = self.session_factory()
         try:
-            from ...db.models import InboxItem, FlowRun, Space as SpaceModel
             item = session.query(InboxItem).filter_by(id=inbox_id).first()
             if not item or item.type != "flow_improvement":
                 await query.edit_message_text("Improvement proposal not found.")
@@ -712,6 +711,24 @@ class TelegramBot:
     async def _cb_decline_improvement(self, query, inbox_id: str) -> None:
         session = self.session_factory()
         try:
+            item = session.query(InboxItem).filter_by(id=inbox_id).first()
+            if item and item.type == "flow_improvement":
+                run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                space = session.query(SpaceModel).filter_by(id=item.space_id).first()
+                if run and space:
+                    artifacts_dir = ContextService.get_artifacts_dir(
+                        Path(space.path), run.id, run.flow_name or "",
+                    )
+                    improvement = ContextService.read_improvement(artifacts_dir)
+                    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                    entry_parts = [f"## Rejected proposal ({ts})", ""]
+                    if improvement:
+                        entry_parts.append(f"**Proposal:** {improvement}")
+                        entry_parts.append("")
+                    entry_parts.append(f"**Run:** {run.id}")
+                    flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+                    ContextService.append_memory(flow_dir, "\n".join(entry_parts))
+
             RunService(session).archive_inbox_item(inbox_id)
         finally:
             session.close()
