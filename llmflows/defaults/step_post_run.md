@@ -26,6 +26,14 @@ You are a flow improvement analyst. Analyze this flow run and determine if the f
 {% endif -%}
 {% endif -%}
 
+{% if memory -%}
+## Flow Memory
+
+The following proposals were previously rejected by the user. Do **not** propose similar changes again:
+
+{{ memory }}
+
+{% endif -%}
 ## Instructions
 
 Read all previous step artifacts in the run directory. Then:

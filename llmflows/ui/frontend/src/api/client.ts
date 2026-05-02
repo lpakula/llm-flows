@@ -123,6 +123,7 @@ export const api = {
   getInbox: () => get<InboxResponse>("/api/inbox"),
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
   approveImprovement: (itemId: string) => post<{ ok: boolean; flow_id: string; version: number }>(`/api/inbox/${itemId}/improvement/approve`),
+  rejectImprovement: (itemId: string, reason: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/improvement/reject`, { reason }),
 
   // Queue
   getQueue: () => get<FlowRun[]>("/api/queue"),
@@ -150,6 +151,8 @@ export const api = {
   listFlowVersions: (flowId: string) => get<FlowVersion[]>(`/api/flows/${flowId}/versions`),
   rollbackFlow: (flowId: string, versionId: string) =>
     post<Flow>(`/api/flows/${flowId}/rollback/${versionId}`),
+  getFlowMemory: (flowId: string) => get<{ memory: string }>(`/api/flows/${flowId}/memory`),
+  clearFlowMemory: (flowId: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory`),
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);

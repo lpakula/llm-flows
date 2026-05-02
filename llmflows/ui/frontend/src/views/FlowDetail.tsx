@@ -17,7 +17,7 @@ import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2 } from "lucide-react";
 import { marked } from "marked";
 import { FlowChatWindow } from "@/views/Chat";
 
@@ -108,6 +108,10 @@ export function FlowDetailView() {
   const [versions, setVersions] = useState<FlowVersion[]>([]);
   const [versionsOpen, setVersionsOpen] = useState(false);
 
+  // Flow memory
+  const [memory, setMemory] = useState("");
+  const [memoryOpen, setMemoryOpen] = useState(false);
+
   // Floating chat window
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -146,6 +150,10 @@ export function FlowDetailView() {
       const v = await api.listFlowVersions(flowId!);
       setVersions(v);
     } catch { /* versions may not exist yet */ }
+    try {
+      const m = await api.getFlowMemory(flowId!);
+      setMemory(m.memory || "");
+    } catch { /* memory may not exist yet */ }
   }, [flowId, setSelectedSpaceId]);
 
   useEffect(() => {
@@ -731,6 +739,40 @@ export function FlowDetailView() {
                     >Rollback</button>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Flow Memory */}
+      {memory && (
+        <div className="mb-4">
+          <button
+            onClick={() => setMemoryOpen(!memoryOpen)}
+            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 mb-2"
+          >
+            <Brain size={12} />
+            <span>Flow Memory</span>
+            <span className="text-[10px]">{memoryOpen ? "\u25B2" : "\u25BC"}</span>
+          </button>
+          {memoryOpen && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 max-h-60 overflow-y-auto">
+                <MarkdownContent text={memory} className="text-xs text-gray-400" />
+              </div>
+              <div className="px-4 py-2 border-t border-gray-800 flex justify-end">
+                <button
+                  onClick={async () => {
+                    if (!confirm("Clear all flow memory? This cannot be undone.")) return;
+                    await api.clearFlowMemory(flow.id);
+                    setMemory("");
+                    setMemoryOpen(false);
+                  }}
+                  className="text-[11px] text-red-500 hover:text-red-400 inline-flex items-center gap-1"
+                >
+                  <Trash2 size={10} /> Clear memory
+                </button>
               </div>
             </div>
           )}

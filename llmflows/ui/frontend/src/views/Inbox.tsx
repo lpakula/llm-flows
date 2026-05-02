@@ -144,19 +144,31 @@ function FlowImprovementCard({
 }: {
   item: FlowImprovementItem;
   onApprove: (inboxId: string) => Promise<void>;
-  onReject: (inboxId: string) => Promise<void>;
+  onReject: (inboxId: string, reason: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
   const [acting, setActing] = useState(false);
   const navigate = useNavigate();
 
-  const handle = async (action: "approve" | "reject") => {
+  const handleApprove = async () => {
     setActing(true);
     try {
-      if (action === "approve") await onApprove(item.inbox_id);
-      else await onReject(item.inbox_id);
+      await onApprove(item.inbox_id);
     } finally {
       setActing(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setActing(true);
+    try {
+      await onReject(item.inbox_id, rejectReason);
+    } finally {
+      setActing(false);
+      setRejecting(false);
+      setRejectReason("");
     }
   };
 
@@ -193,29 +205,72 @@ function FlowImprovementCard({
           <div className="bg-gray-800/60 border border-gray-700/50 rounded-lg px-4 py-3 mt-4 mb-4 max-h-80 overflow-y-auto">
             <MarkdownContent text={item.summary} className="text-sm text-gray-300" />
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => handle("approve")}
-              disabled={acting}
-              className="text-xs font-medium text-green-500 hover:text-green-400 disabled:opacity-40 transition"
-            >
-              {acting ? "..." : "Approve"}
-            </button>
-            <button
-              onClick={() => handle("reject")}
-              disabled={acting}
-              className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
-            >
-              Reject
-            </button>
-            <span className="flex-1" />
-            <button
-              onClick={() => navigate(flowUrl(item.space_id, item.flow_id))}
-              className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
-            >
-              View flow <ArrowRight size={10} />
-            </button>
-          </div>
+
+          {rejecting ? (
+            <div className="space-y-2">
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleReject();
+                  }
+                  if (e.key === "Escape") {
+                    setRejecting(false);
+                    setRejectReason("");
+                  }
+                }}
+                placeholder="Why are you rejecting this? (optional, saved to flow memory)"
+                rows={1}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-gray-600 focus:border-gray-600 resize-none overflow-hidden"
+                disabled={acting}
+                autoFocus
+                onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleReject}
+                  disabled={acting}
+                  className="text-xs font-medium text-red-500 hover:text-red-400 disabled:opacity-40 transition"
+                >
+                  {acting ? "..." : "Confirm reject"}
+                </button>
+                <button
+                  onClick={() => { setRejecting(false); setRejectReason(""); }}
+                  disabled={acting}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+                >
+                  Cancel
+                </button>
+                <span className="text-[10px] text-gray-700 flex-1">Enter to confirm, Esc to cancel</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleApprove}
+                disabled={acting}
+                className="text-xs font-medium text-green-500 hover:text-green-400 disabled:opacity-40 transition"
+              >
+                {acting ? "..." : "Approve"}
+              </button>
+              <button
+                onClick={() => setRejecting(true)}
+                disabled={acting}
+                className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+              >
+                Reject
+              </button>
+              <span className="flex-1" />
+              <button
+                onClick={() => navigate(flowUrl(item.space_id, item.flow_id))}
+                className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
+              >
+                View flow <ArrowRight size={10} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -338,9 +393,9 @@ export function InboxView() {
     }
   };
 
-  const handleRejectImprovement = async (inboxId: string) => {
+  const handleRejectImprovement = async (inboxId: string, reason: string) => {
     try {
-      await api.archiveInboxItem(inboxId);
+      await api.rejectImprovement(inboxId, reason);
       await refresh();
       window.dispatchEvent(new Event("inbox-updated"));
     } catch (e) {

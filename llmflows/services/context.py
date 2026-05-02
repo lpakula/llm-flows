@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from jinja2 import Environment, TemplateError
+from jinja2 import ChainableUndefined, Environment, TemplateError
 
 from ..defaults import get_defaults_dir
 
@@ -48,7 +48,7 @@ class ContextService:
         if not template_file.exists():
             return ""
         try:
-            env = Environment(autoescape=False)
+            env = Environment(autoescape=False, undefined=ChainableUndefined)
             template = env.from_string(template_file.read_text())
             return template.render(context)
         except TemplateError:
@@ -202,6 +202,31 @@ class ContextService:
         except (json.JSONDecodeError, PermissionError, OSError):
             pass
         return None
+
+    @staticmethod
+    def read_memory(flow_dir: Path) -> str:
+        """Read memory.md from a flow directory, if it exists."""
+        f = flow_dir / "memory.md"
+        if not f.exists():
+            return ""
+        try:
+            return f.read_text(errors="replace").strip()
+        except (PermissionError, OSError):
+            return ""
+
+    @staticmethod
+    def append_memory(flow_dir: Path, entry: str) -> None:
+        """Append an entry to memory.md in the flow directory."""
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        f = flow_dir / "memory.md"
+        existing = ""
+        if f.exists():
+            try:
+                existing = f.read_text(errors="replace")
+            except (PermissionError, OSError):
+                pass
+        separator = "\n\n---\n\n" if existing.strip() else ""
+        f.write_text(existing + separator + entry + "\n")
 
     @staticmethod
     def _safe_flow_dir(flow_name: str) -> str:

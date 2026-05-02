@@ -183,6 +183,45 @@ class TestContextService:
         result = ContextService.read_flow_json(temp_dir)
         assert result is None
 
+    def test_read_memory(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "memory.md").write_text("## Rejected proposal\nDon't add extra steps.")
+        result = ContextService.read_memory(flow_dir)
+        assert "Rejected proposal" in result
+        assert "Don't add extra steps" in result
+
+    def test_read_memory_missing(self, temp_dir):
+        result = ContextService.read_memory(temp_dir)
+        assert result == ""
+
+    def test_append_memory_new_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        ContextService.append_memory(flow_dir, "## First entry\nSome content.")
+        memory_file = flow_dir / "memory.md"
+        assert memory_file.exists()
+        content = memory_file.read_text()
+        assert "First entry" in content
+        assert "Some content" in content
+
+    def test_append_memory_existing_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "memory.md").write_text("## First\nOld entry.")
+        ContextService.append_memory(flow_dir, "## Second\nNew entry.")
+        content = (flow_dir / "memory.md").read_text()
+        assert "First" in content
+        assert "Old entry" in content
+        assert "---" in content
+        assert "Second" in content
+        assert "New entry" in content
+
+    def test_append_memory_creates_directory(self, temp_dir):
+        flow_dir = temp_dir / "nonexistent" / "flow"
+        ContextService.append_memory(flow_dir, "## Entry\nContent.")
+        assert (flow_dir / "memory.md").exists()
+
     def test_render_post_run_step(self, temp_dir):
         ctx = ContextService(temp_dir)
         result = ctx.render_post_run_step({
@@ -208,3 +247,42 @@ class TestContextService:
         assert "Error Details" in result
         assert "OOM" in result
         assert "build" in result
+
+    def test_post_run_template_includes_memory(self, temp_dir):
+        """Verify the post-run template renders memory when provided."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 2,
+            "outcome": "completed",
+            "language": "English",
+            "memory": "## Rejected: don't split the research step.",
+        })
+        assert "Flow Memory" in result
+        assert "don't split the research step" in result
+        assert "Do **not** propose similar changes" in result
+
+    def test_post_run_template_excludes_memory_when_empty(self, temp_dir):
+        """Verify the post-run template omits memory section when not provided."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 1,
+            "outcome": "completed",
+            "language": "English",
+        })
+        assert "Flow Memory" not in result
