@@ -80,6 +80,7 @@ class Daemon:
     def __init__(self):
         self.running = False
         self._stop_event = threading.Event()
+        self._reexec = False
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
@@ -212,6 +213,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGUSR1, self._handle_gateway_restart)
+        signal.signal(signal.SIGUSR2, self._handle_reexec)
 
         for ch in self._build_channels():
             self.notifications.register(ch)
@@ -227,6 +229,10 @@ class Daemon:
             self._stop_event.wait(self.poll_interval)
 
         self.notifications.stop_all()
+
+        if self._reexec:
+            self._do_reexec()
+
         logger.info("Daemon stopped")
 
     def _handle_signal(self, signum, frame):
@@ -237,6 +243,26 @@ class Daemon:
     def _handle_gateway_restart(self, signum, frame):
         logger.info("Received SIGUSR1, restarting gateway channels")
         self.restart_channels()
+
+    def _handle_reexec(self, signum, frame):
+        logger.info("Received SIGUSR2, will re-exec after shutdown")
+        self._reexec = True
+        self.running = False
+        self._stop_event.set()
+
+    def _do_reexec(self) -> None:
+        """Replace the current process with a fresh daemon to pick up new code."""
+        import os
+        import sys
+
+        remove_pid_file()
+        bin_path = Path(sys.prefix) / "bin" / "llmflows"
+        if not bin_path.is_file():
+            import shutil
+            bin_path = Path(shutil.which("llmflows") or str(bin_path))
+        args = [str(bin_path), "daemon", "start", "--foreground"]
+        logger.info("Re-exec: %s", " ".join(args))
+        os.execv(str(bin_path), args)
 
     def _tick(self) -> None:
         """Single daemon tick -- check all spaces for actionable transitions."""
