@@ -10,6 +10,7 @@ from .flow import flow
 from .mcp import connectors
 from .run import run
 from .ui import ui
+from .upgrade import upgrade
 
 
 @click.group()
@@ -27,3 +28,4 @@ cli.add_command(flow)
 cli.add_command(connectors)
 cli.add_command(run)
 cli.add_command(ui)
+cli.add_command(upgrade)

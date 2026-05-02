@@ -220,6 +220,7 @@ class TelegramBot:
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
+        app.add_handler(CommandHandler("upgrade", self._handle_upgrade_command))
         app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -251,6 +252,7 @@ class TelegramBot:
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
             BotCommand("inbox", "Show inbox items"),
+            BotCommand("upgrade", "Upgrade llmflows & restart"),
             BotCommand("help", "Show commands & chat ID"),
         ])
         logger.info("Telegram bot commands registered")
@@ -418,6 +420,54 @@ class TelegramBot:
         finally:
             session.close()
 
+    # ── /upgrade command — pull latest version and restart ──────────────────
+
+    async def _handle_upgrade_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        await update.message.reply_text("Upgrading llmflows…")
+
+        from ...services.upgrade import (
+            pip_upgrade, kill_ui_processes,
+            start_ui_background, trigger_daemon_reexec,
+        )
+
+        loop = asyncio.get_event_loop()
+        success, old_ver, new_ver, output = await loop.run_in_executor(
+            None, pip_upgrade,
+        )
+
+        if not success:
+            short = output[:800] if len(output) > 800 else output
+            await update.message.reply_text(
+                f"Upgrade failed:\n<pre>{short}</pre>",
+                parse_mode="HTML",
+            )
+            return
+
+        if old_ver == new_ver:
+            await update.message.reply_text(
+                f"Already at latest version (<code>{old_ver}</code>).",
+                parse_mode="HTML",
+            )
+            return
+
+        killed = await loop.run_in_executor(None, kill_ui_processes)
+        ui_pid = await loop.run_in_executor(
+            None, lambda: start_ui_background(no_daemon=True),
+        )
+
+        parts = [f"Upgraded <code>{old_ver}</code> → <code>{new_ver}</code>"]
+        if killed:
+            parts.append(f"UI restarted (pid {ui_pid})" if ui_pid else "UI stopped")
+        parts.append("Restarting daemon…")
+        await update.message.reply_text("\n".join(parts), parse_mode="HTML")
+
+        trigger_daemon_reexec()
+
     # ── /help — show commands and chat ID ───────────────────────────────────
 
     async def _handle_help_command(self, update, context) -> None:
@@ -431,6 +481,7 @@ class TelegramBot:
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
             f"/inbox — Show inbox items\n"
+            f"/upgrade — Upgrade &amp; restart\n"
             f"/help — Show this message",
             parse_mode="HTML",
         )
