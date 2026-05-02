@@ -109,7 +109,7 @@ export function FlowDetailView() {
   const [versionsOpen, setVersionsOpen] = useState(false);
 
   // Flow memory
-  const [memory, setMemory] = useState("");
+  const [memoryFiles, setMemoryFiles] = useState<{ name: string; content: string }[]>([]);
   const [memoryOpen, setMemoryOpen] = useState(false);
 
   // Floating chat window
@@ -152,7 +152,7 @@ export function FlowDetailView() {
     } catch { /* versions may not exist yet */ }
     try {
       const m = await api.getFlowMemory(flowId!);
-      setMemory(m.memory || "");
+      setMemoryFiles(m.files || []);
     } catch { /* memory may not exist yet */ }
   }, [flowId, setSelectedSpaceId]);
 
@@ -746,32 +746,51 @@ export function FlowDetailView() {
       )}
 
       {/* Flow Memory */}
-      {memory && (
+      {memoryFiles.length > 0 && (
         <div className="mb-4">
           <button
             onClick={() => setMemoryOpen(!memoryOpen)}
             className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 mb-2"
           >
             <Brain size={12} />
-            <span>Flow Memory</span>
+            <span>Flow Memory ({memoryFiles.length} {memoryFiles.length === 1 ? "file" : "files"})</span>
             <span className="text-[10px]">{memoryOpen ? "\u25B2" : "\u25BC"}</span>
           </button>
           {memoryOpen && (
             <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 max-h-60 overflow-y-auto">
-                <MarkdownContent text={memory} className="text-xs text-gray-400" />
+              <div className="divide-y divide-gray-800">
+                {memoryFiles.map((mf) => (
+                  <div key={mf.name} className="px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-mono text-cyan-400">{mf.name}</span>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete memory file "${mf.name}"?`)) return;
+                          await api.deleteMemoryFile(flow.id, mf.name);
+                          setMemoryFiles((prev) => prev.filter((f) => f.name !== mf.name));
+                        }}
+                        className="text-[10px] text-red-500/60 hover:text-red-400 inline-flex items-center gap-0.5"
+                      >
+                        <Trash2 size={9} /> Delete
+                      </button>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      <MarkdownContent text={mf.content} className="text-xs text-gray-400" />
+                    </div>
+                  </div>
+                ))}
               </div>
               <div className="px-4 py-2 border-t border-gray-800 flex justify-end">
                 <button
                   onClick={async () => {
                     if (!confirm("Clear all flow memory? This cannot be undone.")) return;
                     await api.clearFlowMemory(flow.id);
-                    setMemory("");
+                    setMemoryFiles([]);
                     setMemoryOpen(false);
                   }}
                   className="text-[11px] text-red-500 hover:text-red-400 inline-flex items-center gap-1"
                 >
-                  <Trash2 size={10} /> Clear memory
+                  <Trash2 size={10} /> Clear all
                 </button>
               </div>
             </div>

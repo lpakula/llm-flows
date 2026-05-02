@@ -151,8 +151,9 @@ export const api = {
   listFlowVersions: (flowId: string) => get<FlowVersion[]>(`/api/flows/${flowId}/versions`),
   rollbackFlow: (flowId: string, versionId: string) =>
     post<Flow>(`/api/flows/${flowId}/rollback/${versionId}`),
-  getFlowMemory: (flowId: string) => get<{ memory: string }>(`/api/flows/${flowId}/memory`),
+  getFlowMemory: (flowId: string) => get<{ files: { name: string; content: string }[] }>(`/api/flows/${flowId}/memory`),
   clearFlowMemory: (flowId: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory`),
+  deleteMemoryFile: (flowId: string, filename: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory/${encodeURIComponent(filename)}`),
   importFlows: (spaceId: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);

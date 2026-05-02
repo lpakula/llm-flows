@@ -183,23 +183,82 @@ class TestContextService:
         result = ContextService.read_flow_json(temp_dir)
         assert result is None
 
-    def test_read_memory(self, temp_dir):
+    def test_list_memory_files(self, temp_dir):
         flow_dir = temp_dir / "flow"
-        flow_dir.mkdir(parents=True)
-        (flow_dir / "memory.md").write_text("## Rejected proposal\nDon't add extra steps.")
-        result = ContextService.read_memory(flow_dir)
-        assert "Rejected proposal" in result
-        assert "Don't add extra steps" in result
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "notes.md").write_text("Some notes here.")
+        (mem_dir / "rejected-proposals.md").write_text("## Rejected\nDon't add steps.")
+        result = ContextService.list_memory_files(flow_dir)
+        assert len(result) == 2
+        names = [f["name"] for f in result]
+        assert "notes.md" in names
+        assert "rejected-proposals.md" in names
 
-    def test_read_memory_missing(self, temp_dir):
-        result = ContextService.read_memory(temp_dir)
-        assert result == ""
+    def test_list_memory_files_empty(self, temp_dir):
+        result = ContextService.list_memory_files(temp_dir)
+        assert result == []
+
+    def test_list_memory_files_skips_empty(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "empty.md").write_text("")
+        (mem_dir / "has-content.md").write_text("content")
+        result = ContextService.list_memory_files(flow_dir)
+        assert len(result) == 1
+        assert result[0]["name"] == "has-content.md"
+
+    def test_read_all_memory(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "a.md").write_text("First file.")
+        (mem_dir / "b.md").write_text("Second file.")
+        result = ContextService.read_all_memory(flow_dir)
+        assert "a.md" in result
+        assert "First file." in result
+        assert "b.md" in result
+        assert "Second file." in result
+
+    def test_read_memory_backward_compat(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "data.md").write_text("Some data.")
+        result = ContextService.read_memory(flow_dir)
+        assert "Some data." in result
+
+    def test_write_memory_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        ContextService.write_memory_file(flow_dir, "notes.md", "# Notes\nImportant.")
+        mem_file = flow_dir / "memory" / "notes.md"
+        assert mem_file.exists()
+        assert "Important" in mem_file.read_text()
+
+    def test_write_memory_file_overwrite(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        ContextService.write_memory_file(flow_dir, "notes.md", "v1")
+        ContextService.write_memory_file(flow_dir, "notes.md", "v2")
+        content = (flow_dir / "memory" / "notes.md").read_text()
+        assert content == "v2"
+
+    def test_delete_memory_file(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "notes.md").write_text("content")
+        assert ContextService.delete_memory_file(flow_dir, "notes.md") is True
+        assert not (mem_dir / "notes.md").exists()
+
+    def test_delete_memory_file_missing(self, temp_dir):
+        assert ContextService.delete_memory_file(temp_dir, "nope.md") is False
 
     def test_append_memory_new_file(self, temp_dir):
         flow_dir = temp_dir / "flow"
         flow_dir.mkdir(parents=True)
         ContextService.append_memory(flow_dir, "## First entry\nSome content.")
-        memory_file = flow_dir / "memory.md"
+        memory_file = flow_dir / "memory" / "rejected-proposals.md"
         assert memory_file.exists()
         content = memory_file.read_text()
         assert "First entry" in content
@@ -207,10 +266,11 @@ class TestContextService:
 
     def test_append_memory_existing_file(self, temp_dir):
         flow_dir = temp_dir / "flow"
-        flow_dir.mkdir(parents=True)
-        (flow_dir / "memory.md").write_text("## First\nOld entry.")
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "rejected-proposals.md").write_text("## First\nOld entry.")
         ContextService.append_memory(flow_dir, "## Second\nNew entry.")
-        content = (flow_dir / "memory.md").read_text()
+        content = (mem_dir / "rejected-proposals.md").read_text()
         assert "First" in content
         assert "Old entry" in content
         assert "---" in content
@@ -220,7 +280,30 @@ class TestContextService:
     def test_append_memory_creates_directory(self, temp_dir):
         flow_dir = temp_dir / "nonexistent" / "flow"
         ContextService.append_memory(flow_dir, "## Entry\nContent.")
-        assert (flow_dir / "memory.md").exists()
+        assert (flow_dir / "memory" / "rejected-proposals.md").exists()
+
+    def test_migrate_legacy_memory(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "memory.md").write_text("## Old rejected\nLegacy content.")
+        files = ContextService.list_memory_files(flow_dir)
+        assert len(files) == 1
+        assert files[0]["name"] == "rejected-proposals.md"
+        assert "Legacy content" in files[0]["content"]
+        assert not (flow_dir / "memory.md").exists()
+
+    def test_migrate_legacy_memory_empty(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "memory.md").write_text("   ")
+        files = ContextService.list_memory_files(flow_dir)
+        assert files == []
+        assert not (flow_dir / "memory.md").exists()
+
+    def test_get_memory_dir(self, temp_dir):
+        flow_dir = temp_dir / "flow"
+        result = ContextService.get_memory_dir(flow_dir)
+        assert result == flow_dir / "memory"
 
     def test_render_post_run_step(self, temp_dir):
         ctx = ContextService(temp_dir)
@@ -248,8 +331,8 @@ class TestContextService:
         assert "OOM" in result
         assert "build" in result
 
-    def test_post_run_template_includes_memory(self, temp_dir):
-        """Verify the post-run template renders memory when provided."""
+    def test_post_run_template_includes_memory_files(self, temp_dir):
+        """Verify the post-run template renders memory files when provided."""
         from jinja2 import Environment, ChainableUndefined
         from llmflows.services.context import DEFAULTS_DIR
         template_file = DEFAULTS_DIR / "step_post_run.md"
@@ -263,11 +346,35 @@ class TestContextService:
             "flow_version": 2,
             "outcome": "completed",
             "language": "English",
-            "memory": "## Rejected: don't split the research step.",
+            "memory_files": [
+                {"name": "rejected-proposals.md", "content": "Don't split the research step."},
+                {"name": "context.md", "content": "Project uses Python 3.12."},
+            ],
         })
         assert "Flow Memory" in result
-        assert "don't split the research step" in result
-        assert "Do **not** propose similar changes" in result
+        assert "rejected-proposals.md" in result
+        assert "Don't split the research step" in result
+        assert "context.md" in result
+
+    def test_post_run_template_falls_back_to_legacy_memory(self, temp_dir):
+        """Verify the template falls back to old memory string if no memory_files."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 2,
+            "outcome": "completed",
+            "language": "English",
+            "memory": "## Legacy rejected proposal",
+        })
+        assert "Flow Memory" in result
+        assert "Legacy rejected proposal" in result
 
     def test_post_run_template_excludes_memory_when_empty(self, temp_dir):
         """Verify the post-run template omits memory section when not provided."""
@@ -286,3 +393,26 @@ class TestContextService:
             "language": "English",
         })
         assert "Flow Memory" not in result
+
+    def test_step_template_includes_memory_files(self, temp_dir):
+        """Verify step_start.md renders memory files when provided."""
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_step_instructions({
+            "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
+            "step_name": "implement",
+            "step": {"dir": "/tmp/artifacts/01-implement"},
+            "step_content": "# Do the work",
+            "flow_name": "default",
+            "flow": {"name": "default", "dir": "/tmp/flow"},
+            "artifacts": [],
+            "artifacts_dir": "/tmp/artifacts/01-implement",
+            "attachment": {"dir": "/tmp/attachments"},
+            "gate_failures": None,
+            "memory_files": [
+                {"name": "context.md", "content": "Use Python 3.12."},
+            ],
+        })
+        assert "Flow Memory" in result
+        assert "context.md" in result
+        assert "Use Python 3.12" in result

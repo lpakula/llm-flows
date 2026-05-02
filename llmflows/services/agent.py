@@ -86,6 +86,7 @@ class AgentService:
         spc_vars = space_variables or {}
         step_dir = str(step_output_dir) if step_output_dir else ""
         attachment_dir = str(SYSTEM_DIR / "attachments" / run_id)
+        memory_files = ContextService.list_memory_files(flow_dir) if not is_summary else []
         prompt_vars = {
             "run_id": run_id,
             "run": {"id": run_id, "dir": str(artifacts_dir)},
@@ -104,6 +105,7 @@ class AgentService:
             "step_type": step_type,
             "space_variables": spc_vars,
             "skills": skills or [],
+            "memory_files": memory_files,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)

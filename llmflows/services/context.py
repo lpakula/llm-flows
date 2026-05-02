@@ -204,21 +204,104 @@ class ContextService:
         return None
 
     @staticmethod
-    def read_memory(flow_dir: Path) -> str:
-        """Read memory.md from a flow directory, if it exists."""
-        f = flow_dir / "memory.md"
-        if not f.exists():
-            return ""
+    def get_memory_dir(flow_dir: Path) -> Path:
+        """Return the memory directory for a flow: ``flow_dir/memory/``."""
+        return flow_dir / "memory"
+
+    @staticmethod
+    def _migrate_legacy_memory(flow_dir: Path) -> None:
+        """Move ``flow_dir/memory.md`` into ``flow_dir/memory/rejected-proposals.md``."""
+        legacy = flow_dir / "memory.md"
+        if not legacy.exists():
+            return
         try:
-            return f.read_text(errors="replace").strip()
+            content = legacy.read_text(errors="replace")
         except (PermissionError, OSError):
+            return
+        if not content.strip():
+            legacy.unlink(missing_ok=True)
+            return
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        dest = mem_dir / "rejected-proposals.md"
+        if dest.exists():
+            try:
+                existing = dest.read_text(errors="replace")
+            except (PermissionError, OSError):
+                existing = ""
+            separator = "\n\n---\n\n" if existing.strip() else ""
+            dest.write_text(existing + separator + content)
+        else:
+            dest.write_text(content)
+        legacy.unlink(missing_ok=True)
+
+    @staticmethod
+    def list_memory_files(flow_dir: Path) -> list[dict]:
+        """Return ``[{name, content}]`` for every file in the memory directory.
+
+        Also migrates a legacy ``memory.md`` file on first access.
+        """
+        ContextService._migrate_legacy_memory(flow_dir)
+        mem_dir = flow_dir / "memory"
+        if not mem_dir.is_dir():
+            return []
+        files: list[dict] = []
+        try:
+            for f in sorted(mem_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() in BINARY_EXTENSIONS:
+                    continue
+                try:
+                    content = f.read_text(errors="replace").strip()
+                    if content:
+                        files.append({"name": f.name, "content": content})
+                except (PermissionError, OSError):
+                    continue
+        except (PermissionError, OSError):
+            pass
+        return files
+
+    @staticmethod
+    def read_all_memory(flow_dir: Path) -> str:
+        """Concatenate all memory files into a single string for prompt injection."""
+        files = ContextService.list_memory_files(flow_dir)
+        if not files:
             return ""
+        parts = []
+        for f in files:
+            parts.append(f"### {f['name']}\n\n{f['content']}")
+        return "\n\n---\n\n".join(parts)
+
+    @staticmethod
+    def read_memory(flow_dir: Path) -> str:
+        """Read combined memory content (backward-compatible)."""
+        return ContextService.read_all_memory(flow_dir)
+
+    @staticmethod
+    def write_memory_file(flow_dir: Path, filename: str, content: str) -> None:
+        """Write (or overwrite) a single memory file."""
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        (mem_dir / filename).write_text(content)
+
+    @staticmethod
+    def delete_memory_file(flow_dir: Path, filename: str) -> bool:
+        """Delete a single memory file.  Returns True if a file was actually removed."""
+        f = flow_dir / "memory" / filename
+        if f.exists():
+            f.unlink()
+            return True
+        return False
 
     @staticmethod
     def append_memory(flow_dir: Path, entry: str) -> None:
-        """Append an entry to memory.md in the flow directory."""
+        """Append an entry to the rejected-proposals memory file."""
         flow_dir.mkdir(parents=True, exist_ok=True)
-        f = flow_dir / "memory.md"
+        mem_dir = flow_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        f = mem_dir / "rejected-proposals.md"
         existing = ""
         if f.exists():
             try:

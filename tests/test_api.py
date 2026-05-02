@@ -206,7 +206,7 @@ class TestFlowMemoryAPI:
         fid = api_db["flow_id"]
         response = client.get(f"/api/flows/{fid}/memory")
         assert response.status_code == 200
-        assert response.json()["memory"] == ""
+        assert response.json()["files"] == []
 
     def test_get_memory_not_found(self, client):
         response = client.get("/api/flows/nope/memory")
@@ -217,6 +217,11 @@ class TestFlowMemoryAPI:
         response = client.delete(f"/api/flows/{fid}/memory")
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+    def test_delete_memory_file_not_found(self, client, api_db):
+        fid = api_db["flow_id"]
+        response = client.delete(f"/api/flows/{fid}/memory/nonexistent.md")
+        assert response.status_code == 404
 
     def test_reject_improvement_not_found(self, client):
         response = client.post(
@@ -296,10 +301,12 @@ class TestFlowMemoryAPI:
                 assert response.json()["ok"] is True
 
                 flow_dir = ContextService.get_flow_dir(space_path, "my-flow")
-                memory = ContextService.read_memory(flow_dir)
-                assert "Add retry logic" in memory
-                assert "I prefer manual retries" in memory
-                assert "Rejected proposal" in memory
+                files = ContextService.list_memory_files(flow_dir)
+                assert len(files) == 1
+                assert files[0]["name"] == "rejected-proposals.md"
+                assert "Add retry logic" in files[0]["content"]
+                assert "I prefer manual retries" in files[0]["content"]
+                assert "Rejected proposal" in files[0]["content"]
 
             session.close()
             Base.metadata.drop_all(engine)

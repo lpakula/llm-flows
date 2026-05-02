@@ -2220,7 +2220,7 @@ async def rollback_flow(flow_id: str, version_id: str):
 
 @app.get("/api/flows/{flow_id}/memory")
 async def get_flow_memory(flow_id: str):
-    """Return flow memory contents."""
+    """Return all memory files for a flow."""
     from ..services.context import ContextService
     from ..db.models import Space as SpaceModel
     session, _ = _get_services()
@@ -2233,15 +2233,42 @@ async def get_flow_memory(flow_id: str):
         if not space:
             raise HTTPException(status_code=404, detail="Space not found")
         flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
-        memory = ContextService.read_memory(flow_dir)
-        return {"memory": memory}
+        files = ContextService.list_memory_files(flow_dir)
+        return {"files": files}
     finally:
         session.close()
 
 
 @app.delete("/api/flows/{flow_id}/memory")
 async def clear_flow_memory(flow_id: str):
-    """Clear all flow memory."""
+    """Clear all flow memory files."""
+    from ..services.context import ContextService
+    from ..db.models import Space as SpaceModel
+    import shutil
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space = session.query(SpaceModel).filter_by(id=flow.space_id).first()
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
+        mem_dir = ContextService.get_memory_dir(flow_dir)
+        if mem_dir.is_dir():
+            shutil.rmtree(mem_dir)
+        legacy = flow_dir / "memory.md"
+        if legacy.exists():
+            legacy.unlink()
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.delete("/api/flows/{flow_id}/memory/{filename}")
+async def delete_flow_memory_file(flow_id: str, filename: str):
+    """Delete a single memory file."""
     from ..services.context import ContextService
     from ..db.models import Space as SpaceModel
     session, _ = _get_services()
@@ -2254,9 +2281,9 @@ async def clear_flow_memory(flow_id: str):
         if not space:
             raise HTTPException(status_code=404, detail="Space not found")
         flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
-        memory_file = flow_dir / "memory.md"
-        if memory_file.exists():
-            memory_file.unlink()
+        removed = ContextService.delete_memory_file(flow_dir, filename)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Memory file not found")
         return {"ok": True}
     finally:
         session.close()
