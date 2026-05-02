@@ -11,14 +11,9 @@
         {
           "command": "test -f {{step.dir}}/_result.md",
           "message": "_result.md must exist with the haiku."
-        },
-        {
-          "command": "False",
-          "message": "Dummy gate"
         }
       ],
-      "agent_alias": "mini",
-      "max_gate_retries": 1
+      "agent_alias": "mini"
     }
   ]
 }

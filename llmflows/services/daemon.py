@@ -566,7 +566,7 @@ class Daemon:
             return
 
         run_svc.session.refresh(run)
-        if run.completed_at:
+        if run.completed_at and step_run.step_name != "__post_run__":
             logger.info(
                 "Run %s was cancelled while step '%s' was stopping, skipping gate evaluation",
                 run.id, step_run.step_name,
@@ -698,7 +698,7 @@ class Daemon:
             })
 
         run_svc.session.refresh(run)
-        if run.completed_at:
+        if run.completed_at and step_run.step_name != "__post_run__":
             logger.info(
                 "Run %s was cancelled before gate evaluation for step '%s', skipping",
                 run.id, step_run.step_name,
