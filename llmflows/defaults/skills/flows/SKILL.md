@@ -175,6 +175,8 @@ test -d "<run.dir>" && test "$(ls -A "<run.dir>")"
 
 This means every step must produce at least one file in `{{step.dir}}/`. If the agent finishes without writing any artifacts, this auto-gate fails and the agent is relaunched.
 
+Since the daemon already gates on the artifacts directory being non-empty, and the agent is always instructed to write `_result.md`, there is no need to add a gate like `test -f {{step.dir}}/_result.md` — it is redundant with the built-in gate.
+
 ### Gate retry behavior
 
 | `max_gate_retries` | Behavior |
@@ -224,7 +226,8 @@ Each gate must be exactly **one** check. Never chain multiple checks with `&&` i
 - `git diff --cached --quiet || echo ok` — changes are staged
 - `command -v ffmpeg >/dev/null 2>&1` — tool is installed
 
-**Bad gates** — subjective, slow, unreliable, or compound:
+**Bad gates** — redundant, subjective, slow, unreliable, or compound:
+- `test -f {{step.dir}}/_result.md` — **redundant**, every executor writes `_result.md` automatically and the daemon already checks the artifacts directory is non-empty
 - `curl https://api.example.com/health` — external dependency, flaky
 - `command -v foo && command -v bar && test -f baz` — multiple checks in one gate, split them up
 - Complex scripts that might hang
