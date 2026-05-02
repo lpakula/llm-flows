@@ -201,7 +201,7 @@ class TestFlowVersioningAPI:
         assert response.status_code == 404
 
 
-<class TestGatewayAPI:
+class TestGatewayAPI:
     def test_get_gateway_config(self, client, api_db):
         with patch("llmflows.ui.server.load_system_config", return_value={}):
             response = client.get("/api/config/gateway")
