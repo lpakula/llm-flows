@@ -139,6 +139,10 @@ def daemon_start(foreground):
         os.setsid()
         write_pid_file(os.getpid())
         sys.stdin.close()
+        devnull = os.open(os.devnull, os.O_RDWR)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        os.close(devnull)
 
         try:
             d = Daemon()

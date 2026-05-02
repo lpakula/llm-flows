@@ -152,7 +152,7 @@ def restart_daemon_via_cli() -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [llmflows, "daemon", "start"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=30,
         )
         return result.returncode == 0, result.stdout.strip()
     except Exception as e:
