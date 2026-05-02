@@ -60,6 +60,9 @@ Include ALL steps, not just the changed ones:
   "name": "flow-name",
   "version": 4,
   "description": "Updated flow description",
+  "variables": {
+    "var_name": {"value": "default_value", "is_env": false}
+  },
   "steps": [
     {
       "name": "step-name",
@@ -73,6 +76,8 @@ Include ALL steps, not just the changed ones:
   ]
 }
 ```
+
+If step content references `{{flow.VAR}}`, the variable **must** be declared in `"variables"` so it appears in the UI for the user to configure.
 
 The `version` must be **higher** than the current flow version — increment by 1.
 Both files are required — `improvement.md` is shown to the user, `flow.json` is imported on approval.

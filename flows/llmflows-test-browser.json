@@ -1,35 +1,43 @@
 {
-  "flows": [
+  "name": "llmflows-test-browser",
+  "version": 1,
+  "description": "Open the Google login page, wait for the user to log in, then navigate to Gmail.",
+  "steps": [
     {
-      "name": "llmflows-test-browser",
-      "version": 1,
-      "description": "Open the Google login page, wait for the user to log in, then navigate to Gmail.",
-      "steps": [
+      "name": "Open Google login",
+      "position": 0,
+      "content": "# OPEN GOOGLE LOGIN PAGE\n\n## PURPOSE\n\nOpen the Google account login page so the user can sign in.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://accounts.google.com\n2. Use `browser_snapshot` to see the page structure\n3. Take a `browser_screenshot` and save as `{{step.dir}}/login-page.png`\n4. Write to `{{step.dir}}/_result.md`:\n   - The page URL\n   - Confirm the Google login page is displayed\n   - Note that the user needs to log in manually in the browser window",
+      "gates": [
         {
-          "name": "Open Google login",
-          "position": 0,
-          "connectors": ["browser"],
-          "content": "# OPEN GOOGLE LOGIN PAGE\n\n## PURPOSE\n\nOpen the Google account login page so the user can sign in.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://accounts.google.com\n2. Use `browser_snapshot` to see the page structure\n3. Take a `browser_screenshot` and save as `{{step.dir}}/login-page.png`\n4. Write to `{{step.dir}}/_result.md`:\n   - The page URL\n   - Confirm the Google login page is displayed\n   - Note that the user needs to log in manually in the browser window",
-          "gates": [
-            {"command": "test -f {{step.dir}}/login-page.png", "message": "Screenshot of the login page must exist."}
-          ]
-        },
-        {
-          "name": "Wait for login",
-          "position": 1,
-          "step_type": "hitl",
-          "connectors": ["browser"],
-          "content": "# WAIT FOR USER LOGIN\n\n## PURPOSE\n\nPause and wait for the user to complete the Google login in the browser window.\n\n## WORKFLOW\n\n1. Write to `{{step.dir}}/_result.md`:\n   - Tell the user: \"The Google login page is open in the browser window. Please log in to your Google account there. Once you're logged in, type 'done' to continue to Gmail.\""
-        },
-        {
-          "name": "Navigate to Gmail",
-          "position": 2,
-          "connectors": ["browser"],
-          "content": "# NAVIGATE TO GMAIL\n\n## PURPOSE\n\nAfter the user has logged in, navigate to Gmail and confirm it loaded.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://mail.google.com\n2. Wait a moment for the page to load fully\n3. Use `browser_snapshot` to verify Gmail is showing the inbox\n4. Take a `browser_screenshot` and save as `{{step.dir}}/gmail.png`\n5. Write to `{{step.dir}}/_result.md`:\n   - The page URL\n   - Confirm Gmail loaded successfully\n   - Note the account name or email visible on the page if any\n   - List any visible inbox items or UI elements",
-          "gates": [
-            {"command": "test -f {{step.dir}}/gmail.png", "message": "Screenshot of Gmail must exist."}
-          ]
+          "command": "test -f {{step.dir}}/login-page.png",
+          "message": "Screenshot of the login page must exist."
         }
+      ],
+      "connectors": [
+        "browser"
+      ]
+    },
+    {
+      "name": "Wait for login",
+      "position": 1,
+      "content": "# WAIT FOR USER LOGIN\n\n## PURPOSE\n\nPause and wait for the user to complete the Google login in the browser window.\n\n## WORKFLOW\n\n1. Write to `{{step.dir}}/_result.md`:\n   - Tell the user: \"The Google login page is open in the browser window. Please log in to your Google account there. Once you're logged in, type 'done' to continue to Gmail.\"",
+      "step_type": "hitl",
+      "connectors": [
+        "browser"
+      ]
+    },
+    {
+      "name": "Navigate to Gmail",
+      "position": 2,
+      "content": "# NAVIGATE TO GMAIL\n\n## PURPOSE\n\nAfter the user has logged in, navigate to Gmail and confirm it loaded.\n\n## TOOLS\n\nUse ONLY the browser_* tools.\n\n## WORKFLOW\n\n1. Use `browser_navigate` to go to: https://mail.google.com\n2. Wait a moment for the page to load fully\n3. Use `browser_snapshot` to verify Gmail is showing the inbox\n4. Take a `browser_screenshot` and save as `{{step.dir}}/gmail.png`\n5. Write to `{{step.dir}}/_result.md`:\n   - The page URL\n   - Confirm Gmail loaded successfully\n   - Note the account name or email visible on the page if any\n   - List any visible inbox items or UI elements",
+      "gates": [
+        {
+          "command": "test -f {{step.dir}}/gmail.png",
+          "message": "Screenshot of Gmail must exist."
+        }
+      ],
+      "connectors": [
+        "browser"
       ]
     }
   ]
