@@ -408,7 +408,9 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
 @click.option("--host", default=None, help="Host (default from config)")
 @click.option("--reload", is_flag=True, default=False, help="Auto-reload on code changes")
 @click.option("--dev", is_flag=True, default=False, help="Dev mode: Vite HMR + FastAPI")
-def ui(port, host, reload, dev):
+@click.option("--no-daemon", "no_daemon", is_flag=True, default=False,
+              help="Skip starting the daemon (useful for testing/screenshots).")
+def ui(port, host, reload, dev, no_daemon):
     """Launch web UI on localhost (Ctrl+C to stop)."""
     _maybe_reexec_for_dev(dev)
 
@@ -422,7 +424,7 @@ def ui(port, host, reload, dev):
     host = host or config["ui"]["host"]
 
     if dev:
-        _run_dev_mode(host, port)
+        _run_dev_mode(host, port, no_daemon=no_daemon)
         return
 
     import uvicorn
@@ -430,7 +432,8 @@ def ui(port, host, reload, dev):
     click.echo(f"llmflows UI: http://{host}:{port}")
     if not _ensure_frontend_built():
         sys.exit(1)
-    _ensure_daemon_running()
+    if not no_daemon:
+        _ensure_daemon_running()
     kwargs = dict(host=host, port=port, log_level="warning")
     if reload:
         import llmflows
