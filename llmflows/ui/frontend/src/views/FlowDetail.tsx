@@ -1026,7 +1026,7 @@ export function FlowDetailView() {
                           setViewingStepDuration(first.duration_seconds ?? null);
                           setViewingStepCost(first.cost_usd ?? null);
                           setViewingStepResult(first.step_result || null);
-                          setViewingGateFailures(attempts[1]?.gate_failures || []);
+                          setViewingGateFailures(attempts[1]?.gate_failures || attempts[0]?.gate_failures || []);
                         }}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : resolveStatus(step.status))} ${
                           viewingStepName === stepLabel && (!selectedAttempt || selectedAttempt.attemptId === attempts[0]?.id)
@@ -1049,7 +1049,7 @@ export function FlowDetailView() {
                               setViewingStepDuration(att.duration_seconds ?? null);
                               setViewingStepCost(att.cost_usd ?? null);
                               setViewingStepResult(att.step_result || null);
-                              setViewingGateFailures(attempts[j + 2]?.gate_failures || []);
+                              setViewingGateFailures(attempts[j + 2]?.gate_failures || att.gate_failures || []);
                             }}
                             className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
                               selectedAttempt?.attemptId === att.id
