@@ -748,6 +748,15 @@ class Daemon:
                     )
                     return
 
+                gate_failure_info = [
+                    {
+                        "command": f["command"],
+                        "message": f["message"],
+                        "output": f.get("stderr", ""),
+                    }
+                    for f in failures
+                ]
+
                 if unlimited or retry_count < max_retries:
                     is_last_retry = not unlimited and (retry_count + 1 >= max_retries)
                     use_max = step_allow_max and is_last_retry
@@ -758,14 +767,6 @@ class Daemon:
                         retry_count + 1, limit_str,
                         " [escalating to max]" if use_max else "",
                     )
-                    gate_failure_info = [
-                        {
-                            "command": f["command"],
-                            "message": f["message"],
-                            "output": f.get("stderr", ""),
-                        }
-                        for f in failures
-                    ]
                     self._launch_step(
                         run, working_path,
                         step_run.step_name, step_run.step_position,
@@ -779,6 +780,9 @@ class Daemon:
                         "Run %s step '%s' gate failed after %d retries, marking interrupted",
                         run.id, step_run.step_name, retry_count,
                     )
+                    step_run.outcome = "gate_failed"
+                    step_run.gate_failures = json.dumps(gate_failure_info)
+                    run_svc.session.commit()
                     self._finalize_run(run.id)
                     run_svc.mark_completed(run.id, outcome="interrupted")
                     self._launch_post_run_step(

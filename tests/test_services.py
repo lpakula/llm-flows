@@ -859,6 +859,149 @@ class TestFlowVersioning:
         assert result.version == 2
 
 
+<class TestGateRetryExhaustion:
+    """When max gate retries are exhausted, the last step_run should reflect the failure."""
+
+    def test_last_retry_gets_gate_failed_outcome(self, test_db, test_space, temp_dir):
+        from unittest.mock import MagicMock, patch as _patch
+        from llmflows.services.daemon import Daemon
+        from llmflows.services.context import ContextService
+
+        space_path = Path(test_space.path)
+        space_path.mkdir(parents=True, exist_ok=True)
+
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("retry-flow", space_id=test_space.id, steps=[
+            {
+                "name": "build",
+                "position": 0,
+                "content": "# Build",
+                "gates": [{"command": "false", "message": "Always fails"}],
+                "max_gate_retries": 1,
+            },
+        ])
+
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+        snapshot = flow_svc.build_flow_snapshot(flow.name, space_id=test_space.id)
+        run.flow_snapshot = json.dumps(snapshot)
+        test_db.commit()
+
+        artifacts_dir = ContextService.get_artifacts_dir(space_path, run.id, flow.name)
+        step_dir = artifacts_dir / "00-build"
+        step_dir.mkdir(parents=True, exist_ok=True)
+        (step_dir / "_result.md").write_text("attempt done")
+
+        sr1 = run_svc.create_step_run(run.id, "build", 0, flow.name)
+        sr1.attempt = 1
+        test_db.commit()
+        run_svc.mark_step_completed(sr1.id, outcome="completed")
+
+        sr2 = run_svc.create_step_run(run.id, "build", 0, flow.name)
+        sr2.attempt = 2
+        sr2.gate_failures = json.dumps([{"command": "false", "message": "Always fails", "output": ""}])
+        test_db.commit()
+        run_svc.mark_step_completed(sr2.id, outcome="completed")
+
+        daemon = Daemon.__new__(Daemon)
+        daemon._browser_active_runs = set()
+        daemon.notifications = MagicMock()
+
+        config = {"daemon": {"gate_timeout_seconds": 60}}
+        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
+             _patch.object(daemon, "_launch_post_run_step"):
+            daemon._post_step_completion(
+                run, test_space, sr2, space_path, run_svc, flow_svc,
+            )
+
+        test_db.refresh(sr2)
+        assert sr2.outcome == "gate_failed"
+
+        gf = json.loads(sr2.gate_failures)
+        assert len(gf) >= 1
+        assert any("Always fails" in f.get("message", "") for f in gf)
+
+    def test_gate_failed_step_run_to_dict(self, test_db, test_space):
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("dict-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+
+        sr = run_svc.create_step_run(run.id, "build", 0, flow.name)
+        run_svc.mark_step_completed(sr.id, outcome="gate_failed")
+        sr.gate_failures = json.dumps([
+            {"command": "false", "message": "Gate check failed", "output": "err"},
+        ])
+        test_db.commit()
+        test_db.refresh(sr)
+
+        d = sr.to_dict()
+        assert d["status"] == "gate_failed"
+        assert d["outcome"] == "gate_failed"
+        assert len(d["gate_failures"]) == 1
+        assert d["gate_failures"][0]["message"] == "Gate check failed"
+
+    def test_unlimited_retries_do_not_exhaust(self, test_db, test_space, temp_dir):
+        """When max_gate_retries is 0 (unlimited), the daemon should always retry."""
+        from unittest.mock import MagicMock, patch as _patch
+        from llmflows.services.daemon import Daemon
+        from llmflows.services.context import ContextService
+
+        space_path = Path(test_space.path)
+        space_path.mkdir(parents=True, exist_ok=True)
+
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("unlim-flow", space_id=test_space.id, steps=[
+            {
+                "name": "build",
+                "position": 0,
+                "content": "# Build",
+                "gates": [{"command": "false", "message": "Always fails"}],
+                "max_gate_retries": 0,
+            },
+        ])
+
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+        snapshot = flow_svc.build_flow_snapshot(flow.name, space_id=test_space.id)
+        run.flow_snapshot = json.dumps(snapshot)
+        test_db.commit()
+
+        artifacts_dir = ContextService.get_artifacts_dir(space_path, run.id, flow.name)
+        step_dir = artifacts_dir / "00-build"
+        step_dir.mkdir(parents=True, exist_ok=True)
+        (step_dir / "_result.md").write_text("done")
+
+        for attempt in range(1, 6):
+            sr = run_svc.create_step_run(run.id, "build", 0, flow.name)
+            sr.attempt = attempt
+            test_db.commit()
+            run_svc.mark_step_completed(sr.id, outcome="completed")
+
+        last_sr = run_svc.create_step_run(run.id, "build", 0, flow.name)
+        last_sr.attempt = 6
+        test_db.commit()
+        run_svc.mark_step_completed(last_sr.id, outcome="completed")
+
+        daemon = Daemon.__new__(Daemon)
+        daemon._browser_active_runs = set()
+        daemon.notifications = MagicMock()
+
+        config = {"daemon": {"gate_timeout_seconds": 60}}
+        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
+             _patch.object(daemon, "_launch_step") as mock_launch:
+            daemon._post_step_completion(
+                run, test_space, last_sr, space_path, run_svc, flow_svc,
+            )
+
+        test_db.refresh(last_sr)
+        assert last_sr.outcome == "completed"
+        mock_launch.assert_called_once()
+
+
 class TestDaemonTimeout:
     """Tests for daemon timeout logic — HITL exclusion and post-run loop prevention."""
 
@@ -972,6 +1115,7 @@ class TestDaemonTimeout:
             run_svc, flow_svc,
         )
         assert result is False
+
 
 
 class TestChannelManagerMute:
