@@ -175,9 +175,14 @@ DEFAULT_CONFIG = _load_defaults()
 
 
 def ensure_system_dir() -> Path:
-    """Create ~/.llmflows/ and seed config.toml with defaults if missing."""
+    """Create ~/.llmflows/ and seed config.toml with defaults if missing.
+
+    When ``LLMFLOWS_HOME`` is set the instance is intentionally isolated
+    (e.g. a worktree) and should run with pure defaults — no config file
+    is seeded.  ``load_system_config()`` falls back to defaults anyway.
+    """
     SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
-    if not SYSTEM_CONFIG.exists():
+    if not SYSTEM_CONFIG.exists() and "LLMFLOWS_HOME" not in os.environ:
         shutil.copy2(_DEFAULTS_FILE, SYSTEM_CONFIG)
     return SYSTEM_DIR
 
