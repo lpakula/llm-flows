@@ -1,11 +1,14 @@
 """Tests for database models."""
 
+from datetime import datetime, timedelta, timezone
+
 from llmflows.db.models import (
     Base,
     Flow,
     FlowRun,
     FlowStep,
     Space,
+    StepRun,
     generate_id,
 )
 
@@ -276,3 +279,83 @@ class TestFlowRunModel:
         test_db.commit()
 
         assert run.status == "completed"
+
+
+class TestStepRunDuration:
+    """Tests for StepRun.duration_seconds, especially HITL exclusion."""
+
+    def _make_run(self, test_db, test_space):
+        flow = Flow(name="dur-flow", space_id=test_space.id)
+        test_db.add(flow)
+        test_db.flush()
+        run = FlowRun(space_id=test_space.id, flow_id=flow.id)
+        run.started_at = datetime.now(timezone.utc)
+        test_db.add(run)
+        test_db.commit()
+        return run
+
+    def test_agent_step_duration_uses_completed_at(self, test_db, test_space):
+        run = self._make_run(test_db, test_space)
+        now = datetime.now(timezone.utc)
+        sr = StepRun(
+            flow_run_id=run.id, step_name="agent-step",
+            step_position=0, flow_name="dur-flow",
+            started_at=now - timedelta(minutes=10),
+            completed_at=now,
+        )
+        test_db.add(sr)
+        test_db.commit()
+        assert abs(sr.duration_seconds - 600) < 1
+
+    def test_hitl_step_duration_excludes_wait_time(self, test_db, test_space):
+        """HITL step that ran for 2 min then awaited user for 12 hours."""
+        run = self._make_run(test_db, test_space)
+        now = datetime.now(timezone.utc)
+        sr = StepRun(
+            flow_run_id=run.id, step_name="hitl-step",
+            step_position=0, flow_name="dur-flow",
+            started_at=now - timedelta(hours=12, minutes=2),
+            awaiting_user_at=now - timedelta(hours=12),
+            completed_at=now,
+        )
+        test_db.add(sr)
+        test_db.commit()
+        assert abs(sr.duration_seconds - 120) < 1
+
+    def test_hitl_step_still_awaiting(self, test_db, test_space):
+        """HITL step currently awaiting user — duration is only agent time."""
+        run = self._make_run(test_db, test_space)
+        now = datetime.now(timezone.utc)
+        sr = StepRun(
+            flow_run_id=run.id, step_name="hitl-waiting",
+            step_position=0, flow_name="dur-flow",
+            started_at=now - timedelta(hours=8, minutes=5),
+            awaiting_user_at=now - timedelta(hours=8),
+        )
+        test_db.add(sr)
+        test_db.commit()
+        assert abs(sr.duration_seconds - 300) < 1
+
+    def test_flow_run_duration_excludes_hitl_wait(self, test_db, test_space):
+        """FlowRun.duration_seconds should sum step durations, excluding HITL wait."""
+        run = self._make_run(test_db, test_space)
+        now = datetime.now(timezone.utc)
+        hitl = StepRun(
+            flow_run_id=run.id, step_name="hitl",
+            step_position=0, flow_name="dur-flow",
+            started_at=now - timedelta(hours=12, minutes=3),
+            awaiting_user_at=now - timedelta(hours=12),
+            completed_at=now - timedelta(minutes=10),
+        )
+        agent = StepRun(
+            flow_run_id=run.id, step_name="implement",
+            step_position=1, flow_name="dur-flow",
+            started_at=now - timedelta(minutes=10),
+            completed_at=now,
+        )
+        test_db.add_all([hitl, agent])
+        test_db.commit()
+        test_db.refresh(run)
+        total = run.duration_seconds
+        assert total is not None
+        assert abs(total - (180 + 600)) < 2

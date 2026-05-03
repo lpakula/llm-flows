@@ -859,7 +859,7 @@ class TestFlowVersioning:
         assert result.version == 2
 
 
-class TestGateRetryExhaustion:
+<class TestGateRetryExhaustion:
     """When max gate retries are exhausted, the last step_run should reflect the failure."""
 
     def test_last_retry_gets_gate_failed_outcome(self, test_db, test_space, temp_dir):
@@ -1000,6 +1000,122 @@ class TestGateRetryExhaustion:
         test_db.refresh(last_sr)
         assert last_sr.outcome == "completed"
         mock_launch.assert_called_once()
+
+
+class TestDaemonTimeout:
+    """Tests for daemon timeout logic — HITL exclusion and post-run loop prevention."""
+
+    def _setup_run_with_step(self, test_db, test_space, step_name="agent-step",
+                              flow_name="timeout-flow", step_position=0):
+        from llmflows.db.models import FlowRun, StepRun, Flow
+        from datetime import datetime, timezone
+        flow = Flow(name=flow_name, space_id=test_space.id)
+        test_db.add(flow)
+        test_db.flush()
+        run = FlowRun(space_id=test_space.id, flow_id=flow.id)
+        run.started_at = datetime.now(timezone.utc)
+        test_db.add(run)
+        test_db.flush()
+        sr = StepRun(
+            flow_run_id=run.id, step_name=step_name,
+            step_position=step_position, flow_name=flow_name,
+            agent="pi", model="test",
+            started_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+        test_db.add(sr)
+        test_db.commit()
+        return run, sr, flow
+
+    def test_timeout_marks_run_completed(self, test_db, test_space):
+        """When a step times out, the run should be marked completed before post-run launch."""
+        from llmflows.services.daemon import Daemon
+        from llmflows.db.models import FlowRun
+
+        run, sr, flow = self._setup_run_with_step(test_db, test_space)
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.run_timeout_minutes = 60
+        daemon._browser_active_runs = set()
+        daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
+
+        run_svc = RunService(test_db)
+        flow_svc = FlowService(test_db)
+
+        with patch.object(Daemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
+             patch("llmflows.services.daemon.get_executor") as mock_exec, \
+             patch("llmflows.services.agent.AgentService.kill_agent"), \
+             patch.object(Daemon, '_launch_post_run_step'):
+            mock_executor = mock_exec.return_value
+            mock_executor.is_running.return_value = True
+
+            daemon._process_active_step(
+                run, test_space, sr,
+                Path(test_space.path),
+                run_svc, flow_svc,
+            )
+
+        test_db.refresh(run)
+        assert run.completed_at is not None
+        assert run.outcome == "timeout"
+
+    def test_timeout_skips_post_run_step(self, test_db, test_space):
+        """Timeout check should not apply to __post_run__ steps."""
+        from llmflows.services.daemon import Daemon
+
+        run, _, flow = self._setup_run_with_step(
+            test_db, test_space, step_name="__post_run__", step_position=2,
+        )
+        sr = run.step_runs[0]
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.run_timeout_minutes = 1
+        daemon._browser_active_runs = set()
+        daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
+
+        run_svc = RunService(test_db)
+        flow_svc = FlowService(test_db)
+
+        with patch.object(Daemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
+             patch("llmflows.services.daemon.get_executor") as mock_exec, \
+             patch("llmflows.services.agent.AgentService.kill_agent") as mock_kill:
+            mock_executor = mock_exec.return_value
+            mock_executor.is_running.return_value = True
+
+            daemon._process_active_step(
+                run, test_space, sr,
+                Path(test_space.path),
+                run_svc, flow_svc,
+            )
+
+        mock_kill.assert_not_called()
+        test_db.refresh(run)
+        assert run.completed_at is None
+
+    def test_max_spend_skips_post_run_step(self, test_db, test_space):
+        """Max spend check should not apply to __post_run__ steps."""
+        from llmflows.services.daemon import Daemon
+        from llmflows.db.models import Flow
+
+        run, sr, flow = self._setup_run_with_step(
+            test_db, test_space, step_name="__post_run__", step_position=2,
+        )
+        flow.max_spend_usd = 0.01
+        test_db.commit()
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.run_timeout_minutes = 0
+        daemon._browser_active_runs = set()
+
+        run_svc = RunService(test_db)
+        flow_svc = FlowService(test_db)
+
+        result = daemon._check_max_spend(
+            run, test_space, sr,
+            Path(test_space.path),
+            run_svc, flow_svc,
+        )
+        assert result is False
+
 
 
 class TestChannelManagerMute:

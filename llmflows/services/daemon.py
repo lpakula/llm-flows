@@ -135,6 +135,8 @@ class Daemon:
         run_svc: RunService, flow_svc: FlowService,
     ) -> bool:
         """Check if the run's cumulative cost exceeds the flow's max_spend_usd. Returns True if cancelled."""
+        if step_run.step_name == "__post_run__":
+            return False
         flow = run.flow
         if not flow or not flow.max_spend_usd:
             return False
@@ -149,8 +151,7 @@ class Daemon:
         AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
         run_svc.mark_step_completed(step_run.id, outcome="max_spend")
         self._finalize_run(run.id)
-        run.outcome = "max_spend"
-        run_svc.session.commit()
+        run_svc.mark_completed(run.id, outcome="max_spend")
         self._launch_post_run_step(
             run, working_path,
             step_run.step_position + 1, run_svc, flow_svc,
@@ -538,7 +539,7 @@ class Daemon:
             if self._check_max_spend(run, space, step_run, working_path, run_svc, flow_svc):
                 return
 
-            if self.run_timeout_minutes and step_run.started_at:
+            if self.run_timeout_minutes and step_run.started_at and step_run.step_name != "__post_run__":
                 completed_time = sum(
                     sr.duration_seconds for sr in run_svc.list_step_runs(run.id)
                     if sr.id != step_run.id and sr.duration_seconds is not None
@@ -557,8 +558,7 @@ class Daemon:
                     AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     self._finalize_run(run.id)
-                    run.outcome = "timeout"
-                    run_svc.session.commit()
+                    run_svc.mark_completed(run.id, outcome="timeout")
                     self._launch_post_run_step(
                         run, working_path,
                         step_run.step_position + 1, run_svc, flow_svc,
@@ -784,8 +784,7 @@ class Daemon:
                     step_run.gate_failures = json.dumps(gate_failure_info)
                     run_svc.session.commit()
                     self._finalize_run(run.id)
-                    run.outcome = "interrupted"
-                    run_svc.session.commit()
+                    run_svc.mark_completed(run.id, outcome="interrupted")
                     self._launch_post_run_step(
                         run, working_path,
                         step_run.step_position + 1, run_svc, flow_svc,
@@ -1008,8 +1007,7 @@ class Daemon:
                 run.id, step_name, exc,
             )
             self._finalize_run(run.id)
-            run.outcome = "error"
-            run_svc.session.commit()
+            run_svc.mark_completed(run.id, outcome="error")
             self._launch_post_run_step(
                 run, working_path,
                 step_position, run_svc, flow_svc,
@@ -1155,8 +1153,7 @@ class Daemon:
             )
             run_svc.mark_step_completed(step_run.id, outcome="error")
             self._finalize_run(run.id)
-            run.outcome = "error"
-            run_svc.session.commit()
+            run_svc.mark_completed(run.id, outcome="error")
             self._launch_post_run_step(
                 run, working_path,
                 step_run.step_position + 1, run_svc, flow_svc,
@@ -1293,9 +1290,9 @@ class Daemon:
     ) -> None:
         """Check post-run artifacts for a flow proposal.
 
-        The run may still have ``completed_at = NULL`` (error/interrupt paths
-        set outcome but skip ``mark_completed``).  We must finalise it here so
-        it stops being treated as active.
+        Error/interrupt/timeout paths now call ``mark_completed`` before
+        launching the post-run step.  The ``if not run.completed_at`` guard
+        below is kept as a safety net for any unexpected edge case.
         """
         space = run_svc.session.query(Space).filter_by(id=run.space_id).first()
         space_root = Path(space.path)
