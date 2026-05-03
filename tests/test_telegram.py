@@ -1,8 +1,9 @@
-"""Tests for the Telegram bot — flow improvement buttons and help version."""
+"""Tests for the Telegram bot — flow improvement buttons, help version, /active UX."""
 
 import asyncio
 import json
 import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -294,3 +295,153 @@ class TestInboxDetailFlowImprovement:
         texts = [b.text for b in buttons]
         assert "Accept" in texts
         assert "Decline" in texts
+
+
+class TestFormatRunCard:
+    """_format_run_card produces correct text and button label for active/pending runs."""
+
+    def _make_run(self, tg_db, space, flow, started=True, step="step-1", snapshot_vars=None):
+        now = datetime.now(timezone.utc)
+        snap = {"name": flow.name}
+        if snapshot_vars:
+            snap["variables"] = {k: {"value": v, "is_env": False} for k, v in snapshot_vars.items()}
+        run = FlowRun(
+            flow_id=flow.id,
+            space_id=space.id,
+            current_step=step,
+            flow_snapshot=json.dumps(snap),
+            created_at=now - timedelta(minutes=5),
+        )
+        if started:
+            run.started_at = now - timedelta(minutes=3)
+        tg_db.add(run)
+        tg_db.flush()
+        return run
+
+    def test_active_run_card_has_yellow_icon_and_status(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow)
+        now = datetime.now(timezone.utc)
+        text, btn = TelegramBot._format_run_card(run, space, "active", now)
+        assert "🟡" in text
+        assert "running" in text
+        assert "Cancel" in btn
+
+    def test_active_run_card_shows_step(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow, step="Research")
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "active", now)
+        assert "Research" in text
+        assert "Step:" in text
+
+    def test_active_run_card_shows_elapsed(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow)
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "active", now)
+        assert "3m" in text
+
+    def test_active_run_card_shows_variables(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow, snapshot_vars={"BRANCH": "main", "ENV": "prod"})
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "active", now)
+        assert "BRANCH=main" in text
+        assert "ENV=prod" in text
+        assert "Vars:" in text
+
+    def test_active_run_card_omits_vars_when_none(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow)
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "active", now)
+        assert "Vars:" not in text
+
+    def test_active_run_card_shows_space_name(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow)
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "active", now)
+        assert "Space: test-space" in text
+
+    def test_pending_run_card_has_blue_icon_and_queued(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow, started=False)
+        now = datetime.now(timezone.utc)
+        text, btn = TelegramBot._format_run_card(run, space, "pending", now)
+        assert "🔵" in text
+        assert "queued" in text
+        assert "Dequeue" in btn
+
+    def test_pending_run_card_shows_wait_time(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+        run = self._make_run(tg_db, space, flow, started=False)
+        now = datetime.now(timezone.utc)
+        text, _ = TelegramBot._format_run_card(run, space, "pending", now)
+        assert "5m" in text
+
+
+class TestActiveCommand:
+    """_handle_active_command sends individual cards for each run."""
+
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_active_sends_separate_cards(self, tg_bot, tg_db, space_and_flow):
+        space, flow, existing_run = space_and_flow
+        existing_run.completed_at = datetime.now(timezone.utc)
+        tg_db.flush()
+
+        now = datetime.now(timezone.utc)
+        snap = json.dumps({"name": flow.name})
+
+        r1 = FlowRun(
+            flow_id=flow.id, space_id=space.id, current_step="Build",
+            flow_snapshot=snap, started_at=now - timedelta(minutes=2),
+            created_at=now - timedelta(minutes=3),
+        )
+        r2 = FlowRun(
+            flow_id=flow.id, space_id=space.id,
+            flow_snapshot=snap, created_at=now - timedelta(minutes=1),
+        )
+        tg_db.add_all([r1, r2])
+        tg_db.flush()
+
+        sent_texts = []
+
+        async def fake_send(chat_id, text, markup=None, **kwargs):
+            sent_texts.append(text)
+            msg = MagicMock()
+            msg.message_id = len(sent_texts)
+            return msg
+
+        tg_bot._send_message_safe = fake_send
+
+        update = MagicMock()
+        update.effective_chat.id = 123
+
+        self._run(tg_bot._handle_active_command(update, None))
+
+        assert len(sent_texts) == 2
+        assert "🟡" in sent_texts[0]
+        assert "Build" in sent_texts[0]
+        assert "🔵" in sent_texts[1]
+        assert "queued" in sent_texts[1]
+
+    def test_active_no_runs(self, tg_bot, tg_db, space_and_flow):
+        _, _, existing_run = space_and_flow
+        existing_run.completed_at = datetime.now(timezone.utc)
+        tg_db.flush()
+
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_active_command(update, None))
+
+        update.message.reply_text.assert_called_once_with("No active or queued runs.")

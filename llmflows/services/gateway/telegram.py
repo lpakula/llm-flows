@@ -301,42 +301,71 @@ class TelegramBot:
             run_svc = RunService(session)
             now = datetime.now(timezone.utc)
 
-            lines: list[str] = []
-            buttons: list[list] = []
+            runs: list[tuple[FlowRun, SpaceModel, str]] = []
             for space in spaces:
-                active = run_svc.get_active_by_space(space.id)
-                pending = run_svc.get_all_pending(space.id)
-                if not active and not pending:
-                    continue
-                lines.append(f"<b>{space.name}</b>")
-                for r in active:
-                    step = r.current_step or "starting"
-                    elapsed = _format_elapsed(r.started_at, now)
-                    lines.append(f"  🟢 {r.flow_name or '?'} — <i>{step}</i>  {elapsed}")
-                    buttons.append([InlineKeyboardButton(
-                        f"Cancel {r.flow_name or r.id}",
-                        callback_data=f"cancelrun:{r.id}",
-                    )])
-                for r in pending:
-                    waited = _format_elapsed(r.created_at, now)
-                    lines.append(f"  ⏳ {r.flow_name or '?'} — queued {waited}")
-                    buttons.append([InlineKeyboardButton(
-                        f"Dequeue {r.flow_name or r.id}",
-                        callback_data=f"cancelrun:{r.id}",
-                    )])
+                for r in run_svc.get_active_by_space(space.id):
+                    runs.append((r, space, "active"))
+                for r in run_svc.get_all_pending(space.id):
+                    runs.append((r, space, "pending"))
 
-            if not lines:
+            if not runs:
                 await update.message.reply_text("No active or queued runs.")
                 return
 
-            markup = InlineKeyboardMarkup(buttons) if buttons else None
-            await update.message.reply_text(
-                "\n".join(lines),
-                parse_mode="HTML",
-                reply_markup=markup,
-            )
+            for r, space, kind in runs:
+                await self._send_active_run_card(update, r, space, kind, now)
         finally:
             session.close()
+
+    @staticmethod
+    def _format_run_card(
+        run: "FlowRun", space: "SpaceModel", kind: str, now: datetime,
+    ) -> tuple[str, str]:
+        """Build HTML text and cancel/dequeue button label for one run."""
+        flow_label = run.flow_name or "?"
+        if kind == "active":
+            status = run.status
+            if status == "awaiting_user":
+                icon, status_label = "🟠", "awaiting input"
+            elif status == "paused":
+                icon, status_label = "⏸️", "paused"
+            else:
+                icon, status_label = "🟡", "running"
+            elapsed = _format_elapsed(run.started_at, now)
+            step = run.current_step or "starting"
+            lines = [
+                f"{icon} <b>{flow_label}</b>",
+                f"Status: {status_label}  ·  {elapsed}",
+                f"Step: <i>{step}</i>",
+            ]
+            btn_label = f"Cancel {flow_label}"
+        else:
+            waited = _format_elapsed(run.created_at, now)
+            lines = [
+                f"🔵 <b>{flow_label}</b>",
+                f"Status: queued  ·  {waited}",
+            ]
+            btn_label = f"Dequeue {flow_label}"
+
+        lines.append(f"Space: {space.name}")
+
+        run_vars = run.run_variables
+        if run_vars:
+            var_parts = [f"{k}={v}" for k, v in run_vars.items()]
+            lines.append(f"Vars: <code>{', '.join(var_parts)}</code>")
+
+        return "\n".join(lines), btn_label
+
+    async def _send_active_run_card(
+        self, update, run: "FlowRun", space: "SpaceModel", kind: str, now: datetime,
+    ) -> None:
+        text, btn_label = self._format_run_card(run, space, kind, now)
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton(
+            btn_label, callback_data=f"cancelrun:{run.id}",
+        )]])
+        await self._send_message_safe(
+            update.effective_chat.id, text, markup,
+        )
 
     # ── /inbox command — list inbox items ────────────────────────────────────
 

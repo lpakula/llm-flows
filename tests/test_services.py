@@ -859,7 +859,7 @@ class TestFlowVersioning:
         assert result.version == 2
 
 
-<class TestGateRetryExhaustion:
+class TestGateRetryExhaustion:
     """When max gate retries are exhausted, the last step_run should reflect the failure."""
 
     def test_last_retry_gets_gate_failed_outcome(self, test_db, test_space, temp_dir):
