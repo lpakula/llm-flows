@@ -239,7 +239,7 @@ export function Sidebar() {
 
       {/* Inbox + Chat — space-agnostic, always visible */}
       <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2 space-y-0.5">
-        <div className="flex items-center">
+        <div className="flex items-center gap-1">
           <NavLink to="/inbox" className={(p) => `flex-1 min-w-0 ${navClass(p)}`}>
             <Inbox size={14} className="flex-shrink-0" />
             <span className="flex-1">Inbox</span>
