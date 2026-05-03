@@ -239,28 +239,26 @@ export function Sidebar() {
 
       {/* Inbox + Chat — space-agnostic, always visible */}
       <nav className="flex-shrink-0 border-b border-gray-800 px-2 py-2 space-y-0.5">
-        <div className="flex items-center gap-1">
-          <NavLink to="/inbox" className={(p) => `flex-1 min-w-0 ${navClass(p)}`}>
+        <NavLink to="/inbox" className={(p) => navClass(p)}>
             <Inbox size={14} className="flex-shrink-0" />
             <span className="flex-1">Inbox</span>
             {inboxCount > 0 && (
-              <span className="ml-auto bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+              <span className="bg-amber-500/20 text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
                 {inboxCount}
               </span>
             )}
-          </NavLink>
-          <button
-            onClick={toggleMute}
-            title={inboxMuted ? "Unmute notifications" : "Mute notifications"}
-            className={`flex-shrink-0 p-1.5 rounded-lg transition ${
-              inboxMuted
-                ? "text-amber-400 hover:bg-gray-800"
-                : "text-gray-600 hover:text-gray-400 hover:bg-gray-800/50"
-            }`}
-          >
-            {inboxMuted ? <BellOff size={13} /> : <Bell size={13} />}
-          </button>
-        </div>
+            <button
+              onClick={toggleMute}
+              title={inboxMuted ? "Unmute notifications" : "Mute notifications"}
+              className={`flex-shrink-0 p-1 rounded transition ${
+                inboxMuted
+                  ? "text-amber-400 hover:bg-gray-700"
+                  : "text-gray-600 hover:text-gray-400 hover:bg-gray-700"
+              }`}
+            >
+              {inboxMuted ? <BellOff size={13} /> : <Bell size={13} />}
+            </button>
+        </NavLink>
         <NavLink to="/chat" className={navClass}>
           <MessageCircle size={14} className="flex-shrink-0" />
           Chat
