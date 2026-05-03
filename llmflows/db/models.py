@@ -542,7 +542,12 @@ class StepRun(Base):
     def duration_seconds(self) -> float | None:
         if not self.started_at:
             return None
-        end = self.completed_at or (self.run and self.run.completed_at) or datetime.now(timezone.utc)
+        # For HITL steps, only count agent time (up to awaiting_user_at),
+        # not the time spent waiting for the human to respond.
+        if self.awaiting_user_at:
+            end = self.awaiting_user_at
+        else:
+            end = self.completed_at or (self.run and self.run.completed_at) or datetime.now(timezone.utc)
         start = self.started_at if self.started_at.tzinfo else self.started_at.replace(tzinfo=timezone.utc)
         end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
         return (end - start).total_seconds()
