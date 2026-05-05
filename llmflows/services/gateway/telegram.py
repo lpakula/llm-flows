@@ -278,6 +278,10 @@ class TelegramBot:
     async def _handle_run_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
+            await update.message.reply_text(
+                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
+                parse_mode="HTML",
+            )
             return
 
         session = self.session_factory()
@@ -302,6 +306,10 @@ class TelegramBot:
     async def _handle_active_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
+            await update.message.reply_text(
+                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
+                parse_mode="HTML",
+            )
             return
 
         session = self.session_factory()
@@ -381,6 +389,10 @@ class TelegramBot:
     async def _handle_inbox_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
+            await update.message.reply_text(
+                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
+                parse_mode="HTML",
+            )
             return
 
         session = self.session_factory()
@@ -465,6 +477,10 @@ class TelegramBot:
     async def _handle_upgrade_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
+            await update.message.reply_text(
+                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
+                parse_mode="HTML",
+            )
             return
 
         await update.message.reply_text("Upgrading llmflows…")

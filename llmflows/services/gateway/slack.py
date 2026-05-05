@@ -190,10 +190,15 @@ class SlackChannel:
 
     def _handle_mention(self, event: dict, say) -> None:
         channel = event.get("channel", "")
-        if not self._is_allowed(channel):
+        text = re.sub(r"<@\w+>\s*", "", event.get("text", "")).strip().lower()
+
+        if text.startswith("help") or not text:
+            self._cmd_help(channel, say)
             return
 
-        text = re.sub(r"<@\w+>\s*", "", event.get("text", "")).strip().lower()
+        if not self._is_allowed(channel):
+            say(text=f"This channel (`{channel}`) is not configured. Add it in the Gateway settings.", channel=channel)
+            return
 
         if text.startswith("run"):
             self._cmd_run(channel, say)
@@ -203,8 +208,6 @@ class SlackChannel:
             self._cmd_inbox(channel, say)
         elif text.startswith("upgrade"):
             self._cmd_upgrade(channel, say)
-        elif text.startswith("help"):
-            self._cmd_help(channel, say)
         else:
             self._cmd_help(channel, say)
 
