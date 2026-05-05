@@ -474,38 +474,30 @@ Each step's `content` is a markdown prompt given to the agent. Use clear section
 
 ## Flow JSON Format
 
-The export/import format. One file can contain multiple flows.
+One file = one flow. This is the standard format used by `llmflows flow import` and the `flows/` directory:
 
 ```json
 {
+  "name": "my-flow",
   "version": 1,
-  "flows": [
+  "description": "What this flow does.",
+  "steps": [
     {
-      "name": "my-flow",
-      "description": "What this flow does.",
-      "steps": [
-        {
-          "name": "step-name",
-          "position": 0,
-          "step_type": "agent",
-          "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
-          "gates": [
-            {"command": "test -f {{step.dir}}/output.md", "message": "Output file must exist."}
-          ],
-          "ifs": [],
-          "agent_alias": "normal",
-          "allow_max": false,
-          "max_gate_retries": 5,
-          "skills": [],
-          "connectors": []
-        }
-      ]
+      "name": "step-name",
+      "position": 0,
+      "content": "# STEP TITLE\n\n## PURPOSE\n\n...\n\n## WORKFLOW\n\n1. ...",
+      "gates": [
+        {"command": "test -f {{step.dir}}/output.md", "message": "Output file must exist."}
+      ],
+      "connectors": []
     }
   ]
 }
 ```
 
 Fields at their default values can be omitted — see the Step Fields Reference for defaults.
+
+The importer also accepts a wrapped format (`{"flows": [...]}`) for bulk operations, but **always use the bare format** when writing flow files.
 
 ---
 

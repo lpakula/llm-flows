@@ -1,0 +1,32 @@
+{
+  "name": "feature-discovery-brainstorm",
+  "version": 1,
+  "description": "Evaluate a specific input (link, library, new release) and determine if/how llm-flows can benefit from it.",
+  "variables": {
+    "INPUT": {
+      "value": "",
+      "is_env": false
+    }
+  },
+  "steps": [
+    {
+      "name": "research",
+      "position": 0,
+      "content": "# RESEARCH INPUT\n\n## PURPOSE\n\nDeeply understand the provided input and evaluate whether it offers something useful for llm-flows.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform — not just for coding. Users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow.\n\nThe user has shared something they came across (a link, library, tool, released feature, idea) and wants to know: can we use this to improve llm-flows?\n\n## INPUT\n\n{{flow.INPUT}}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` in the project root to understand the current architecture and capabilities of llm-flows.\n2. Use `web_search` to research the provided input thoroughly — read documentation, release notes, blog posts, or whatever is relevant to fully understand what it does and how it works.\n3. Analyze the input with these questions:\n   - What does this do? What problem does it solve?\n   - Is there an overlap or synergy with what llm-flows already does?\n   - Could this replace something we currently do, improve an existing capability, or unlock a new one?\n   - What would adopting this look like in practice?\n4. Write your analysis to `{{step.dir}}/_result.md` with the following structure:\n   - **What it is** — 2-3 sentence summary of the input\n   - **Relevance to llm-flows** — honest assessment: is this useful to us? (can be \"not really\" if that's the truth)\n   - **Opportunity** — if relevant, what specifically we could do with it (concrete feature or improvement)\n   - **Implementation sketch** — how it would fit into the architecture, what would need to change, rough scope\n   - **Verdict** — your recommendation: pursue, park for later, or skip",
+      "connectors": [
+        "web_search"
+      ]
+    },
+    {
+      "name": "review",
+      "position": 1,
+      "content": "# REVIEW ANALYSIS\n\n## PURPOSE\n\nPresent the analysis to the user and ask whether to proceed.\n\n## WORKFLOW\n\n1. Read the analysis from the previous step's context.\n2. Write it to `{{step.dir}}/hitl.md`, ending with: \"Would you like to schedule this for development? Reply 'yes' to proceed, or share feedback/adjustments.\"\n3. Write the same analysis to `{{step.dir}}/_result.md`.",
+      "step_type": "hitl"
+    },
+    {
+      "name": "process",
+      "position": 2,
+      "content": "# PROCESS DECISION\n\n## PURPOSE\n\nAct on the user's decision — either schedule the feature for development or archive the analysis.\n\n## WORKFLOW\n\n1. Read the user's response from `{{hitl.response.0}}`.\n2. If the user confirmed (e.g., \"yes\", \"go ahead\", \"schedule it\"):\n   - Extract the opportunity and implementation sketch from `01-review/_result.md`.\n   - Use the shell tool to run:\n     `llmflows run schedule --flow feature-develop --var TASK=\"<opportunity title, rationale, and implementation approach>\"`\n   - Write confirmation to `{{step.dir}}/_result.md`.\n3. If the user declined or said to skip:\n   - Ensure `{{space.dir}}/memory` exists.\n   - Append a brief note about the evaluated input and why it was skipped to `{{space.dir}}/memory/rejected-features.md`.\n   - Write confirmation to `{{step.dir}}/_result.md`.\n4. If the user provided feedback or adjustments, incorporate them into the task description before scheduling."
+    }
+  ]
+}

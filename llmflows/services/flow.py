@@ -393,8 +393,14 @@ class FlowService:
         return data
 
     def import_flows(self, path: Path, space_id: str) -> int:
-        """Import flows from a JSON file. Upserts by name. Returns count imported."""
+        """Import flows from a JSON file. Upserts by name. Returns count imported.
+
+        Supports both wrapped format ({"flows": [...]}) and bare flow objects
+        ({"name": "...", "steps": [...]}).
+        """
         data = json.loads(Path(path).read_text())
+        if "flows" not in data and "name" in data:
+            data = {"flows": [data]}
         return self._import_flows_data(data, space_id=space_id, skip_existing=False)
 
     def _import_flows_data(self, data: dict, space_id: str, skip_existing: bool = False) -> int:
