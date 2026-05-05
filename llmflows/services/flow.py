@@ -401,6 +401,8 @@ class FlowService:
         data = json.loads(Path(path).read_text())
         if "flows" not in data and "name" in data:
             data = {"flows": [data]}
+        if not data.get("flows"):
+            raise ValueError(f"No flows found in {path}. Expected a flow object with 'name' and 'steps', or {{'flows': [...]}}.")
         return self._import_flows_data(data, space_id=space_id, skip_existing=False)
 
     def _import_flows_data(self, data: dict, space_id: str, skip_existing: bool = False) -> int:
