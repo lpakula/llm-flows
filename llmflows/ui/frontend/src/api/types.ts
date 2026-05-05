@@ -298,6 +298,22 @@ export interface SkillInfo {
   path: string;
   description: string;
   compatibility: string;
+  source?: {
+    registry: string;
+    owner: string;
+    repo: string;
+    skill: string;
+    slug: string;
+  } | null;
+}
+
+export interface RegistrySkill {
+  name: string;
+  owner: string;
+  repo: string;
+  description: string;
+  slug: string;
+  github_url: string;
 }
 
 export interface LogEntry {

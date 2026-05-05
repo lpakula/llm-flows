@@ -33,6 +33,7 @@ from ..services.flow import FlowService
 from ..services.space import SpaceService
 from ..services.run import RunService
 from ..services.skill import SkillService
+from ..services.skillssh import SkillsShService, parse_skill_ref
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -2521,14 +2522,13 @@ async def reorder_flow_steps(flow_id: str, body: ReorderSteps):
 
 @app.get("/api/spaces/{space_id}/skills")
 async def list_space_skills(space_id: str):
-    """Return discovered skills for a space."""
+    """Return discovered skills for a space, with source metadata."""
     session, space_svc = _get_services()
     try:
         space = space_svc.get(space_id)
         if not space:
             raise HTTPException(status_code=404, detail="Space not found")
-        skills = SkillService.discover(space.path)
-        return [{"name": s.name, "path": s.path, "description": s.description, "compatibility": s.compatibility} for s in skills]
+        return SkillsShService.list_with_sources(space.path)
     finally:
         session.close()
 
@@ -2547,6 +2547,55 @@ async def get_skill_content(space_id: str, skill_name: str):
         return {"content": content}
     finally:
         session.close()
+
+
+class SkillInstallBody(BaseModel):
+    source: str
+
+
+@app.post("/api/spaces/{space_id}/skills/install")
+async def install_skill(space_id: str, body: SkillInstallBody):
+    """Install a skill from skills.sh (owner/repo@skill format)."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        result = SkillsShService.install_from_ref(space.path, body.source)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error)
+        return {"ok": True, "skill_name": result.skill_name, "path": result.path}
+    finally:
+        session.close()
+
+
+@app.delete("/api/spaces/{space_id}/skills/{skill_name}")
+async def remove_skill(space_id: str, skill_name: str):
+    """Remove an installed skill."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        if not SkillsShService.remove(space.path, skill_name):
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.get("/api/skills/search")
+async def search_skills(q: str = "", limit: int = 20):
+    """Search skills.sh / GitHub for skills."""
+    if not q.strip():
+        return []
+    results = SkillsShService.search_github(q, limit=limit)
+    return [
+        {"name": s.name, "owner": s.owner, "repo": s.repo,
+         "description": s.description, "slug": s.slug,
+         "github_url": s.github_url}
+        for s in results
+    ]
 
 
 @app.get("/api/agents")
