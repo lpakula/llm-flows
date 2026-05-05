@@ -122,11 +122,11 @@ class DaemonConfigBody(BaseModel):
 class GatewayConfigBody(BaseModel):
     telegram_enabled: Optional[bool] = None
     telegram_bot_token: Optional[str] = None
-    telegram_allowed_chat_ids: Optional[list[int]] = None
+    telegram_allowed_chat_ids: Optional[dict[str, list[str]]] = None
     slack_enabled: Optional[bool] = None
     slack_bot_token: Optional[str] = None
     slack_app_token: Optional[str] = None
-    slack_allowed_channel_ids: Optional[list[str]] = None
+    slack_allowed_channel_ids: Optional[dict[str, list[str]]] = None
 
 
 class ConnectorCreateBody(BaseModel):
@@ -224,11 +224,11 @@ async def get_gateway_config():
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
-        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", {}),
         "slack_enabled": sl.get("enabled", False),
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
-        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", {}),
     }
 
 
@@ -265,11 +265,11 @@ async def update_gateway_config(body: GatewayConfigBody):
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
-        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
+        "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", {}),
         "slack_enabled": sl.get("enabled", False),
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
-        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", {}),
     }
 
 

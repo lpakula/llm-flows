@@ -129,11 +129,11 @@ export interface DaemonConfig {
 export interface GatewayConfig {
   telegram_enabled: boolean;
   telegram_bot_token: string;
-  telegram_allowed_chat_ids: number[];
+  telegram_allowed_chat_ids: Record<string, string[]>;
   slack_enabled: boolean;
   slack_bot_token: string;
   slack_app_token: string;
-  slack_allowed_channel_ids: string[];
+  slack_allowed_channel_ids: Record<string, string[]>;
 }
 
 export interface ConnectorConfigField {
