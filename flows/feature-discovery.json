@@ -1,36 +1,36 @@
 {
-  "flows": [
+  "name": "feature-discovery",
+  "version": 15,
+  "description": "Discover new AI features and propose them for llm-flows.",
+  "variables": {
+    "SCOPE": {
+      "value": "full",
+      "is_env": false
+    },
+    "FOCUS": {
+      "value": "",
+      "is_env": false
+    }
+  },
+  "steps": [
     {
-      "name": "feature-discovery",
-      "version": 6,
-      "description": "Discover new AI features and propose them for llm-flows.",
-      "steps": [
-        {
-          "name": "discover",
-          "position": 0,
-          "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\n{% if flow.SCOPE == 'full' %}\nProactively research the broader AI industry to discover cutting-edge advancements and propose innovative features for llm-flows.\n{% else %}\nDeep-dive into the provided scope/topic and discover how its concepts, ideas, or techniques can be leveraged to build innovative features for llm-flows.\n{% endif %}\n\n## WORKFLOW\n\n1. Read `AGENTS.md` in the project root to understand the current architecture, state, and capabilities of llm-flows.\n{% if flow.SCOPE == 'full' %}\n2. Use `web_search` to research the latest advancements, news, and research from major AI players (e.g., OpenAI, Anthropic, Google Gemini, Cursor) as well as the open-source AI community.\n3. Look for novel, cutting-edge ideas, architectures, or capabilities rather than just playing catch-up with direct competitors.\n{% else %}\n**Scope/Topic to research:**\n{{flow.SCOPE}}\n\n2. Use `web_search` to deeply research the topic provided above.\n3. Analyze the findings and identify how they can be applied to improve an autonomous coding agent orchestrator like llm-flows.\n{% endif %}\n4. Check if `{{flow.dir}}/rejected-features.md` exists. If it does, read it to see which features have already been proposed and rejected.\n5. Select 3 to 5 new, highly innovative features that align with the goals of llm-flows.\n6. For each feature, write a clear value proposition explaining exactly how it would elevate llm-flows.\n7. Save the list of proposed features as a numbered list to `{{step.dir}}/_result.md`.",
-          "connectors": [
-            "web_search"
-          ]
-        },
-        {
-          "name": "review",
-          "position": 1,
-          "content": "# REVIEW FEATURES\n\n## PURPOSE\n\nPresent the discovered features to the user for selection.\n\n## WORKFLOW\n\n1. Read the numbered list of features from the previous step's context.\n2. Write the list to `{{step.dir}}/hitl.md`, ending with the question: \"Which feature would you like to implement? Type the number to accept it, or type 0 to reject all of them.\"\n3. Write the exact same list to `{{step.dir}}/_result.md` so the next step knows what the options were.",
-          "step_type": "hitl"
-        },
-        {
-          "name": "process",
-          "position": 2,
-          "content": "# PROCESS SELECTION\n\n## PURPOSE\n\nQueue the feature-develop flow for the selected feature and update the rejected features memory.\n\n## WORKFLOW\n\n1. Read the user's selection from `{{hitl.response.0}}`.\n2. Identify which feature from the previous step was selected (if any) and which were rejected.\n3. Ensure the flow directory exists by running `mkdir -p {{flow.dir}}` in the shell.\n4. Append the names and descriptions of the REJECTED features to `{{flow.dir}}/rejected-features.md` using file writing tools or shell commands.\n5. If the user selected a feature (i.e., didn't type 0), use the shell tool to queue the development flow. Run: `llmflows run schedule --flow feature-develop --var TASK=\"<detailed feature description and value proposition>\"`\n6. Write a summary of what was done to `{{step.dir}}/_result.md`."
-        }
-      ],
-      "variables": {
-        "SCOPE": {
-          "value": "",
-          "is_env": false
-        }
-      }
+      "name": "discover",
+      "position": 0,
+      "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project and the broader AI industry.\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` in the project root to understand the current architecture, state, and capabilities of llm-flows.\n2. Check if `{{space.dir}}/memory/rejected-features.md` exists. If it does, read it to avoid proposing features that have already been rejected.\n3. Research phase:\n   {% if flow.SCOPE == 'full' %}\n   Use `web_search` to research the latest advancements in AI agents, orchestrators (e.g., LangChain, CrewAI, PydanticAI), and autonomous coding tools.\n   {% else %}\n   **Scope/Topic:** {{flow.SCOPE}}\n   Use `web_search` to deeply research the provided scope/topic.\n   {% endif %}\n4. Focus phase:\n   {% if flow.FOCUS %}\n   **Focus area:** {{flow.FOCUS}}\n   Prioritize features that align with this specific focus.\n   {% endif %}\n5. Select 3 to 5 new, highly innovative features that align with the goals of llm-flows and are not already implemented.\n6. For each feature, write a clear title and a 2-3 sentence value proposition explaining exactly how it would elevate llm-flows.\n7. Save the list of proposed features as a numbered list to `{{step.dir}}/_result.md`.",
+      "connectors": [
+        "web_search"
+      ]
+    },
+    {
+      "name": "review",
+      "position": 1,
+      "content": "# REVIEW FEATURES\n\n## PURPOSE\n\nPresent the discovered features to the user for selection.\n\n## WORKFLOW\n\n1. Read the numbered list of features from the previous step's context.\n2. Write the list to `{{step.dir}}/hitl.md`, ending with the question: \"Which feature would you like to implement? Type the number to accept it, or type 0 to reject all of them.\"\n3. Write the exact same list to `{{step.dir}}/_result.md` so the next step knows what the options were.",
+      "step_type": "hitl"
+    },
+    {
+      "name": "process",
+      "position": 2,
+      "content": "# PROCESS SELECTION\n\n## PURPOSE\n\nQueue the `feature-develop` flow for the selected feature and update the rejected features memory.\n\n## WORKFLOW\n\n1. Read the user's response from `{{hitl.response.0}}`.\n2. Compare the response against the numbered list of features in `01-review/_result.md`.\n3. Identify which feature was selected (if any) and which were rejected. \n   - If the user entered a number (e.g., \"1\") or a name, that feature is selected.\n   - All other features in the list are rejected.\n   - If the user entered \"0\", all features are rejected.\n4. Update Rejected Memory:\n   - Ensure the directory `{{space.dir}}/memory` exists (`mkdir -p {{space.dir}}/memory`).\n   - Append the name and description of all REJECTED features to `{{space.dir}}/memory/rejected-features.md`.\n5. Schedule Development:\n   - If a feature was selected, use the shell tool to run:\n     `llmflows run schedule --flow feature-develop --var TASK=\"<detailed title and value proposition of the selected feature>\"`\n6. Write a summary of what was done (which feature was scheduled, which were rejected) to `{{step.dir}}/_result.md`."
     }
   ]
 }

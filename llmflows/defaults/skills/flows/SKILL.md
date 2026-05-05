@@ -54,6 +54,9 @@ Other files saved to `{{step.dir}}/` are also collected, but with a lower per-fi
 
 ```
 .llmflows/<flow-name>/                # Persistent flow directory ({{flow.dir}})
+├── memory/                           # Cross-run memory (visible in Flow Memory UI)
+│   ├── rejected-proposals.md         # Built-in: auto-populated when user rejects improvements
+│   └── *.md                          # Any .md files here persist across runs
 ├── runs/<run_id>/artifacts/          # Run directory ({{run.dir}})
 │   ├── 00-fetch-articles/            # Step 0 directory ({{step.dir}})
 │   │   ├── _result.md                # Primary output (required)
@@ -62,12 +65,20 @@ Other files saved to `{{step.dir}}/` are also collected, but with a lower per-fi
 │   ├── 01-summarize/                 # Step 1 directory ({{step.dir}})
 │   │   └── _result.md
 │   └── inbox.md                      # Optional inbox notification message
-└── ...                               # Any persistent cross-run data
 
 ~/.llmflows/attachments/<run_id>/     # Run attachments ({{attachment.dir}})
 ├── screenshot.png                    # Files saved here appear in run summary & inbox
 └── report.pdf
 ```
+
+### Flow memory
+
+The `{{flow.dir}}/memory/` directory stores knowledge that persists across runs of the same flow. All `.md` files in this directory are visible in the Flow Memory panel in the UI.
+
+- **Always write memory files to `{{flow.dir}}/memory/`** — not directly to `{{flow.dir}}/`
+- Files must be markdown (`.md`) with non-empty content to appear in the UI
+- `rejected-proposals.md` is a built-in memory file — it is automatically populated when a user rejects a flow improvement proposal. The post-run analyst reads this file to avoid re-proposing rejected ideas.
+- Use memory for any data that should inform future runs: rejected options, learned preferences, accumulated context, etc.
 
 Step directories are named `NN-step-name` — zero-padded position + step name lowercased with spaces replaced by hyphens (e.g. step `"Fetch articles"` at position 0 → `00-fetch-articles`).
 
