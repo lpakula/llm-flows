@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmflows"
-version = "0.26.2"
-description = "Agentic workflow orchestrator with kanban UI"
+version = "0.26.3"
+description = "AI automations that run in the background"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Lukasz Pakula"}
 ]
-keywords = ["ai", "agent", "workflow", "cli", "kanban", "orchestrator"]
+keywords = ["ai", "agent", "workflow", "automation", "llm", "orchestrator"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
