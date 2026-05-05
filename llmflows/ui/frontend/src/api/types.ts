@@ -314,6 +314,7 @@ export interface RegistrySkill {
   description: string;
   slug: string;
   github_url: string;
+  install_count: number;
 }
 
 export interface LogEntry {

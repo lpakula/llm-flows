@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { Search, Download, Trash2, ExternalLink, Package } from "lucide-react";
+import { Search, Download, Trash2, ExternalLink, Package, ArrowDownWideNarrow } from "lucide-react";
 import type { SkillInfo, RegistrySkill } from "@/api/types";
 
 function SkillPreviewModal({
@@ -145,7 +145,15 @@ function MarketplaceCard({
             <Package size={13} className="text-blue-400 shrink-0" />
             <span className="text-sm font-mono font-medium text-gray-100 truncate">{skill.name}</span>
           </div>
-          <p className="text-[11px] text-gray-500 font-mono mt-0.5">{skill.owner}/{skill.repo}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-[11px] text-gray-500 font-mono">{skill.owner}/{skill.repo}</p>
+            {skill.install_count > 0 && (
+              <span className="flex items-center gap-0.5 text-[10px] text-gray-500">
+                <ArrowDownWideNarrow size={9} className="text-gray-600" />
+                {skill.install_count.toLocaleString()}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <a

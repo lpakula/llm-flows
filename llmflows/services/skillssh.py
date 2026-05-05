@@ -168,6 +168,7 @@ class SkillsShService:
             if len(results) >= limit:
                 break
 
+        results.sort(key=lambda s: s.install_count, reverse=True)
         return results
 
     @staticmethod

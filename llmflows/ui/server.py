@@ -2593,7 +2593,7 @@ async def search_skills(q: str = "", limit: int = 20):
     return [
         {"name": s.name, "owner": s.owner, "repo": s.repo,
          "description": s.description, "slug": s.slug,
-         "github_url": s.github_url}
+         "github_url": s.github_url, "install_count": s.install_count}
         for s in results
     ]
 

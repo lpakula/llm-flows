@@ -213,6 +213,23 @@ class TestSkillsShService:
         assert results[1].name == "testing"
         assert results[1].owner == "user1"
 
+    def test_search_sorted_by_install_count(self):
+        mock_response = json.dumps({
+            "skills": [
+                {"skillId": "low", "name": "low", "installs": 10, "source": "a/b"},
+                {"skillId": "high", "name": "high", "installs": 9999, "source": "c/d"},
+                {"skillId": "mid", "name": "mid", "installs": 500, "source": "e/f"},
+                {"skillId": "zero", "name": "zero", "installs": 0, "source": "g/h"},
+            ],
+            "count": 4,
+        }).encode()
+
+        with patch("llmflows.services.skillssh._http_get", return_value=mock_response):
+            results = SkillsShService.search("test")
+
+        assert [r.name for r in results] == ["high", "mid", "low", "zero"]
+        assert [r.install_count for r in results] == [9999, 500, 10, 0]
+
     def test_search_github_delegates_to_search(self):
         mock_response = json.dumps({
             "skills": [{"skillId": "test-skill", "name": "test-skill",
@@ -368,6 +385,25 @@ class TestSkillsAPI:
         assert len(data) == 1
         assert data[0]["name"] == "testing"
         assert data[0]["slug"] == "acme/skills@testing"
+        assert data[0]["install_count"] == 5000
+
+    def test_search_skills_sorted_by_installs(self, skills_client, skills_api_db):
+        mock_response = json.dumps({
+            "skills": [
+                {"skillId": "few", "name": "few", "installs": 5, "source": "a/b"},
+                {"skillId": "many", "name": "many", "installs": 10000, "source": "c/d"},
+                {"skillId": "some", "name": "some", "installs": 200, "source": "e/f"},
+            ],
+            "count": 3,
+        }).encode()
+
+        with patch("llmflows.services.skillssh._http_get", return_value=mock_response):
+            resp = skills_client.get("/api/skills/search?q=test")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert [s["name"] for s in data] == ["many", "some", "few"]
+        assert [s["install_count"] for s in data] == [10000, 200, 5]
 
     def test_search_skills_empty_query(self, skills_client, skills_api_db):
         resp = skills_client.get("/api/skills/search?q=")

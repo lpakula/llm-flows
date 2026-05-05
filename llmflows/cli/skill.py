@@ -133,7 +133,10 @@ def skill_search(query, limit):
         return
 
     for s in results:
-        click.echo(f"  {click.style(s.slug, fg='cyan')}")
+        installs = ""
+        if s.install_count > 0:
+            installs = click.style(f"  ({s.install_count:,} installs)", fg="bright_black")
+        click.echo(f"  {click.style(s.slug, fg='cyan')}{installs}")
         if s.description:
             click.echo(click.style(f"    {s.description}", fg="bright_black"))
 
