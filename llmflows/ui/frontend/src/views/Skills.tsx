@@ -174,7 +174,7 @@ function MarketplaceCard({
             <button
               onClick={handleInstall}
               disabled={busy}
-              className="text-[10px] font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-2.5 py-1 rounded-lg transition flex items-center gap-1"
+              className="text-[10px] font-medium text-blue-400 hover:text-blue-300 disabled:opacity-50 px-1.5 py-1 transition flex items-center gap-1"
             >
               <Download size={10} />
               {busy ? "Installing..." : "Install"}
