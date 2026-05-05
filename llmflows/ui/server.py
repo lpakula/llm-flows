@@ -2164,6 +2164,10 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             raise HTTPException(status_code=404, detail="Space not found")
         content = await file.read()
         data = json.loads(content)
+        if "flows" not in data and "name" in data:
+            data = {"flows": [data]}
+        if not data.get("flows"):
+            raise HTTPException(status_code=400, detail="No flows found in file. Expected a flow object with 'name' and 'steps', or {\"flows\": [...]}.")
         flow_svc = FlowService(session)
         count = flow_svc._import_flows_data(data, space_id=space_id, skip_existing=False)
         return {"imported": count}
