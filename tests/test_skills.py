@@ -179,40 +179,72 @@ class TestSkillsShService:
     def test_remove_nonexistent(self, temp_dir):
         assert SkillsShService.remove(str(temp_dir), "nope") is False
 
-    def test_search_github(self):
+    def test_search(self):
         mock_response = json.dumps({
-            "items": [
+            "query": "azure",
+            "searchType": "fuzzy",
+            "skills": [
                 {
-                    "path": "azure-ai/SKILL.md",
-                    "repository": {
-                        "name": "azure-skills",
-                        "owner": {"login": "microsoft"},
-                        "description": "Azure AI skills",
-                    },
+                    "id": "microsoft/azure-skills/azure-ai",
+                    "skillId": "azure-ai",
+                    "name": "azure-ai",
+                    "installs": 50000,
+                    "source": "microsoft/azure-skills",
                 },
                 {
-                    "path": "skills/testing/SKILL.md",
-                    "repository": {
-                        "name": "my-skills",
-                        "owner": {"login": "user1"},
-                        "description": "Testing skills",
-                    },
+                    "id": "user1/my-skills/testing",
+                    "skillId": "testing",
+                    "name": "testing",
+                    "installs": 1200,
+                    "source": "user1/my-skills",
                 },
-            ]
+            ],
+            "count": 2,
         }).encode()
 
         with patch("llmflows.services.skillssh._http_get", return_value=mock_response):
-            results = SkillsShService.search_github("azure")
+            results = SkillsShService.search("azure")
 
         assert len(results) == 2
         assert results[0].name == "azure-ai"
         assert results[0].owner == "microsoft"
+        assert results[0].repo == "azure-skills"
+        assert results[0].install_count == 50000
         assert results[1].name == "testing"
+        assert results[1].owner == "user1"
 
-    def test_search_github_network_failure(self):
+    def test_search_github_delegates_to_search(self):
+        mock_response = json.dumps({
+            "skills": [{"skillId": "test-skill", "name": "test-skill",
+                        "installs": 100, "source": "org/repo"}],
+            "count": 1,
+        }).encode()
+
+        with patch("llmflows.services.skillssh._http_get", return_value=mock_response):
+            results = SkillsShService.search_github("test")
+
+        assert len(results) == 1
+        assert results[0].name == "test-skill"
+
+    def test_search_network_failure(self):
         with patch("llmflows.services.skillssh._http_get", return_value=None):
-            results = SkillsShService.search_github("anything")
+            results = SkillsShService.search("anything")
         assert results == []
+
+    def test_search_respects_limit(self):
+        mock_response = json.dumps({
+            "skills": [
+                {"skillId": f"skill-{i}", "name": f"skill-{i}",
+                 "installs": i, "source": "org/repo"}
+                for i in range(10)
+            ],
+            "count": 10,
+        }).encode()
+
+        with patch("llmflows.services.skillssh._http_get", return_value=mock_response):
+            results = SkillsShService.search("test", limit=3)
+
+        assert len(results) == 3
 
 
 # ---------- API tests ----------
@@ -319,14 +351,13 @@ class TestSkillsAPI:
 
     def test_search_skills(self, skills_client, skills_api_db):
         mock_response = json.dumps({
-            "items": [{
-                "path": "testing/SKILL.md",
-                "repository": {
-                    "name": "skills",
-                    "owner": {"login": "acme"},
-                    "description": "Test skills",
-                },
-            }]
+            "skills": [{
+                "skillId": "testing",
+                "name": "testing",
+                "installs": 5000,
+                "source": "acme/skills",
+            }],
+            "count": 1,
         }).encode()
 
         with patch("llmflows.services.skillssh._http_get", return_value=mock_response):

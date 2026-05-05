@@ -13,6 +13,7 @@ from .skill import SkillService, SkillInfo, _parse_frontmatter
 
 GITHUB_RAW = "https://raw.githubusercontent.com"
 GITHUB_API = "https://api.github.com"
+SKILLS_SH_API = "https://skills.sh/api"
 REQUEST_TIMEOUT = 15
 
 
@@ -130,40 +131,49 @@ class SkillsShService:
         return SkillsShService.install(project_path, owner, repo, skill)
 
     @staticmethod
-    def search_github(query: str, limit: int = 20) -> list[RegistrySkill]:
-        """Search GitHub for skill repositories containing SKILL.md files."""
-        q = urllib.request.quote(f"{query} SKILL.md in:path")
-        url = f"{GITHUB_API}/search/code?q={q}&per_page={limit}"
+    def search(query: str, limit: int = 20) -> list[RegistrySkill]:
+        """Search skills.sh registry for skills matching the query."""
+        q = urllib.request.quote(query)
+        url = f"{SKILLS_SH_API}/search?q={q}"
         data = _http_get(url)
         if not data:
             return []
 
         try:
-            results = json.loads(data)
+            payload = json.loads(data)
         except json.JSONDecodeError:
             return []
 
-        seen: dict[str, RegistrySkill] = {}
-        for item in results.get("items", []):
-            repo_info = item.get("repository", {})
-            owner = repo_info.get("owner", {}).get("login", "")
-            repo = repo_info.get("name", "")
-            path = item.get("path", "")
+        results: list[RegistrySkill] = []
+        for item in payload.get("skills", []):
+            source = item.get("source", "")
+            parts = source.split("/", 1)
+            if len(parts) != 2:
+                continue
+            owner, repo = parts
 
-            parts = path.replace("SKILL.md", "").strip("/").split("/")
-            skill_name = parts[-1] if parts and parts[-1] else repo
+            skill_name = item.get("skillId") or item.get("name", "")
+            if not skill_name:
+                continue
 
-            slug = f"{owner}/{repo}@{skill_name}"
-            if slug not in seen and owner and repo and skill_name:
-                seen[slug] = RegistrySkill(
-                    name=skill_name,
-                    owner=owner,
-                    repo=repo,
-                    description=repo_info.get("description", ""),
-                    source=slug,
-                )
+            results.append(RegistrySkill(
+                name=skill_name,
+                owner=owner,
+                repo=repo,
+                description="",
+                install_count=item.get("installs", 0),
+                source=f"{owner}/{repo}@{skill_name}",
+            ))
 
-        return list(seen.values())[:limit]
+            if len(results) >= limit:
+                break
+
+        return results
+
+    @staticmethod
+    def search_github(query: str, limit: int = 20) -> list[RegistrySkill]:
+        """Search for skills. Delegates to skills.sh API."""
+        return SkillsShService.search(query, limit=limit)
 
     @staticmethod
     def get_source_info(project_path: str, skill_name: str) -> dict | None:
