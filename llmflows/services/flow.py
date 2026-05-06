@@ -47,12 +47,13 @@ class FlowService:
         steps: Optional[list[dict]] = None,
         requirements: Optional[dict] = None,
         variables: Optional[dict] = None,
+        isolated: bool = False,
     ) -> Flow:
         existing = self.get_by_name(name, space_id)
         if existing:
             raise ValueError(f"Flow '{name}' already exists in this space")
 
-        flow = Flow(name=name, space_id=space_id, description=description)
+        flow = Flow(name=name, space_id=space_id, description=description, isolated=isolated)
         if requirements:
             flow.requirements = json.dumps(requirements)
         if variables:
@@ -78,6 +79,7 @@ class FlowService:
                     max_gate_retries=step_data.get("max_gate_retries", 5),
                     skills=_serialize_json_list(step_data.get("skills")),
                     connectors=_serialize_json_list(step_data.get("connectors")),
+                    isolated=step_data.get("isolated"),
                 )
                 self.session.add(step)
 
@@ -133,6 +135,7 @@ class FlowService:
         allow_max: bool = False, max_gate_retries: int = 5,
         skills: Optional[list] = None,
         connectors: Optional[list] = None,
+        isolated: Optional[bool] = None,
     ) -> Optional[FlowStep]:
         flow = self.get(flow_id)
         if not flow:
@@ -151,6 +154,7 @@ class FlowService:
             allow_max=allow_max, max_gate_retries=max_gate_retries,
             skills=_serialize_json_list(skills),
             connectors=_serialize_json_list(connectors),
+            isolated=isolated,
         )
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
@@ -230,7 +234,8 @@ class FlowService:
              "allow_max": bool(s.allow_max),
              "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
              "skills": s.get_skills(),
-             "connectors": s.get_connectors()}
+             "connectors": s.get_connectors(),
+             "isolated": s.isolated}
             for s in sorted(source.steps, key=lambda s: s.position)
         ]
         return self.create(
@@ -239,6 +244,7 @@ class FlowService:
             description=source.description,
             steps=steps_data,
             requirements=source.get_requirements(),
+            isolated=bool(source.isolated),
         )
 
     def build_flow_snapshot(self, flow_name: str, space_id: Optional[str] = None) -> Optional[dict]:
@@ -251,6 +257,7 @@ class FlowService:
             "name": source.name,
             "version": source.version or 1,
             "description": source.description or "",
+            "isolated": bool(source.isolated),
             "requirements": source.get_requirements(),
             "variables": source.get_variables(),
             "steps": [
@@ -266,6 +273,7 @@ class FlowService:
                     "max_gate_retries": s.max_gate_retries if s.max_gate_retries is not None else 5,
                     "skills": s.get_skills(),
                     "connectors": s.get_connectors(),
+                    "isolated": s.isolated,
                 }
                 for s in sorted(source.steps, key=lambda s: s.position)
             ],
@@ -286,6 +294,8 @@ class FlowService:
             "description": flow.description,
             "steps": [],
         }
+        if flow.isolated:
+            flow_data["isolated"] = True
         reqs = flow.get_requirements()
         if reqs.get("connectors"):
             flow_data["requirements"] = reqs
@@ -324,6 +334,8 @@ class FlowService:
             conns = s.get_connectors()
             if conns:
                 step_data["connectors"] = conns
+            if s.isolated is not None:
+                step_data["isolated"] = s.isolated
             flow_data["steps"].append(step_data)
 
         flows_dir = Path(space_path) / "flows"
@@ -347,6 +359,8 @@ class FlowService:
                 "description": flow.description,
                 "steps": [],
             }
+            if flow.isolated:
+                flow_data["isolated"] = True
             if reqs.get("connectors"):
                 flow_data["requirements"] = reqs
             flow_variables = flow.get_variables()
@@ -383,6 +397,8 @@ class FlowService:
                 conns = s.get_connectors()
                 if conns:
                     step_data["connectors"] = conns
+                if s.isolated is not None:
+                    step_data["isolated"] = s.isolated
                 flow_data["steps"].append(step_data)
             data["flows"].append(flow_data)
 
@@ -439,6 +455,8 @@ class FlowService:
                 for step in list(existing.steps):
                     self.session.delete(step)
                 existing.description = flow_data.get("description", "")
+                if "isolated" in flow_data:
+                    existing.isolated = flow_data["isolated"]
                 reqs = flow_data.get("requirements")
                 if reqs:
                     existing.requirements = json.dumps(reqs)
@@ -482,6 +500,7 @@ class FlowService:
                         max_gate_retries=step_data.get("max_gate_retries", 5),
                         skills=_serialize_json_list(step_data.get("skills")),
                         connectors=_serialize_json_list(step_data.get("connectors")),
+                        isolated=step_data.get("isolated"),
                     )
                     self.session.add(step)
             else:
@@ -492,6 +511,7 @@ class FlowService:
                     steps=flow_data.get("steps", []),
                     requirements=flow_data.get("requirements"),
                     variables=flow_data.get("variables"),
+                    isolated=flow_data.get("isolated", False),
                 )
                 if import_version is not None:
                     flow.version = import_version

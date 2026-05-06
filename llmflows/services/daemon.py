@@ -353,6 +353,27 @@ class Daemon:
         return {k: v["value"] for k, v in snap.get("variables", {}).items() if v.get("is_env")}
 
     @staticmethod
+    def _is_step_isolated(run, snap_step: Optional[dict] = None) -> bool:
+        """Determine if a step should run in Docker isolation.
+
+        Step-level ``isolated`` overrides flow-level.  If the step doesn't
+        specify, the flow-level default (from snapshot) is used.
+        """
+        if snap_step and snap_step.get("isolated") is not None:
+            return bool(snap_step["isolated"])
+        snap = None
+        if run.flow_snapshot:
+            try:
+                snap = json.loads(run.flow_snapshot)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if snap:
+            return bool(snap.get("isolated", False))
+        if run.flow and hasattr(run.flow, "isolated"):
+            return bool(run.flow.isolated)
+        return False
+
+    @staticmethod
     def _get_snapshot_steps(run) -> list[str]:
         """Return ordered step names from a run's flow_snapshot JSON, or [] if none."""
         if not run.flow_snapshot:
@@ -494,7 +515,8 @@ class Daemon:
         step_type = _normalize_step_type(
             (snap_step_def or {}).get("step_type")
         )
-        executor = get_executor(step_type)
+        step_isolated = self._is_step_isolated(run, snap_step_def)
+        executor = get_executor(step_type, isolated=step_isolated)
 
         space_root = Path(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
@@ -510,6 +532,7 @@ class Daemon:
             working_path=working_path,
             space_dir=Path(space.path) / ".llmflows",
             artifacts_dir=artifacts_dir,
+            isolated=step_isolated,
             log_path=step_run.log_path or "",
         )
         agent_running = executor.is_running(ctx)
@@ -1078,7 +1101,8 @@ class Daemon:
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
 
         space_dir = Path(space.path) / ".llmflows"
-        executor = get_executor(step_type)
+        step_isolated = self._is_step_isolated(run, snap_step)
+        executor = get_executor(step_type, isolated=step_isolated)
         ctx = StepContext(
             run_id=run.id,
             step_name=step_name,
@@ -1098,6 +1122,7 @@ class Daemon:
             space_variables=self._env_variables_from_snapshot(self._get_snapshot(run)),
             skills=skill_refs,
             extra_env=extra_env,
+            isolated=step_isolated,
         )
         result = executor.launch(ctx)
 

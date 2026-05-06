@@ -61,6 +61,7 @@ class FlowUpdate(BaseModel):
     requirements: Optional[dict] = None
     max_concurrent_runs: Optional[int] = None
     max_spend_usd: Optional[float] = None
+    isolated: Optional[bool] = None
     starred: Optional[bool] = None
     schedule_cron: Optional[str] = None
     schedule_timezone: Optional[str] = None
@@ -79,6 +80,7 @@ class StepCreate(BaseModel):
     max_gate_retries: int = 3
     skills: Optional[list[str]] = None
     connectors: Optional[list[str]] = None
+    isolated: Optional[bool] = None
 
 
 class StepUpdate(BaseModel):
@@ -93,6 +95,7 @@ class StepUpdate(BaseModel):
     max_gate_retries: Optional[int] = None
     skills: Optional[list[str]] = None
     connectors: Optional[list[str]] = None
+    isolated: Optional[bool] = None
 
 
 class StepRespondBody(BaseModel):
@@ -2361,6 +2364,8 @@ async def update_flow(flow_id: str, body: FlowUpdate):
             updates["max_concurrent_runs"] = max(1, body.max_concurrent_runs)
         if body.max_spend_usd is not None:
             updates["max_spend_usd"] = body.max_spend_usd if body.max_spend_usd > 0 else None
+        if body.isolated is not None:
+            updates["isolated"] = body.isolated
         if body.starred is not None:
             updates["starred"] = body.starred
         if body.schedule_cron is not None:
@@ -2448,6 +2453,7 @@ async def add_flow_step(flow_id: str, body: StepCreate):
             max_gate_retries=body.max_gate_retries,
             skills=body.skills,
             connectors=body.connectors,
+            isolated=body.isolated,
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -2484,6 +2490,8 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
             updates["skills"] = json.dumps(body.skills)
         if body.connectors is not None:
             updates["connectors"] = json.dumps(body.connectors)
+        if body.isolated is not None:
+            updates["isolated"] = body.isolated
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
