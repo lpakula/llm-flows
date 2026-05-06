@@ -3,23 +3,124 @@ import { useParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { Search, Download, Trash2, ExternalLink, Package, ArrowDownWideNarrow } from "lucide-react";
-import type { SkillInfo, RegistrySkill } from "@/api/types";
+import { Search, Download, Trash2, ExternalLink, Package, ArrowDownWideNarrow, ShieldCheck, ShieldAlert, ShieldQuestion, RefreshCw } from "lucide-react";
+import type { SkillInfo, RegistrySkill, AuditResult } from "@/api/types";
+
+function AuditBadge({ audit, size = "sm" }: { audit?: AuditResult | null; size?: "sm" | "md" }) {
+  if (!audit || !audit.status) return null;
+
+  const config = {
+    safe: { icon: ShieldCheck, label: "Safe", color: "text-emerald-400", bg: "bg-emerald-400/10" },
+    unsafe: { icon: ShieldAlert, label: "Unsafe", color: "text-red-400", bg: "bg-red-400/10" },
+    pending: { icon: ShieldQuestion, label: "Auditing...", color: "text-amber-400", bg: "bg-amber-400/10" },
+    error: { icon: ShieldQuestion, label: "Audit error", color: "text-gray-400", bg: "bg-gray-400/10" },
+  }[audit.status];
+
+  if (!config) return null;
+  const Icon = config.icon;
+  const textSize = size === "sm" ? "text-[9px]" : "text-[11px]";
+  const iconSize = size === "sm" ? 9 : 12;
+
+  return (
+    <span className={`inline-flex items-center gap-0.5 ${config.color} ${config.bg} px-1.5 py-0.5 rounded font-medium ${textSize}`}>
+      <Icon size={iconSize} />
+      {config.label}
+    </span>
+  );
+}
+
+function AuditPanel({ audit, spaceId, skillName, onAuditComplete }: {
+  audit?: AuditResult | null;
+  spaceId: string;
+  skillName: string;
+  onAuditComplete: (result: AuditResult) => void;
+}) {
+  const [running, setRunning] = useState(false);
+
+  const handleRunAudit = async () => {
+    setRunning(true);
+    try {
+      const result = await api.runSkillAudit(spaceId, skillName);
+      onAuditComplete(result);
+    } catch {
+      // ignore
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const borderColor = audit?.status === "safe"
+    ? "border-emerald-500/30"
+    : audit?.status === "unsafe"
+    ? "border-red-500/30"
+    : "border-gray-700";
+
+  return (
+    <div className={`border ${borderColor} rounded-lg p-3 mb-4`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-gray-300">Security Audit</span>
+          <AuditBadge audit={audit} size="md" />
+        </div>
+        <button
+          onClick={handleRunAudit}
+          disabled={running}
+          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 disabled:opacity-50 transition"
+          title="Re-run audit"
+        >
+          <RefreshCw size={11} className={running ? "animate-spin" : ""} />
+          {running ? "Auditing..." : "Re-audit"}
+        </button>
+      </div>
+
+      {audit?.summary && (
+        <p className="text-xs text-gray-400 mb-1">{audit.summary}</p>
+      )}
+
+      {audit?.findings && audit.findings.length > 0 && (
+        <ul className="mt-2 space-y-0.5">
+          {audit.findings.map((f, i) => (
+            <li key={i} className="text-[11px] text-red-300/80 flex items-start gap-1.5">
+              <span className="text-red-400 mt-0.5">•</span>
+              {f}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!audit?.status && (
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-gray-500">No audit yet.</p>
+          <button
+            onClick={handleRunAudit}
+            disabled={running}
+            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+          >
+            Run audit
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SkillPreviewModal({
   skill,
   spaceId,
   onClose,
   onRemove,
+  onAuditUpdate,
 }: {
   skill: SkillInfo;
   spaceId: string;
   onClose: () => void;
   onRemove?: () => void;
+  onAuditUpdate?: () => void;
 }) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState(false);
+  const [audit, setAudit] = useState<AuditResult | null | undefined>(skill.audit);
 
   useEffect(() => {
     api.getSkillContent(spaceId, skill.name)
@@ -54,7 +155,10 @@ function SkillPreviewModal({
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
           <div>
-            <h3 className="text-base font-mono font-semibold text-gray-100">{skill.name}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-mono font-semibold text-gray-100">{skill.name}</h3>
+              <AuditBadge audit={audit} size="md" />
+            </div>
             <div className="flex items-center gap-2 mt-0.5">
               <p className="text-[11px] text-gray-500 font-mono">{skill.path}</p>
               {skill.source && (
@@ -79,6 +183,12 @@ function SkillPreviewModal({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          <AuditPanel
+            audit={audit}
+            spaceId={spaceId}
+            skillName={skill.name}
+            onAuditComplete={(result) => { setAudit(result); onAuditUpdate?.(); }}
+          />
           {loading ? (
             <p className="text-sm text-gray-500 animate-pulse">Loading...</p>
           ) : content ? (
@@ -103,6 +213,7 @@ function SkillCard({ skill, onClick }: { skill: SkillInfo; onClick: () => void }
             skills.sh
           </span>
         )}
+        <AuditBadge audit={skill.audit} />
       </div>
       {skill.description && (
         <p className="text-xs text-gray-400 leading-relaxed mt-1.5">{skill.description}</p>
@@ -177,7 +288,7 @@ function MarketplaceCard({
               className="text-[10px] font-medium text-blue-400 hover:text-blue-300 disabled:opacity-50 px-1.5 py-1 transition flex items-center gap-1"
             >
               <Download size={10} />
-              {busy ? "Installing..." : "Install"}
+              {busy ? "Installing & auditing..." : "Install"}
             </button>
           )}
         </div>
@@ -383,6 +494,7 @@ export function SkillsView() {
           spaceId={spaceId}
           onClose={() => setPreviewSkill(null)}
           onRemove={load}
+          onAuditUpdate={load}
         />
       )}
     </div>

@@ -293,6 +293,13 @@ export interface AgentConfigEntry {
   value: string;
 }
 
+export interface AuditResult {
+  status: "safe" | "unsafe" | "pending" | "error" | null;
+  summary: string;
+  findings: string[];
+  audited_at: string;
+}
+
 export interface SkillInfo {
   name: string;
   path: string;
@@ -305,6 +312,7 @@ export interface SkillInfo {
     skill: string;
     slug: string;
   } | null;
+  audit?: AuditResult | null;
 }
 
 export interface RegistrySkill {

@@ -172,6 +172,8 @@ export const api = {
   installSkill: (spaceId: string, source: string) => post<{ ok: boolean; skill_name: string; path: string }>(`/api/spaces/${spaceId}/skills/install`, { source }),
   removeSkill: (spaceId: string, name: string) => del<{ ok: boolean }>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}`),
   searchSkills: (query: string, limit = 20) => get<import("./types").RegistrySkill[]>(`/api/skills/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+  getSkillAudit: (spaceId: string, name: string) => get<import("./types").AuditResult>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}/audit`),
+  runSkillAudit: (spaceId: string, name: string) => post<import("./types").AuditResult>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}/audit`, {}),
 
   // Daemon
   getDaemonStatus: () => get<DaemonStatus>("/api/daemon/status"),

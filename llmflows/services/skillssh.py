@@ -88,7 +88,11 @@ class SkillsShService:
 
     @staticmethod
     def install(project_path: str, owner: str, repo: str, skill: str) -> InstallResult:
-        """Install a skill from GitHub into the project's .agents/skills/ directory."""
+        """Install a skill from GitHub into the project's .agents/skills/ directory.
+
+        After installation, a security audit is automatically triggered.
+        The skill remains in 'pending' audit state until the audit completes.
+        """
         content = SkillsShService.fetch_skill_md(owner, repo, skill)
         if content is None:
             return InstallResult(
@@ -111,6 +115,15 @@ class SkillsShService:
             "skill": skill,
             "slug": f"{owner}/{repo}@{skill}",
         }))
+
+        from .audit import SecurityAuditService, AuditResult
+        SecurityAuditService.save_audit(
+            project_path, skill, AuditResult.pending()
+        )
+        try:
+            SecurityAuditService.run_audit(project_path, skill)
+        except Exception:
+            pass
 
         return InstallResult(
             success=True,
@@ -189,7 +202,9 @@ class SkillsShService:
 
     @staticmethod
     def list_with_sources(project_path: str) -> list[dict]:
-        """List installed skills with source metadata for those from skills.sh."""
+        """List installed skills with source metadata and audit status."""
+        from .audit import SecurityAuditService
+
         skills = SkillService.discover(project_path)
         result = []
         for s in skills:
@@ -199,10 +214,14 @@ class SkillsShService:
                 "description": s.description,
                 "compatibility": s.compatibility,
                 "source": None,
+                "audit": None,
             }
             src = SkillsShService.get_source_info(project_path, s.name)
             if src:
                 entry["source"] = src
+            audit = SecurityAuditService.get_audit(project_path, s.name)
+            if audit:
+                entry["audit"] = audit.to_dict()
             result.append(entry)
         return result
 

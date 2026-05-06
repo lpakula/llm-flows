@@ -2584,6 +2584,43 @@ async def remove_skill(space_id: str, skill_name: str):
         session.close()
 
 
+@app.get("/api/spaces/{space_id}/skills/{skill_name}/audit")
+async def get_skill_audit(space_id: str, skill_name: str):
+    """Return the security audit result for a skill."""
+    from ..services.audit import SecurityAuditService
+
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        audit = SecurityAuditService.get_audit(space.path, skill_name)
+        if audit is None:
+            return {"status": None}
+        return audit.to_dict()
+    finally:
+        session.close()
+
+
+@app.post("/api/spaces/{space_id}/skills/{skill_name}/audit")
+async def run_skill_audit(space_id: str, skill_name: str):
+    """Trigger a security audit for a skill."""
+    from ..services.audit import SecurityAuditService
+
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        content = SkillService.get_content(space.path, skill_name)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        result = SecurityAuditService.run_audit(space.path, skill_name)
+        return result.to_dict()
+    finally:
+        session.close()
+
+
 @app.get("/api/skills/search")
 async def search_skills(q: str = "", limit: int = 20):
     """Search skills.sh / GitHub for skills."""
