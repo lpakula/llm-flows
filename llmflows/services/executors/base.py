@@ -28,6 +28,7 @@ class StepContext:
     space_variables: Optional[dict] = None
     skills: Optional[list[dict]] = None
     extra_env: Optional[dict[str, str]] = None
+    isolated: bool = False
     log_path: str = ""
     prompt_content: str = ""
 

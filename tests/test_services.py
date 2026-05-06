@@ -4,7 +4,7 @@ import json
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -14,6 +14,7 @@ from llmflows.services.flow import FlowService
 from llmflows.services.gate import evaluate_gates
 from llmflows.services.space import SpaceService
 from llmflows.services.run import RunService
+from llmflows.services.executors.base import LaunchResult
 
 
 class TestSpaceService:
@@ -1165,3 +1166,249 @@ class TestChannelManagerMute:
             mgr.notify("step.awaiting_user", {"step_name": "ask"})
 
         ch.send.assert_called_once()
+
+
+class TestIsolationFlag:
+    """Tests for the workspace isolation (Docker) feature."""
+
+    def test_create_flow_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("isolated-flow", space_id=test_space.id, isolated=True)
+        assert flow.isolated is True
+        assert flow.to_dict()["isolated"] is True
+
+    def test_create_flow_not_isolated_by_default(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("normal-flow", space_id=test_space.id)
+        assert flow.isolated is False
+        assert flow.to_dict()["isolated"] is False
+
+    def test_update_flow_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("toggle-isolation", space_id=test_space.id)
+        assert flow.isolated is False
+        svc.update(flow.id, isolated=True)
+        updated = svc.get(flow.id)
+        assert updated.isolated is True
+
+    def test_step_isolated_override(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("step-iso", space_id=test_space.id, steps=[
+            {"name": "normal-step", "position": 0, "content": "# Normal"},
+            {"name": "docker-step", "position": 1, "content": "# Docker", "isolated": True},
+        ])
+        assert flow.steps[0].isolated is None
+        assert flow.steps[1].isolated is True
+
+    def test_step_isolated_in_to_dict(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("dict-iso", space_id=test_space.id, steps=[
+            {"name": "s1", "position": 0, "isolated": True},
+            {"name": "s2", "position": 1},
+        ])
+        d = flow.to_dict()
+        assert d["steps"][0]["isolated"] is True
+        assert d["steps"][1]["isolated"] is None
+
+    def test_add_step_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("add-iso-step", space_id=test_space.id)
+        step = svc.add_step(flow.id, "isolated-step", "# Content", isolated=True)
+        assert step.isolated is True
+
+    def test_update_step_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("update-iso-step", space_id=test_space.id)
+        step = svc.add_step(flow.id, "test", "# Content")
+        assert step.isolated is None
+        svc.update_step(step.id, isolated=True)
+        updated = test_db.query(FlowStep).filter_by(id=step.id).first()
+        assert updated.isolated is True
+
+    def test_snapshot_includes_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        svc.create("snap-iso", space_id=test_space.id, isolated=True, steps=[
+            {"name": "s1", "position": 0, "isolated": False},
+            {"name": "s2", "position": 1, "isolated": True},
+        ])
+        snap = svc.build_flow_snapshot("snap-iso", space_id=test_space.id)
+        assert snap["isolated"] is True
+        assert snap["steps"][0]["isolated"] is False
+        assert snap["steps"][1]["isolated"] is True
+
+    def test_duplicate_preserves_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        svc.create("source-iso", space_id=test_space.id, isolated=True, steps=[
+            {"name": "s1", "position": 0, "isolated": True},
+        ])
+        copy = svc.duplicate("source-iso", "copy-iso", space_id=test_space.id)
+        assert copy.isolated is True
+        assert copy.steps[0].isolated is True
+
+    def test_export_import_isolated(self, test_db, test_space):
+        svc = FlowService(test_db)
+        svc.create("export-iso", space_id=test_space.id, isolated=True, steps=[
+            {"name": "s1", "position": 0, "content": "# S1", "isolated": True},
+            {"name": "s2", "position": 1, "content": "# S2"},
+        ])
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            path = Path(f.name)
+
+        svc.export_flows(test_space.id, path)
+        data = json.loads(path.read_text())
+        assert data["flows"][0]["isolated"] is True
+        assert data["flows"][0]["steps"][0]["isolated"] is True
+        assert "isolated" not in data["flows"][0]["steps"][1]
+
+        for step in list(svc.get_by_name("export-iso", test_space.id).steps):
+            test_db.delete(step)
+        test_db.delete(svc.get_by_name("export-iso", test_space.id))
+        test_db.commit()
+
+        count = svc.import_flows(path, test_space.id)
+        assert count == 1
+        reimported = svc.get_by_name("export-iso", test_space.id)
+        assert reimported.isolated is True
+        assert reimported.steps[0].isolated is True
+        assert reimported.steps[1].isolated is None
+
+        path.unlink()
+
+
+class TestDockerExecutor:
+    """Tests for the DockerExecutor."""
+
+    def test_get_executor_not_isolated(self):
+        from llmflows.services.executors import get_executor
+        from llmflows.services.executors.pi import PiExecutor
+        executor = get_executor("agent", isolated=False)
+        assert isinstance(executor, PiExecutor)
+
+    def test_get_executor_isolated(self):
+        from llmflows.services.executors import get_executor
+        from llmflows.services.executors.docker import DockerExecutor
+        executor = get_executor("agent", isolated=True)
+        assert isinstance(executor, DockerExecutor)
+        assert isinstance(executor.inner, type(get_executor("agent", isolated=False)))
+
+    def test_get_executor_code_isolated(self):
+        from llmflows.services.executors import get_executor
+        from llmflows.services.executors.docker import DockerExecutor
+        from llmflows.services.executors.code import CodeExecutor
+        executor = get_executor("code", isolated=True)
+        assert isinstance(executor, DockerExecutor)
+        assert isinstance(executor.inner, CodeExecutor)
+
+    def test_docker_executor_fallback_no_docker(self):
+        from llmflows.services.executors.docker import DockerExecutor
+        from llmflows.services.executors.pi import PiExecutor
+        from llmflows.services.executors.base import StepContext
+        from pathlib import Path
+
+        inner = PiExecutor()
+        executor = DockerExecutor(inner)
+
+        ctx = StepContext(
+            run_id="test01",
+            step_name="test-step",
+            step_position=0,
+            step_content="# Test",
+            flow_name="test-flow",
+            agent="pi",
+            model="test-model",
+            step_type="agent",
+            working_path=Path("/tmp/nonexistent"),
+            space_dir=Path("/tmp/nonexistent/.llmflows"),
+            artifacts_dir=Path("/tmp/nonexistent/artifacts"),
+            isolated=True,
+        )
+
+        with patch("llmflows.services.executors.docker._docker_available", return_value=False), \
+             patch.object(inner, "launch") as mock_inner:
+            mock_inner.return_value = LaunchResult(success=False)
+            result = executor.launch(ctx)
+            mock_inner.assert_called_once_with(ctx)
+
+    def test_step_context_isolated_field(self):
+        from llmflows.services.executors.base import StepContext
+        from pathlib import Path
+
+        ctx = StepContext(
+            run_id="abc123",
+            step_name="step",
+            step_position=0,
+            step_content="",
+            flow_name="flow",
+            agent="pi",
+            model="",
+            step_type="agent",
+            working_path=Path("/tmp"),
+            space_dir=Path("/tmp/.llmflows"),
+            artifacts_dir=Path("/tmp/artifacts"),
+            isolated=True,
+        )
+        assert ctx.isolated is True
+
+        ctx_default = StepContext(
+            run_id="abc123",
+            step_name="step",
+            step_position=0,
+            step_content="",
+            flow_name="flow",
+            agent="pi",
+            model="",
+            step_type="agent",
+            working_path=Path("/tmp"),
+            space_dir=Path("/tmp/.llmflows"),
+            artifacts_dir=Path("/tmp/artifacts"),
+        )
+        assert ctx_default.isolated is False
+
+    def test_is_step_isolated_from_step(self):
+        """Step-level isolated overrides flow-level."""
+        from unittest.mock import MagicMock
+
+        run = MagicMock()
+        run.flow_snapshot = json.dumps({"isolated": False, "steps": []})
+        run.flow = None
+
+        snap_step = {"isolated": True}
+        from llmflows.services.daemon import Daemon
+        assert Daemon._is_step_isolated(run, snap_step) is True
+
+    def test_is_step_isolated_from_flow(self):
+        """Flow-level isolated used when step doesn't specify."""
+        from unittest.mock import MagicMock
+
+        run = MagicMock()
+        run.flow_snapshot = json.dumps({"isolated": True, "steps": []})
+        run.flow = None
+
+        snap_step = {"content": "# test"}
+        from llmflows.services.daemon import Daemon
+        assert Daemon._is_step_isolated(run, snap_step) is True
+
+    def test_is_step_isolated_default_false(self):
+        """Default is not isolated."""
+        from unittest.mock import MagicMock
+
+        run = MagicMock()
+        run.flow_snapshot = json.dumps({"steps": []})
+        run.flow = None
+
+        from llmflows.services.daemon import Daemon
+        assert Daemon._is_step_isolated(run, None) is False
+
+    def test_docker_network_helper(self):
+        from llmflows.services.executors.docker import _ensure_docker_network
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            result = _ensure_docker_network()
+            assert result is True
+
+    def test_container_id_file_path(self):
+        from llmflows.services.executors.docker import _get_container_id_file
+        cid = _get_container_id_file(Path("/tmp/.llmflows"), "run123", "my-flow")
+        assert str(cid).endswith("docker.cid")
+        assert "run123" in str(cid)

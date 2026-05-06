@@ -189,6 +189,7 @@ class Flow(Base):
     version: int = Column(Integer, nullable=False, default=1)
     max_concurrent_runs: int = Column(Integer, default=1)
     max_spend_usd: float = Column(Float, nullable=True)
+    isolated: bool = Column(Boolean, default=False)
     starred: bool = Column(Boolean, default=False)
     schedule_cron: str = Column(String(100), nullable=True)
     schedule_timezone: str = Column(String(64), nullable=True)
@@ -245,6 +246,7 @@ class Flow(Base):
             "version": self.version or 1,
             "max_concurrent_runs": self.max_concurrent_runs if self.max_concurrent_runs is not None else 1,
             "max_spend_usd": self.max_spend_usd,
+            "isolated": bool(self.isolated),
             "starred": bool(self.starred),
             "schedule_cron": self.schedule_cron,
             "schedule_timezone": self.schedule_timezone or "UTC",
@@ -300,6 +302,7 @@ class FlowStep(Base):
     max_gate_retries: int = Column(Integer, default=5)
     skills: str = Column(Text, default="[]")
     connectors: str = Column(Text, default="[]")
+    isolated: bool = Column(Boolean, nullable=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -353,6 +356,7 @@ class FlowStep(Base):
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
             "connectors": self.get_connectors(),
+            "isolated": self.isolated,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
