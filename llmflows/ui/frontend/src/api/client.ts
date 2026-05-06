@@ -206,6 +206,14 @@ export const api = {
   deleteConnector: (serverId: string) =>
     del<{ ok: boolean }>(`/api/connectors/${serverId}`),
 
+  // Optimizer / Quality Ratings
+  rateStepRun: (stepRunId: string, rating: number, flowId?: string) =>
+    post<import("./types").QualityRating>(`/api/step-runs/${stepRunId}/rate`, { rating, flow_id: flowId }),
+  getStepRunRating: (stepRunId: string) =>
+    get<{ rating: number | null }>(`/api/step-runs/${stepRunId}/rating`),
+  getFlowOptimizations: (flowId: string) =>
+    get<{ recommendations: import("./types").OptimizationRecommendation[] }>(`/api/flows/${flowId}/optimizations`),
+
   // Chat
   sendChat: (message: string, spaceId?: string | null, sessionId?: string | null, tier?: string, flowName?: string | null, connectors?: string[]) =>
     fetch("/api/chat", {
