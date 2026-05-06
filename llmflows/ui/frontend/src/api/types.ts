@@ -308,6 +308,41 @@ export interface LogEntry {
   expanded?: boolean;
 }
 
+// --- Analytics types ---
+
+export interface StepAnalytics {
+  step_name: string;
+  position: number;
+  step_type: string;
+  total_attempts: number;
+  success_count: number;
+  failure_count: number;
+  stability_score: number | null;
+  avg_duration_seconds: number | null;
+  min_duration_seconds: number | null;
+  max_duration_seconds: number | null;
+  p50_duration_seconds: number | null;
+  avg_cost_usd: number | null;
+  min_cost_usd: number | null;
+  max_cost_usd: number | null;
+  total_cost_usd: number | null;
+  history: {
+    run_id: string;
+    outcome: string | null;
+    duration_seconds: number | null;
+    cost_usd: number | null;
+    attempt: number;
+    started_at: string | null;
+  }[];
+}
+
+export interface FlowAnalytics {
+  flow_id: string;
+  flow_name: string;
+  total_runs: number;
+  steps: StepAnalytics[];
+}
+
 // --- Chat types ---
 
 export type ChatEvent =

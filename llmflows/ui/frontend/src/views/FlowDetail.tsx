@@ -11,13 +11,13 @@ import { ImageLightbox } from "@/components/ImageLightbox";
 import { StepModal } from "@/components/StepModal";
 import type {
   Flow, FlowStep, FlowRun, FlowWarning, Gate, AgentAlias, SkillInfo,
-  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion,
+  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion, FlowAnalytics, StepAnalytics,
 } from "@/api/types";
 import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2 } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2, BarChart3 } from "lucide-react";
 import { marked } from "marked";
 import { FlowChatWindow } from "@/views/Chat";
 
@@ -112,6 +112,10 @@ export function FlowDetailView() {
   const [memoryFiles, setMemoryFiles] = useState<{ name: string; content: string }[]>([]);
   const [memoryOpen, setMemoryOpen] = useState(false);
 
+  // Analytics
+  const [analytics, setAnalytics] = useState<FlowAnalytics | null>(null);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+
   // Floating chat window
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -172,6 +176,15 @@ export function FlowDetailView() {
     setRunSteps(data.steps);
   }, [expandedRunId]);
 
+  const loadAnalytics = useCallback(async () => {
+    if (!flowId || !analyticsOpen) return;
+    try {
+      const data = await api.getFlowAnalytics(flowId);
+      setAnalytics(data);
+    } catch { /* analytics may not be available */ }
+  }, [flowId, analyticsOpen]);
+
+  useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
   useEffect(() => { loadExpandedRun(); }, [loadExpandedRun]);
   useInterval(loadExpandedRun, expandedRunId ? 5000 : null);
 
@@ -798,6 +811,19 @@ export function FlowDetailView() {
         </div>
       )}
 
+      {/* Analytics */}
+      <div className="mb-4">
+        <button
+          onClick={() => setAnalyticsOpen(!analyticsOpen)}
+          className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-200 mb-2"
+        >
+          <BarChart3 size={12} />
+          <span>Analytics</span>
+          <span className="text-[10px]">{analyticsOpen ? "\u25B2" : "\u25BC"}</span>
+        </button>
+        {analyticsOpen && <StepAnalyticsPanel analytics={analytics} />}
+      </div>
+
       {/* Steps + Runs split */}
       <div className="grid grid-cols-2 gap-4 mb-4">
         {/* Steps panel */}
@@ -1296,6 +1322,159 @@ export function FlowDetailView() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+function stabilityColor(score: number | null): string {
+  if (score === null) return "text-gray-600";
+  if (score >= 90) return "text-green-400";
+  if (score >= 70) return "text-yellow-400";
+  return "text-red-400";
+}
+
+function heatBar(value: number, max: number, color: string): React.ReactElement {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function StepAnalyticsPanel({ analytics }: { analytics: FlowAnalytics | null }) {
+  if (!analytics) {
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-6 text-center text-xs text-gray-500">
+        Loading analytics...
+      </div>
+    );
+  }
+
+  if (analytics.total_runs === 0) {
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-6 text-center text-xs text-gray-500">
+        No completed runs yet. Analytics will appear after the first completed run.
+      </div>
+    );
+  }
+
+  const maxDuration = Math.max(...analytics.steps.map((s) => s.max_duration_seconds ?? 0));
+  const maxCost = Math.max(...analytics.steps.map((s) => s.max_cost_usd ?? 0));
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+          Step Reliability & Performance
+        </span>
+        <span className="text-[10px] text-gray-600">
+          Last {analytics.total_runs} completed run{analytics.total_runs !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Header row */}
+      <div className="grid grid-cols-[1fr_80px_100px_140px_140px] gap-2 px-4 py-2 border-b border-gray-800 text-[10px] uppercase tracking-wide text-gray-600">
+        <span>Step</span>
+        <span className="text-center">Stability</span>
+        <span className="text-center">Attempts</span>
+        <span>Latency</span>
+        <span>Cost</span>
+      </div>
+
+      {/* Step rows */}
+      <div className="divide-y divide-gray-800/60">
+        {analytics.steps.map((step) => (
+          <div key={step.step_name} className="grid grid-cols-[1fr_80px_100px_140px_140px] gap-2 px-4 py-2.5 items-center hover:bg-gray-800/20">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] text-gray-600 font-mono w-4 shrink-0">{step.position + 1}</span>
+              <span className="text-xs text-white truncate">{step.step_name}</span>
+              <span className={`text-[10px] shrink-0 ${
+                step.step_type === "code" ? "text-blue-400" :
+                step.step_type === "hitl" ? "text-amber-400" : "text-gray-500"
+              }`}>{step.step_type}</span>
+            </div>
+
+            <div className="text-center">
+              {step.stability_score !== null ? (
+                <span className={`text-sm font-semibold tabular-nums ${stabilityColor(step.stability_score)}`}>
+                  {step.stability_score}%
+                </span>
+              ) : (
+                <span className="text-xs text-gray-600">—</span>
+              )}
+            </div>
+
+            <div className="text-center text-[10px] tabular-nums">
+              {step.total_attempts > 0 ? (
+                <span className="text-gray-400">
+                  <span className="text-green-400">{step.success_count}</span>
+                  {step.failure_count > 0 && (
+                    <> / <span className="text-red-400">{step.failure_count}</span></>
+                  )}
+                </span>
+              ) : (
+                <span className="text-gray-600">—</span>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              {step.avg_duration_seconds !== null ? (
+                <>
+                  {heatBar(step.avg_duration_seconds, maxDuration, "bg-blue-500")}
+                  <div className="flex justify-between text-[10px] tabular-nums text-gray-500">
+                    <span>{formatSeconds(step.avg_duration_seconds)} avg</span>
+                    <span className="text-gray-600">{formatSeconds(step.p50_duration_seconds)} p50</span>
+                  </div>
+                </>
+              ) : (
+                <span className="text-[10px] text-gray-600">—</span>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              {step.avg_cost_usd !== null ? (
+                <>
+                  {heatBar(step.avg_cost_usd, maxCost, "bg-emerald-500")}
+                  <div className="flex justify-between text-[10px] tabular-nums text-gray-500">
+                    <span>{formatCost(step.avg_cost_usd)} avg</span>
+                    <span className="text-gray-600">{formatCost(step.total_cost_usd)} total</span>
+                  </div>
+                </>
+              ) : (
+                <span className="text-[10px] text-gray-600">—</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Run history sparkline */}
+      {analytics.steps.some((s) => s.history.length > 0) && (
+        <div className="border-t border-gray-800 px-4 py-3">
+          <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-2">Run History</div>
+          <div className="space-y-2">
+            {analytics.steps.filter((s) => s.history.length > 0).map((step) => (
+              <div key={step.step_name} className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-500 w-32 truncate shrink-0">{step.step_name}</span>
+                <div className="flex gap-px flex-1">
+                  {step.history.slice(-50).map((h, i) => (
+                    <div
+                      key={i}
+                      className={`h-3 flex-1 min-w-[3px] max-w-[8px] rounded-sm ${
+                        h.outcome === "completed" ? "bg-green-500/70" :
+                        h.outcome === "failed" || h.outcome === "gate_failed" ? "bg-red-500/70" :
+                        "bg-gray-700"
+                      }`}
+                      title={`Run ${h.run_id}: ${h.outcome || "unknown"}${h.duration_seconds ? ` (${formatSeconds(h.duration_seconds)})` : ""}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

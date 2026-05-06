@@ -153,6 +153,8 @@ export const api = {
   listFlowVersions: (flowId: string) => get<FlowVersion[]>(`/api/flows/${flowId}/versions`),
   rollbackFlow: (flowId: string, versionId: string) =>
     post<Flow>(`/api/flows/${flowId}/rollback/${versionId}`),
+  getFlowAnalytics: (flowId: string, limit = 100) =>
+    get<import("./types").FlowAnalytics>(`/api/flows/${flowId}/analytics?limit=${limit}`),
   getFlowMemory: (flowId: string) => get<{ files: { name: string; content: string }[] }>(`/api/flows/${flowId}/memory`),
   clearFlowMemory: (flowId: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory`),
   deleteMemoryFile: (flowId: string, filename: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory/${encodeURIComponent(filename)}`),

@@ -2317,6 +2317,111 @@ async def validate_flow(flow_id: str):
         session.close()
 
 
+@app.get("/api/flows/{flow_id}/analytics")
+async def flow_analytics(flow_id: str, limit: int = 100):
+    """Aggregate StepRun data for reliability and performance profiling."""
+    from ..db.models import FlowRun, StepRun
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+
+        runs = (
+            session.query(FlowRun)
+            .filter(FlowRun.flow_id == flow_id, FlowRun.completed_at.isnot(None))
+            .order_by(FlowRun.completed_at.desc())
+            .limit(limit)
+            .all()
+        )
+        run_ids = [r.id for r in runs]
+        if not run_ids:
+            return {"flow_id": flow_id, "flow_name": flow.name, "total_runs": 0, "steps": []}
+
+        step_runs = (
+            session.query(StepRun)
+            .filter(StepRun.flow_run_id.in_(run_ids))
+            .all()
+        )
+
+        from collections import defaultdict
+        by_step: dict[str, list] = defaultdict(list)
+        for sr in step_runs:
+            by_step[sr.step_name].append(sr)
+
+        step_analytics = []
+        for step in flow.steps:
+            srs = by_step.get(step.name, [])
+            if not srs:
+                step_analytics.append({
+                    "step_name": step.name,
+                    "position": step.position,
+                    "step_type": step.step_type or "agent",
+                    "total_attempts": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "stability_score": None,
+                    "avg_duration_seconds": None,
+                    "min_duration_seconds": None,
+                    "max_duration_seconds": None,
+                    "p50_duration_seconds": None,
+                    "avg_cost_usd": None,
+                    "min_cost_usd": None,
+                    "max_cost_usd": None,
+                    "total_cost_usd": None,
+                    "history": [],
+                })
+                continue
+
+            successes = [s for s in srs if s.outcome == "completed"]
+            failures = [s for s in srs if s.outcome and s.outcome != "completed"]
+            durations = sorted([s.duration_seconds for s in srs if s.duration_seconds is not None])
+            costs = [s.cost_usd for s in srs if s.cost_usd is not None]
+
+            p50 = durations[len(durations) // 2] if durations else None
+
+            history = []
+            for sr in sorted(srs, key=lambda s: s.started_at or s.completed_at or ""):
+                history.append({
+                    "run_id": sr.flow_run_id,
+                    "outcome": sr.outcome,
+                    "duration_seconds": sr.duration_seconds,
+                    "cost_usd": sr.cost_usd,
+                    "attempt": sr.attempt or 1,
+                    "started_at": sr.started_at.isoformat() if sr.started_at else None,
+                })
+
+            total = len(successes) + len(failures)
+            step_analytics.append({
+                "step_name": step.name,
+                "position": step.position,
+                "step_type": step.step_type or "agent",
+                "total_attempts": len(srs),
+                "success_count": len(successes),
+                "failure_count": len(failures),
+                "stability_score": round(len(successes) / total * 100, 1) if total > 0 else None,
+                "avg_duration_seconds": round(sum(durations) / len(durations), 1) if durations else None,
+                "min_duration_seconds": round(min(durations), 1) if durations else None,
+                "max_duration_seconds": round(max(durations), 1) if durations else None,
+                "p50_duration_seconds": round(p50, 1) if p50 is not None else None,
+                "avg_cost_usd": round(sum(costs) / len(costs), 6) if costs else None,
+                "min_cost_usd": round(min(costs), 6) if costs else None,
+                "max_cost_usd": round(max(costs), 6) if costs else None,
+                "total_cost_usd": round(sum(costs), 6) if costs else None,
+                "history": history,
+            })
+
+        return {
+            "flow_id": flow_id,
+            "flow_name": flow.name,
+            "total_runs": len(runs),
+            "steps": step_analytics,
+        }
+    finally:
+        session.close()
+
+
 @app.post("/api/spaces/{space_id}/flows")
 async def create_space_flow(space_id: str, body: FlowCreate):
     session, space_svc = _get_services()
