@@ -582,3 +582,33 @@ class StepRun(Base):
             "cost_usd": self.cost_usd,
             "token_count": self.token_count,
         }
+
+
+class StepQualityRating(Base):
+    """User quality rating (thumbs up/down) for a step run."""
+    __tablename__ = "step_quality_ratings"
+
+    id: str = Column(String(6), primary_key=True, default=generate_id)
+    step_run_id: str = Column(String(6), ForeignKey("step_runs.id"), nullable=False)
+    flow_id: str = Column(String(6), ForeignKey("flows.id"), nullable=False)
+    step_name: str = Column(String(255), nullable=False)
+    model: str = Column(String(100), nullable=False, default="")
+    agent_alias: str = Column(String(50), nullable=False, default="")
+    rating: int = Column(Integer, nullable=False)  # 1 = thumbs up, -1 = thumbs down
+    created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("step_run_id", name="uq_rating_step_run"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "step_run_id": self.step_run_id,
+            "flow_id": self.flow_id,
+            "step_name": self.step_name,
+            "model": self.model,
+            "agent_alias": self.agent_alias,
+            "rating": self.rating,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

@@ -310,6 +310,27 @@ export interface LogEntry {
 
 // --- Chat types ---
 
+export interface QualityRating {
+  id: string;
+  step_run_id: string;
+  flow_id: string;
+  step_name: string;
+  model: string;
+  agent_alias: string;
+  rating: number;
+  created_at: string;
+}
+
+export interface OptimizationRecommendation {
+  step_name: string;
+  current_tier: string;
+  recommended_tier: string;
+  quality_score: number;
+  rated_runs: number;
+  positive_runs: number;
+  confidence: "high" | "medium";
+}
+
 export type ChatEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking" }

@@ -11,13 +11,13 @@ import { ImageLightbox } from "@/components/ImageLightbox";
 import { StepModal } from "@/components/StepModal";
 import type {
   Flow, FlowStep, FlowRun, FlowWarning, Gate, AgentAlias, SkillInfo,
-  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion,
+  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion, OptimizationRecommendation,
 } from "@/api/types";
 import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2 } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2, ThumbsUp, ThumbsDown, TrendingDown } from "lucide-react";
 import { marked } from "marked";
 import { FlowChatWindow } from "@/views/Chat";
 
@@ -115,6 +115,11 @@ export function FlowDetailView() {
   // Floating chat window
   const [chatOpen, setChatOpen] = useState(false);
 
+  // Optimizer
+  const [optimizations, setOptimizations] = useState<OptimizationRecommendation[]>([]);
+  const [stepRating, setStepRating] = useState<number | null>(null);
+  const [ratingStepRunId, setRatingStepRunId] = useState<string | null>(null);
+
   const { entries: logEntries, streaming } = useLogStream(logUrl, null);
 
   const loadRuns = useCallback(async () => {
@@ -154,6 +159,10 @@ export function FlowDetailView() {
       const m = await api.getFlowMemory(flowId!);
       setMemoryFiles(m.files || []);
     } catch { /* memory may not exist yet */ }
+    try {
+      const opt = await api.getFlowOptimizations(flowId!);
+      setOptimizations(opt.recommendations || []);
+    } catch { /* optimizer may not have data yet */ }
   }, [flowId, setSelectedSpaceId]);
 
   useEffect(() => {
@@ -422,6 +431,27 @@ export function FlowDetailView() {
     setSelectedAttempt(null);
     setViewingGateFailures([]);
     setAgentLogExpanded(true);
+    setStepRating(null);
+    setRatingStepRunId(null);
+  };
+
+  const loadRating = async (stepRunId: string) => {
+    setRatingStepRunId(stepRunId);
+    setStepRating(null);
+    try {
+      const data = await api.getStepRunRating(stepRunId);
+      setStepRating(data.rating);
+    } catch { /* ignore */ }
+  };
+
+  const submitRating = async (rating: number) => {
+    if (!ratingStepRunId || !flowId) return;
+    try {
+      await api.rateStepRun(ratingStepRunId, rating, flowId);
+      setStepRating(rating);
+      const opt = await api.getFlowOptimizations(flowId);
+      setOptimizations(opt.recommendations || []);
+    } catch { /* ignore */ }
   };
 
   const respondToStep = async (stepRunId: string, response: string) => {
@@ -870,6 +900,19 @@ export function FlowDetailView() {
                         {step.connectors.length} {step.connectors.length === 1 ? "connector" : "connectors"}
                       </span>
                     )}
+                    {optimizations.some((o) => o.step_name === step.name) && (
+                      <span
+                        className="text-[10px] text-emerald-400 bg-emerald-900/30 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0 inline-flex items-center gap-0.5"
+                        title={(() => {
+                          const rec = optimizations.find((o) => o.step_name === step.name);
+                          return rec
+                            ? `${Math.round(rec.quality_score * 100)}% quality on "${rec.current_tier}" — try "${rec.recommended_tier}" to save cost`
+                            : "";
+                        })()}
+                      >
+                        <TrendingDown size={9} /> Optimize
+                      </span>
+                    )}
                     {flow.warnings?.some((w: FlowWarning) => w.step_name === step.name && w.warning_type !== "missing_variable") && (
                       <span className="text-[10px] text-amber-400 shrink-0" title="Has warnings">⚠</span>
                     )}
@@ -1027,6 +1070,7 @@ export function FlowDetailView() {
                           setViewingStepCost(first.cost_usd ?? null);
                           setViewingStepResult(first.step_result || null);
                           setViewingGateFailures(attempts[1]?.gate_failures || attempts[0]?.gate_failures || []);
+                          if (first.status === "completed") loadRating(first.id);
                         }}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap ${stepBoxClass(attempts.length ? attemptStatus(attempts[0], 0) : resolveStatus(step.status))} ${
                           viewingStepName === stepLabel && (!selectedAttempt || selectedAttempt.attemptId === attempts[0]?.id)
@@ -1050,6 +1094,7 @@ export function FlowDetailView() {
                               setViewingStepCost(att.cost_usd ?? null);
                               setViewingStepResult(att.step_result || null);
                               setViewingGateFailures(attempts[j + 2]?.gate_failures || att.gate_failures || []);
+                              if (att.status === "completed") loadRating(att.id);
                             }}
                             className={`px-1.5 py-1 rounded text-[10px] whitespace-nowrap cursor-pointer hover:opacity-80 ${
                               selectedAttempt?.attemptId === att.id
@@ -1140,6 +1185,39 @@ export function FlowDetailView() {
                   </span>
                 </div>
               )}
+              {ratingStepRunId && (
+                <div className="px-5 py-2 border-b border-gray-800/80 flex items-center gap-3">
+                  <span className="text-[10px] uppercase tracking-wide text-gray-500">QUALITY:</span>
+                  <button
+                    onClick={() => submitRating(1)}
+                    className={`p-1 rounded transition ${
+                      stepRating === 1
+                        ? "text-green-400 bg-green-900/30"
+                        : "text-gray-600 hover:text-green-400 hover:bg-green-900/20"
+                    }`}
+                    title="Good quality"
+                  >
+                    <ThumbsUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => submitRating(-1)}
+                    className={`p-1 rounded transition ${
+                      stepRating === -1
+                        ? "text-red-400 bg-red-900/30"
+                        : "text-gray-600 hover:text-red-400 hover:bg-red-900/20"
+                    }`}
+                    title="Poor quality"
+                  >
+                    <ThumbsDown size={14} />
+                  </button>
+                  {stepRating != null && (
+                    <span className={`text-[10px] ${stepRating > 0 ? "text-green-500" : "text-red-500"}`}>
+                      {stepRating > 0 ? "Rated good" : "Rated poor"}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {viewingStepPrompt && (
                 <div className="border-b border-gray-800/80">
                   <details className="group [&_summary::-webkit-details-marker]:hidden px-5 py-3">

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from llmflows.db.models import AgentAlias, Base, Flow, FlowStep, Space
+from llmflows.db.models import AgentAlias, Base, Flow, FlowRun, FlowStep, Space, StepRun
 from llmflows.services.flow import FlowService
 from llmflows.services.space import SpaceService
 from llmflows.ui.server import app
@@ -433,3 +433,91 @@ class TestInboxMuteAPI:
             assert response.status_code == 200
             assert response.json()["muted"] is False
             assert saved["config"]["daemon"]["inbox_muted"] is False
+
+
+class TestOptimizerAPI:
+    @pytest.fixture(autouse=True)
+    def setup_step_run(self, api_db):
+        """Create a step run that can be rated."""
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+
+        setup_session = Session()
+        space = Space(name="opt-space", path="/tmp/opt-space")
+        setup_session.add(space)
+        setup_session.flush()
+
+        flow = Flow(name="opt-flow", space_id=space.id)
+        setup_session.add(flow)
+        setup_session.flush()
+
+        step = FlowStep(flow_id=flow.id, name="step1", position=0, agent_alias="max")
+        setup_session.add(step)
+        setup_session.flush()
+
+        run = FlowRun(space_id=space.id, flow_id=flow.id)
+        setup_session.add(run)
+        setup_session.flush()
+
+        sr = StepRun(
+            flow_run_id=run.id, step_name="step1", step_position=0,
+            flow_name="opt-flow", model="claude-opus",
+        )
+        setup_session.add(sr)
+        setup_session.commit()
+
+        self.space_id = space.id
+        self.flow_id = flow.id
+        self.step_run_id = sr.id
+        setup_session.close()
+
+        def mock_get_services():
+            s = Session()
+            return s, SpaceService(s)
+
+        self._patcher = patch("llmflows.ui.server._get_services", mock_get_services)
+        self._patcher.start()
+        yield
+        self._patcher.stop()
+        Base.metadata.drop_all(engine)
+
+    def test_rate_step_run(self, client):
+        resp = client.post(
+            f"/api/step-runs/{self.step_run_id}/rate",
+            json={"rating": 1, "flow_id": self.flow_id},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rating"] == 1
+        assert data["step_name"] == "step1"
+
+    def test_get_rating_none(self, client):
+        resp = client.get(f"/api/step-runs/{self.step_run_id}/rating")
+        assert resp.status_code == 200
+        assert resp.json()["rating"] is None
+
+    def test_get_rating_after_rate(self, client):
+        client.post(
+            f"/api/step-runs/{self.step_run_id}/rate",
+            json={"rating": -1, "flow_id": self.flow_id},
+        )
+        resp = client.get(f"/api/step-runs/{self.step_run_id}/rating")
+        assert resp.status_code == 200
+        assert resp.json()["rating"] == -1
+
+    def test_get_optimizations_empty(self, client):
+        resp = client.get(f"/api/flows/{self.flow_id}/optimizations")
+        assert resp.status_code == 200
+        assert resp.json()["recommendations"] == []
+
+    def test_rate_nonexistent_step_run(self, client):
+        resp = client.post(
+            "/api/step-runs/zzzzzz/rate",
+            json={"rating": 1},
+        )
+        assert resp.status_code == 404

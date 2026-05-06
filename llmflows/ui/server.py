@@ -2317,6 +2317,57 @@ async def validate_flow(flow_id: str):
         session.close()
 
 
+# --- Optimizer / quality ratings ---
+
+
+class RatingBody(BaseModel):
+    rating: int
+    flow_id: Optional[str] = None
+
+
+@app.post("/api/step-runs/{step_run_id}/rate")
+async def rate_step_run(step_run_id: str, body: RatingBody):
+    """Submit a quality rating (1 = good, -1 = bad) for a step run."""
+    from ..services.optimizer import OptimizerService
+
+    session, _ = _get_services()
+    try:
+        svc = OptimizerService(session)
+        rec = svc.rate_step_run(step_run_id, body.rating, flow_id=body.flow_id)
+        return rec.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.get("/api/step-runs/{step_run_id}/rating")
+async def get_step_run_rating(step_run_id: str):
+    """Get the current quality rating for a step run, if any."""
+    from ..services.optimizer import OptimizerService
+
+    session, _ = _get_services()
+    try:
+        svc = OptimizerService(session)
+        rec = svc.get_rating(step_run_id)
+        return rec.to_dict() if rec else {"rating": None}
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/optimizations")
+async def get_flow_optimizations(flow_id: str):
+    """Analyse quality ratings and return per-step optimization recommendations."""
+    from ..services.optimizer import OptimizerService
+
+    session, _ = _get_services()
+    try:
+        svc = OptimizerService(session)
+        return {"recommendations": svc.get_recommendations(flow_id)}
+    finally:
+        session.close()
+
+
 @app.post("/api/spaces/{space_id}/flows")
 async def create_space_flow(space_id: str, body: FlowCreate):
     session, space_svc = _get_services()
