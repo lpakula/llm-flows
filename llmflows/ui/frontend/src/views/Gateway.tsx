@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "@/api/client";
 import type { GatewayConfig } from "@/api/types";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X } from "lucide-react";
 
 type ChannelFieldDef = {
   key: keyof GatewayConfig;
   label: string;
-  type: "secret" | "channel-space-map";
+  type: "secret" | "tags-number" | "tags-string";
   placeholder: string;
   description: string;
-  idLabel?: string;
 };
 
 type ChannelDef = {
@@ -28,7 +27,7 @@ const CHANNELS: ChannelDef[] = [
     enabledKey: "telegram_enabled",
     fields: [
       { key: "telegram_bot_token", label: "Bot token", type: "secret", placeholder: "123456:ABC-DEF...", description: "Telegram bot API token from @BotFather" },
-      { key: "telegram_allowed_chat_ids", label: "Chat-to-space mapping", type: "channel-space-map", placeholder: "Chat ID", description: "Map chat IDs to allowed spaces (* = all)", idLabel: "Chat ID" },
+      { key: "telegram_allowed_chat_ids", label: "Chat IDs", type: "tags-number", placeholder: "Chat ID", description: "Allowed chat IDs (empty = all)" },
     ],
   },
   {
@@ -39,7 +38,7 @@ const CHANNELS: ChannelDef[] = [
     fields: [
       { key: "slack_bot_token", label: "Bot token", type: "secret", placeholder: "xoxb-...", description: "Slack Bot User OAuth Token" },
       { key: "slack_app_token", label: "App token", type: "secret", placeholder: "xapp-...", description: "Slack App-Level Token for Socket Mode" },
-      { key: "slack_allowed_channel_ids", label: "Channel-to-space mapping", type: "channel-space-map", placeholder: "C0123456789", description: "Map channel IDs to allowed spaces (* = all)", idLabel: "Channel ID" },
+      { key: "slack_allowed_channel_ids", label: "Channel IDs", type: "tags-string", placeholder: "C0123456789", description: "Allowed channel IDs (empty = all)" },
     ],
   },
 ];
@@ -54,126 +53,6 @@ function Modal({ open, onClose, children }: { open: boolean; onClose: () => void
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
         {children}
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Channel config modal ---------- */
-
-/* ---------- Channel-to-space map editor ---------- */
-
-function ChannelSpaceMapEditor({
-  value,
-  idLabel,
-  idPlaceholder,
-  onSave,
-}: {
-  value: Record<string, string[]>;
-  idLabel: string;
-  idPlaceholder: string;
-  onSave: (next: Record<string, string[]>) => void;
-}) {
-  const [newId, setNewId] = useState("");
-  const [newSpaceTags, setNewSpaceTags] = useState<Record<string, string>>({});
-
-  const entries = Object.entries(value);
-
-  const addEntry = () => {
-    const id = newId.trim();
-    if (!id || id in value) return;
-    onSave({ ...value, [id]: ["*"] });
-    setNewId("");
-  };
-
-  const removeEntry = (id: string) => {
-    const next = { ...value };
-    delete next[id];
-    onSave(next);
-  };
-
-  const addSpace = (id: string) => {
-    const tag = (newSpaceTags[id] || "").trim();
-    if (!tag) return;
-    const current = value[id] || [];
-    if (current.includes(tag)) return;
-    onSave({ ...value, [id]: [...current, tag] });
-    setNewSpaceTags((prev) => ({ ...prev, [id]: "" }));
-  };
-
-  const removeSpace = (id: string, space: string) => {
-    const current = value[id] || [];
-    onSave({ ...value, [id]: current.filter((s) => s !== space) });
-  };
-
-  return (
-    <div className="space-y-3">
-      {entries.length === 0 && (
-        <p className="text-xs text-gray-600 italic">No entries — bot will ignore all messages.</p>
-      )}
-
-      {entries.map(([id, spaces]) => (
-        <div key={id} className="bg-gray-800/50 border border-gray-700 rounded-lg p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-xs text-gray-300">{idLabel}: {id}</span>
-            <button
-              onClick={() => removeEntry(id)}
-              className="text-gray-600 hover:text-red-400 transition-colors"
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {spaces.map((space) => (
-              <span
-                key={space}
-                className="group inline-flex items-center gap-1 bg-gray-900 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
-              >
-                {space}
-                <button
-                  onClick={() => removeSpace(id, space)}
-                  className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-            <div className="inline-flex items-center gap-1">
-              <input
-                value={newSpaceTags[id] || ""}
-                onChange={(e) => setNewSpaceTags((prev) => ({ ...prev, [id]: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === "Enter") addSpace(id); }}
-                placeholder="space name"
-                className="bg-gray-900 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-24 focus:outline-none focus:border-gray-500"
-              />
-              <button
-                onClick={() => addSpace(id)}
-                disabled={!(newSpaceTags[id] || "").trim()}
-                className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      ))}
-
-      <div className="flex items-center gap-2 pt-1">
-        <input
-          value={newId}
-          onChange={(e) => setNewId(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") addEntry(); }}
-          placeholder={idPlaceholder}
-          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs font-mono w-36 focus:outline-none focus:border-gray-500"
-        />
-        <button
-          onClick={addEntry}
-          disabled={!newId.trim() || newId.trim() in value}
-          className="inline-flex items-center gap-1 text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
-        >
-          <Plus size={12} /> Add {idLabel.toLowerCase()}
-        </button>
       </div>
     </div>
   );
@@ -197,6 +76,7 @@ function ChannelConfigModal({
   const [editing, setEditing] = useState<Partial<GatewayConfig>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [newTag, setNewTag] = useState("");
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
   const enabled = gateway[channel.enabledKey] as boolean;
@@ -283,13 +163,67 @@ function ChannelConfigModal({
                   </div>
                 )}
 
-                {field.type === "channel-space-map" && (
-                  <ChannelSpaceMapEditor
-                    value={(gateway[field.key] as Record<string, string[]>) || {}}
-                    idLabel={field.idLabel || "ID"}
-                    idPlaceholder={field.placeholder}
-                    onSave={(next) => onSave(field.key, next)}
-                  />
+                {(field.type === "tags-number" || field.type === "tags-string") && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(gateway[field.key] as (string | number)[])?.map((id) => (
+                      <span
+                        key={String(id)}
+                        className="group inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-0.5 font-mono text-xs text-gray-300"
+                      >
+                        {String(id)}
+                        <button
+                          onClick={() => {
+                            const current = gateway[field.key] as (string | number)[];
+                            onSave(field.key, current.filter((c) => c !== id));
+                          }}
+                          className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const current = (gateway[field.key] as (string | number)[]) || [];
+                          if (field.type === "tags-number") {
+                            const num = parseInt(newTag);
+                            if (isNaN(num) || current.includes(num)) return;
+                            onSave(field.key, [...current, num]);
+                          } else {
+                            const val = newTag.trim();
+                            if (!val || current.includes(val)) return;
+                            onSave(field.key, [...current, val]);
+                          }
+                          setNewTag("");
+                        }}
+                        placeholder={field.placeholder}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs font-mono w-28 focus:outline-none focus:border-gray-500"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = (gateway[field.key] as (string | number)[]) || [];
+                          if (field.type === "tags-number") {
+                            const num = parseInt(newTag);
+                            if (isNaN(num) || current.includes(num)) return;
+                            onSave(field.key, [...current, num]);
+                          } else {
+                            const val = newTag.trim();
+                            if (!val || current.includes(val)) return;
+                            onSave(field.key, [...current, val]);
+                          }
+                          setNewTag("");
+                        }}
+                        disabled={!newTag.trim() || (field.type === "tags-number" && isNaN(parseInt(newTag)))}
+                        className="text-xs text-blue-400 disabled:opacity-30 hover:text-blue-300 transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             ))}

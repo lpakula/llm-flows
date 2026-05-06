@@ -3,25 +3,31 @@
 Uses slack-bolt with Socket Mode (persistent WebSocket, no public endpoint needed).
 Full feature parity with Telegram bot: run triggers (with variable collection),
 active run listing (with cancel/dequeue), inbox browsing, upgrade, help,
-flow improvement accept/decline, step responses, and daemon event notifications.
+flow improvement accept/decline, step responses, chat sessions, and daemon
+event notifications.
 """
 
 import json
 import logging
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ...config import SYSTEM_DIR
 from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
+from ..chat import ChatService
 from ..context import ContextService
 from ..flow import FlowService
 from ..run import RunService
 from ..space import SpaceService
 
 logger = logging.getLogger("llmflows.slack")
+
+_chat_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="slack-chat")
 
 _SLACK_MAX_LEN = 3000
 
@@ -65,6 +71,16 @@ def _format_elapsed(start, now) -> str:
     return f"{hours}h{mins}m"
 
 
+@dataclass
+class _ChatSession:
+    session_id: str
+    space_id: str
+    space_name: str
+    anchor_ts: str
+    channel: str
+    flow_name: str | None = None
+
+
 class SlackChannel:
     """Slack channel via Socket Mode — full parity with Telegram bot."""
 
@@ -81,10 +97,14 @@ class SlackChannel:
         self.session_factory = session_factory
         self.bot_token = config["bot_token"]
         self.app_token = config["app_token"]
-        self.allowed_channels: dict[str, list[str]] = dict(config.get("allowed_channel_ids") or {})
+        self.allowed_channels: set[str] = set(config.get("allowed_channel_ids", []))
+        self._active_channels: set[str] = set()
         self._awaiting_response: dict[str, str] = {}  # thread_ts -> step_run_id
+        self._chat_sessions: dict[str, _ChatSession] = {}  # thread_ts -> session
+        self._chat_pending_space: dict[str, str] = {}  # message_ts -> space_id
         self._notification_messages: dict[str, list[tuple[str, str]]] = {}  # inbox_id -> [(channel, ts)]
         self._pending_run_vars: dict[str, dict] = {}  # channel_id -> {space_id, flow_id, flow_name, vars, overrides, pending_idx}
+        self._chat_service = ChatService(session_factory)
         self._app = None
         self._handler = None
         self._thread: threading.Thread | None = None
@@ -151,20 +171,9 @@ class SlackChannel:
             logger.exception("Slack bot crashed")
 
     def _is_allowed(self, channel_id: str) -> bool:
+        if not self.allowed_channels:
+            return True
         return channel_id in self.allowed_channels
-
-    def _allowed_spaces(self, channel_id: str) -> set[str] | None:
-        """Return allowed space names for a channel, or None if all are allowed."""
-        names = self.allowed_channels.get(channel_id, [])
-        if "*" in names:
-            return None
-        return set(names)
-
-    def _filter_spaces(self, spaces: list, channel_id: str) -> list:
-        allowed = self._allowed_spaces(channel_id)
-        if allowed is None:
-            return spaces
-        return [s for s in spaces if s.name in allowed]
 
     def _register_handlers(self) -> None:
         app = self._app
@@ -179,7 +188,7 @@ class SlackChannel:
                 self._handle_dm(event, say)
 
         @app.action(re.compile(
-            r"^(space|run|respond|complete|dismiss"
+            r"^(space|run|respond|complete|dismiss|chatspace|chatflow"
             r"|cancelrun|inbox_detail|accept_improvement|decline_improvement):"
         ))
         def handle_action(ack, body, say):
@@ -190,15 +199,11 @@ class SlackChannel:
 
     def _handle_mention(self, event: dict, say) -> None:
         channel = event.get("channel", "")
-        text = re.sub(r"<@\w+>\s*", "", event.get("text", "")).strip().lower()
-
-        if text.startswith("help") or not text:
-            self._cmd_help(channel, say)
-            return
-
         if not self._is_allowed(channel):
-            say(text=f"This channel (`{channel}`) is not configured. Add it in the Gateway settings.", channel=channel)
             return
+        self._active_channels.add(channel)
+
+        text = re.sub(r"<@\w+>\s*", "", event.get("text", "")).strip().lower()
 
         if text.startswith("run"):
             self._cmd_run(channel, say)
@@ -208,6 +213,12 @@ class SlackChannel:
             self._cmd_inbox(channel, say)
         elif text.startswith("upgrade"):
             self._cmd_upgrade(channel, say)
+        elif text.startswith("chatend"):
+            self._cmd_chat_end(channel, say, event)
+        elif text.startswith("chat"):
+            self._cmd_chat(channel, say)
+        elif text.startswith("help"):
+            self._cmd_help(channel, say)
         else:
             self._cmd_help(channel, say)
 
@@ -234,6 +245,12 @@ class SlackChannel:
                     say(text="Step not found or no longer awaiting response.", channel=channel, thread_ts=thread_ts)
             finally:
                 session.close()
+            return
+
+        # Chat session (thread-based)
+        chat_session = self._chat_sessions.get(thread_ts) if thread_ts else None
+        if chat_session:
+            self._chat_reply(channel, thread_ts, text, chat_session, say)
             return
 
         # Variable collection for run
@@ -272,11 +289,15 @@ class SlackChannel:
             self._cmd_inbox(channel, say)
         elif text_lower.startswith("upgrade"):
             self._cmd_upgrade(channel, say)
+        elif text_lower.startswith("chatend"):
+            self._cmd_chat_end(channel, say, event)
+        elif text_lower.startswith("chat"):
+            self._cmd_chat(channel, say)
         elif text_lower.startswith("help"):
             self._cmd_help(channel, say)
         else:
             say(
-                text="Use `run`, `active`, `inbox`, `upgrade`, or `help`.",
+                text="Use `run`, `active`, `inbox`, `chat`, `chatend`, `upgrade`, or `help`.",
                 channel=channel,
             )
 
@@ -289,7 +310,13 @@ class SlackChannel:
         channel = body.get("channel", {}).get("id", "")
         message_ts = body.get("message", {}).get("ts", "")
 
-        if action_id.startswith("space:"):
+        if action_id.startswith("chatspace:"):
+            self._cb_chat_select_space(channel, value, say, message_ts)
+
+        elif action_id.startswith("chatflow:"):
+            self._cb_chat_select_flow(channel, value, say, message_ts)
+
+        elif action_id.startswith("space:"):
             self._cb_select_space(channel, value, say, message_ts)
 
         elif action_id.startswith("run:"):
@@ -365,17 +392,16 @@ class SlackChannel:
 
     def _cmd_help(self, channel: str, say) -> None:
         from ... import __version__
-        allowed = self._allowed_spaces(channel)
-        scope = "all spaces" if allowed is None else ", ".join(sorted(allowed)) or "none"
         say(
             text=(
                 f"*llmflows bot* v{__version__}\n\n"
-                f"Channel: `{channel}`\n"
-                f"Spaces: {scope}\n\n"
+                f"Channel: `{channel}`\n\n"
                 f"*Commands:*\n"
                 f"`run` — Start a flow\n"
                 f"`active` — List active & queued runs\n"
                 f"`inbox` — Show inbox items\n"
+                f"`chat` — Start a chat session\n"
+                f"`chatend` — End a chat session\n"
                 f"`upgrade` — Upgrade & restart\n"
                 f"`help` — Show this message"
             ),
@@ -385,7 +411,7 @@ class SlackChannel:
     def _cmd_run(self, channel: str, say) -> None:
         session = self.session_factory()
         try:
-            spaces = self._filter_spaces(SpaceService(session).list_all(), channel)
+            spaces = SpaceService(session).list_all()
             if not spaces:
                 say(text="No spaces registered.", channel=channel)
                 return
@@ -411,7 +437,7 @@ class SlackChannel:
     def _cmd_active(self, channel: str, say) -> None:
         session = self.session_factory()
         try:
-            spaces = self._filter_spaces(SpaceService(session).list_all(), channel)
+            spaces = SpaceService(session).list_all()
             run_svc = RunService(session)
             now = datetime.now(timezone.utc)
 
@@ -490,15 +516,12 @@ class SlackChannel:
                 say(text="Inbox is empty.", channel=channel)
                 return
 
-            allowed = self._allowed_spaces(channel)
             now = datetime.now(timezone.utc)
             sent = 0
 
             for item in items:
                 space = session.query(SpaceModel).filter_by(id=item.space_id).first()
                 space_name = space.name if space else "?"
-                if allowed is not None and space_name not in allowed:
-                    continue
 
                 if item.type == "awaiting_user":
                     sr = session.query(StepRun).filter_by(id=item.reference_id).first()
@@ -648,6 +671,192 @@ class SlackChannel:
         say(text="\n".join(parts), channel=channel)
 
         trigger_daemon_reexec()
+
+    # ── Chat commands ────────────────────────────────────────────────────
+
+    def _cmd_chat(self, channel: str, say) -> None:
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            if not spaces:
+                say(text="No spaces registered.", channel=channel)
+                return
+            blocks = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*Select a space for chat:*"}},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": s.name},
+                            "action_id": f"chatspace:{s.id}",
+                            "value": s.id,
+                        }
+                        for s in spaces
+                    ],
+                },
+            ]
+            say(blocks=blocks, text="Select a space for chat:", channel=channel)
+        finally:
+            session.close()
+
+    def _cmd_chat_end(self, channel: str, say, event: dict) -> None:
+        thread_ts = event.get("thread_ts", "")
+        ended = False
+        if thread_ts and thread_ts in self._chat_sessions:
+            session = self._chat_sessions.pop(thread_ts)
+            self._chat_service.end_session(session.session_id)
+            say(text="━━━ Chat ended ━━━", channel=channel, thread_ts=thread_ts)
+            ended = True
+
+        if not ended:
+            to_remove = [
+                ts for ts, s in self._chat_sessions.items()
+                if s.channel == channel
+            ]
+            for ts in to_remove:
+                session = self._chat_sessions.pop(ts)
+                self._chat_service.end_session(session.session_id)
+                say(text="━━━ Chat ended ━━━", channel=channel, thread_ts=ts)
+                ended = True
+
+        if not ended:
+            say(text="No active chat session.", channel=channel)
+
+    # ── Chat callback helpers ────────────────────────────────────────────
+
+    def _cb_chat_select_space(self, channel: str, space_id: str, say, message_ts: str) -> None:
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                say(text="Space not found.", channel=channel)
+                return
+            self._chat_pending_space[message_ts] = space_id
+            flows = FlowService(session).list_by_space(space_id)
+            elements = [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": f.name},
+                    "action_id": f"chatflow:{space_id}:{f.id}",
+                    "value": f"{space_id}:{f.id}",
+                }
+                for f in flows
+            ]
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Skip (no flow)"},
+                "action_id": f"chatflow:{space_id}:skip",
+                "value": f"{space_id}:skip",
+            })
+            blocks = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{space.name}* — select a flow (or skip):"}},
+                {"type": "actions", "elements": elements},
+            ]
+            try:
+                self._app.client.chat_update(
+                    channel=channel, ts=message_ts,
+                    blocks=blocks, text=f"{space.name} — select a flow:",
+                )
+            except Exception:
+                say(blocks=blocks, text=f"{space.name} — select a flow:", channel=channel)
+        finally:
+            session.close()
+
+    def _cb_chat_select_flow(self, channel: str, payload: str, say, message_ts: str) -> None:
+        parts = payload.split(":", 1)
+        if len(parts) != 2:
+            say(text="Invalid selection.", channel=channel)
+            return
+        space_id, flow_id = parts
+        self._chat_pending_space.pop(message_ts, None)
+
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                say(text="Space not found.", channel=channel)
+                return
+
+            flow_name = None
+            if flow_id != "skip":
+                flow = FlowService(session).get(flow_id)
+                flow_name = flow.name if flow else None
+
+            label = flow_name or space.name
+            anchor_text = f"━━━ Chat: {label} ({space.name}) ━━━\nReply in this thread to chat. Say `chatend` to stop."
+
+            try:
+                self._app.client.chat_update(
+                    channel=channel, ts=message_ts,
+                    text=anchor_text, blocks=[],
+                )
+                anchor_ts = message_ts
+            except Exception:
+                resp = say(text=anchor_text, channel=channel)
+                anchor_ts = resp.get("ts", message_ts) if isinstance(resp, dict) else message_ts
+
+            session_id = self._chat_service.new_session_id()
+            self._chat_sessions[anchor_ts] = _ChatSession(
+                session_id=session_id,
+                space_id=space_id,
+                space_name=space.name,
+                anchor_ts=anchor_ts,
+                channel=channel,
+                flow_name=flow_name,
+            )
+        finally:
+            session.close()
+
+    # ── Chat reply handler ───────────────────────────────────────────────
+
+    def _chat_reply(
+        self, channel: str, thread_ts: str, text: str,
+        session: _ChatSession, say,
+    ) -> None:
+        text_lower = text.strip().lower()
+        if text_lower == "chatend":
+            self._chat_sessions.pop(thread_ts, None)
+            self._chat_service.end_session(session.session_id)
+            say(text="━━━ Chat ended ━━━", channel=channel, thread_ts=thread_ts)
+            return
+
+        thinking_resp = self._app.client.chat_postMessage(
+            channel=channel, thread_ts=thread_ts,
+            text="_Thinking..._",
+        )
+        thinking_ts = thinking_resp.get("ts", "") if thinking_resp else ""
+
+        def _run_pi():
+            return self._chat_service.send_message(
+                session_id=session.session_id,
+                message=text,
+                space_id=session.space_id,
+                flow_name=session.flow_name,
+                channel_name="Slack",
+            )
+
+        try:
+            future = _chat_executor.submit(_run_pi)
+            response = future.result(timeout=300)
+        except Exception:
+            response = "Error running the chat agent."
+
+        formatted = _to_slack_mrkdwn(response)
+        chunks = _split_message(formatted)
+
+        if thinking_ts and chunks:
+            try:
+                self._app.client.chat_update(
+                    channel=channel, ts=thinking_ts,
+                    text=chunks[0],
+                )
+                chunks = chunks[1:]
+            except Exception:
+                pass
+
+        for chunk in chunks:
+            say(text=chunk, channel=channel, thread_ts=thread_ts)
 
     # ── Run callback helpers ─────────────────────────────────────────────
 
@@ -1018,7 +1227,8 @@ class SlackChannel:
         if not text:
             return
 
-        for channel_id in self.allowed_channels:
+        targets = self.allowed_channels or self._active_channels
+        for channel_id in targets:
             try:
                 blocks = self._build_notification_blocks(text, event, payload)
                 resp = self._app.client.chat_postMessage(

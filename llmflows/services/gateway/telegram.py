@@ -130,8 +130,8 @@ class TelegramBot:
         self.config = config
         self.session_factory = session_factory
         self.bot_token = config["bot_token"]
-        raw_ids = config.get("allowed_chat_ids") or {}
-        self.allowed_ids: dict[int, list[str]] = {int(k): v for k, v in raw_ids.items()}
+        self.allowed_ids: set[int] = set(config.get("allowed_chat_ids", []))
+        self._active_chats: set[int] = set()
         self._awaiting_response: dict[int, str] = {}  # chat_id -> step_run_id
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
         self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
@@ -258,35 +258,21 @@ class TelegramBot:
         logger.info("Telegram bot commands registered")
 
     def _is_allowed(self, chat_id: int) -> bool:
+        if not self.allowed_ids:
+            return True
         return chat_id in self.allowed_ids
-
-    def _allowed_spaces(self, chat_id: int) -> set[str] | None:
-        """Return allowed space names for a chat, or None if all are allowed."""
-        names = self.allowed_ids.get(chat_id, [])
-        if "*" in names:
-            return None
-        return set(names)
-
-    def _filter_spaces(self, spaces: list, chat_id: int) -> list:
-        allowed = self._allowed_spaces(chat_id)
-        if allowed is None:
-            return spaces
-        return [s for s in spaces if s.name in allowed]
 
     # ── /run command — space → flow → enqueue ───────────────────────────────
 
     async def _handle_run_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
-            await update.message.reply_text(
-                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
-                parse_mode="HTML",
-            )
             return
+        self._active_chats.add(chat_id)
 
         session = self.session_factory()
         try:
-            spaces = self._filter_spaces(SpaceService(session).list_all(), chat_id)
+            spaces = SpaceService(session).list_all()
             if not spaces:
                 await update.message.reply_text("No spaces registered.")
                 return
@@ -306,15 +292,12 @@ class TelegramBot:
     async def _handle_active_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
-            await update.message.reply_text(
-                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
-                parse_mode="HTML",
-            )
             return
+        self._active_chats.add(chat_id)
 
         session = self.session_factory()
         try:
-            spaces = self._filter_spaces(SpaceService(session).list_all(), chat_id)
+            spaces = SpaceService(session).list_all()
             run_svc = RunService(session)
             now = datetime.now(timezone.utc)
 
@@ -389,11 +372,8 @@ class TelegramBot:
     async def _handle_inbox_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
-            await update.message.reply_text(
-                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
-                parse_mode="HTML",
-            )
             return
+        self._active_chats.add(chat_id)
 
         session = self.session_factory()
         try:
@@ -403,15 +383,12 @@ class TelegramBot:
                 await update.message.reply_text("Inbox is empty.")
                 return
 
-            allowed = self._allowed_spaces(chat_id)
             now = datetime.now(timezone.utc)
             sent = 0
 
             for item in items:
                 space = session.query(SpaceModel).filter_by(id=item.space_id).first()
                 space_name = space.name if space else "?"
-                if allowed is not None and space_name not in allowed:
-                    continue
 
                 if item.type == "awaiting_user":
                     sr = session.query(StepRun).filter_by(id=item.reference_id).first()
@@ -477,11 +454,8 @@ class TelegramBot:
     async def _handle_upgrade_command(self, update, context) -> None:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
-            await update.message.reply_text(
-                f"This chat (<code>{chat_id}</code>) is not configured. Add it in the Gateway settings.",
-                parse_mode="HTML",
-            )
             return
+        self._active_chats.add(chat_id)
 
         await update.message.reply_text("Upgrading llmflows…")
 
@@ -528,12 +502,10 @@ class TelegramBot:
     async def _handle_help_command(self, update, context) -> None:
         from ... import __version__
         chat_id = update.effective_chat.id
-        allowed = self._allowed_spaces(chat_id)
-        scope = "all spaces" if allowed is None else ", ".join(sorted(allowed)) or "none"
+        self._active_chats.add(chat_id)
         await update.message.reply_text(
             f"<b>llmflows bot</b> v{__version__}\n\n"
-            f"Chat ID: <code>{chat_id}</code>\n"
-            f"Spaces: {scope}\n\n"
+            f"Chat ID: <code>{chat_id}</code>\n\n"
             f"<b>Commands:</b>\n"
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
@@ -549,6 +521,7 @@ class TelegramBot:
         chat_id = update.effective_chat.id
         if not self._is_allowed(chat_id):
             return
+        self._active_chats.add(chat_id)
 
         step_run_id = self._awaiting_response.pop(chat_id, None)
         if step_run_id:
@@ -1024,7 +997,8 @@ class TelegramBot:
         if not text:
             return
 
-        for chat_id in self.allowed_ids:
+        targets = self.allowed_ids or self._active_chats
+        for chat_id in targets:
             try:
                 asyncio.run_coroutine_threadsafe(
                     self._send_notification(chat_id, text, event, payload),

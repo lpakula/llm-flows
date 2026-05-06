@@ -13,9 +13,9 @@ port_range_start = 19100
 [channels.telegram]
 enabled = false
 bot_token = ""
-[channels.telegram.allowed_chat_ids]
+allowed_chat_ids = []
 [channels.slack]
 enabled = false
 bot_token = ""
 app_token = ""
-[channels.slack.allowed_channel_ids]
+allowed_channel_ids = []
