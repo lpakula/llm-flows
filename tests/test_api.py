@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from llmflows.db.models import AgentAlias, Base, Flow, FlowStep, Space
+from llmflows.db.models import AgentAlias, Base, Flow, FlowRun, FlowStep, Space, StepRun
 from llmflows.services.flow import FlowService
 from llmflows.services.space import SpaceService
 from llmflows.ui.server import app
@@ -433,3 +433,169 @@ class TestInboxMuteAPI:
             assert response.status_code == 200
             assert response.json()["muted"] is False
             assert saved["config"]["daemon"]["inbox_muted"] is False
+
+
+@pytest.fixture
+def analytics_db():
+    """DB with completed runs and step runs for analytics testing."""
+    from datetime import datetime, timezone, timedelta
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    space = Space(name="analytics-space", path="/tmp/analytics-space")
+    session.add(space)
+    session.flush()
+
+    flow = Flow(name="analytics-flow", description="Flow for analytics", space_id=space.id)
+    session.add(flow)
+    session.flush()
+
+    step1 = FlowStep(flow_id=flow.id, name="research", position=0)
+    step2 = FlowStep(flow_id=flow.id, name="implement", position=1)
+    session.add_all([step1, step2])
+    session.flush()
+
+    now = datetime.now(timezone.utc)
+    for i in range(3):
+        run = FlowRun(
+            space_id=space.id, flow_id=flow.id,
+            started_at=now - timedelta(hours=3 - i),
+            completed_at=now - timedelta(hours=2 - i) if i < 2 else now,
+            outcome="completed",
+        )
+        session.add(run)
+        session.flush()
+
+        sr1 = StepRun(
+            flow_run_id=run.id, step_name="research", step_position=0,
+            flow_name="analytics-flow", agent="cursor", model="gpt-4",
+            outcome="completed",
+            started_at=run.started_at,
+            completed_at=run.started_at + timedelta(minutes=10 + i * 5),
+            cost_usd=0.05 + i * 0.01,
+        )
+        outcome2 = "completed" if i != 1 else "gate_failed"
+        sr2 = StepRun(
+            flow_run_id=run.id, step_name="implement", step_position=1,
+            flow_name="analytics-flow", agent="cursor", model="gpt-4",
+            outcome=outcome2,
+            started_at=sr1.completed_at,
+            completed_at=sr1.completed_at + timedelta(minutes=20 + i * 10),
+            cost_usd=0.10 + i * 0.02,
+        )
+        session.add_all([sr1, sr2])
+
+    session.commit()
+    ids = {"space_id": space.id, "flow_id": flow.id}
+    session.close()
+
+    def mock_get_services():
+        s = Session()
+        return s, SpaceService(s)
+
+    with patch("llmflows.ui.server._get_services", mock_get_services):
+        yield ids
+
+    Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def analytics_client(analytics_db):
+    return TestClient(app)
+
+
+class TestAnalyticsAPI:
+    def test_analytics_returns_step_data(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["flow_name"] == "analytics-flow"
+        assert data["total_runs"] == 3
+        assert len(data["steps"]) == 2
+
+    def test_analytics_stability_score(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics")
+        data = response.json()
+        research = next(s for s in data["steps"] if s["step_name"] == "research")
+        assert research["stability_score"] == 100.0
+        assert research["success_count"] == 3
+        assert research["failure_count"] == 0
+
+        implement = next(s for s in data["steps"] if s["step_name"] == "implement")
+        assert implement["stability_score"] < 100.0
+        assert implement["failure_count"] == 1
+
+    def test_analytics_duration_metrics(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics")
+        data = response.json()
+        research = next(s for s in data["steps"] if s["step_name"] == "research")
+        assert research["avg_duration_seconds"] is not None
+        assert research["min_duration_seconds"] is not None
+        assert research["max_duration_seconds"] is not None
+        assert research["p50_duration_seconds"] is not None
+        assert research["min_duration_seconds"] <= research["avg_duration_seconds"] <= research["max_duration_seconds"]
+
+    def test_analytics_cost_metrics(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics")
+        data = response.json()
+        research = next(s for s in data["steps"] if s["step_name"] == "research")
+        assert research["avg_cost_usd"] is not None
+        assert research["total_cost_usd"] is not None
+        assert research["min_cost_usd"] <= research["avg_cost_usd"] <= research["max_cost_usd"]
+
+    def test_analytics_history(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics")
+        data = response.json()
+        research = next(s for s in data["steps"] if s["step_name"] == "research")
+        assert len(research["history"]) == 3
+        for h in research["history"]:
+            assert "run_id" in h
+            assert "outcome" in h
+
+    def test_analytics_not_found(self, analytics_client):
+        response = analytics_client.get("/api/flows/nope/analytics")
+        assert response.status_code == 404
+
+    def test_analytics_empty_flow(self, analytics_client, analytics_db):
+        """A flow with no completed runs returns empty analytics."""
+        from sqlalchemy import create_engine as _ce
+        from sqlalchemy.orm import sessionmaker as _sm
+        engine = _ce("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        Ses = _sm(bind=engine)
+        s = Ses()
+        sp = Space(name="empty", path="/tmp/empty-space")
+        s.add(sp)
+        s.flush()
+        f = Flow(name="empty-flow", space_id=sp.id)
+        s.add(f)
+        s.flush()
+        FlowStep(flow_id=f.id, name="step1", position=0)
+        s.commit()
+        fid = f.id
+        s.close()
+
+        def mock():
+            ss = Ses()
+            return ss, SpaceService(ss)
+
+        with patch("llmflows.ui.server._get_services", mock):
+            c = TestClient(app)
+            response = c.get(f"/api/flows/{fid}/analytics")
+            assert response.status_code == 200
+            assert response.json()["total_runs"] == 0
+
+        Base.metadata.drop_all(engine)
+
+    def test_analytics_limit_param(self, analytics_client, analytics_db):
+        response = analytics_client.get(f"/api/flows/{analytics_db['flow_id']}/analytics?limit=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_runs"] == 1
