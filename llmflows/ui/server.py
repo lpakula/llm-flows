@@ -701,22 +701,27 @@ async def kill_all_agents():
     from ..db.models import FlowRun
 
     killed = 0
+    runs_cancelled = 0
     errors = []
     session, space_svc = _get_services()
     try:
-        spaces = space_svc.list()
-        for space in spaces:
-            llmflows_dir = Path(space.path) / ".llmflows"
-            if not llmflows_dir.is_dir():
-                continue
-            for pid_file in llmflows_dir.rglob("agent.pid"):
-                try:
-                    pid = int(pid_file.read_text().strip())
-                    os.kill(pid, sig.SIGKILL)
-                    killed += 1
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass
-                pid_file.unlink(missing_ok=True)
+        # Kill agent processes
+        try:
+            spaces = space_svc.list()
+            for space in spaces:
+                llmflows_dir = Path(space.path) / ".llmflows"
+                if not llmflows_dir.is_dir():
+                    continue
+                for pid_file in llmflows_dir.rglob("agent.pid"):
+                    try:
+                        pid = int(pid_file.read_text().strip())
+                        os.kill(pid, sig.SIGKILL)
+                        killed += 1
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
+                    pid_file.unlink(missing_ok=True)
+        except Exception as exc:
+            errors.append(f"agent kill: {exc}")
 
         # Kill CDP browser on port 9222
         try:
@@ -734,18 +739,22 @@ async def kill_all_agents():
             pass
 
         # Mark all active runs as cancelled
-        run_svc = RunService(session)
-        active_runs = (
-            session.query(FlowRun)
-            .filter(FlowRun.started_at.isnot(None))
-            .filter(FlowRun.completed_at.is_(None))
-            .all()
-        )
-        for run in active_runs:
-            active_step = run_svc.get_active_step(run.id)
-            if active_step:
-                run_svc.mark_step_completed(active_step.id, outcome="cancelled")
-            run_svc.mark_completed(run.id, outcome="cancelled")
+        try:
+            run_svc = RunService(session)
+            active_runs = (
+                session.query(FlowRun)
+                .filter(FlowRun.started_at.isnot(None))
+                .filter(FlowRun.completed_at.is_(None))
+                .all()
+            )
+            for run in active_runs:
+                active_step = run_svc.get_active_step(run.id)
+                if active_step:
+                    run_svc.mark_step_completed(active_step.id, outcome="cancelled")
+                run_svc.mark_completed(run.id, outcome="cancelled")
+            runs_cancelled = len(active_runs)
+        except Exception as exc:
+            errors.append(f"run cancel: {exc}")
 
         # Kill the daemon process itself
         from ..services.daemon import read_pid_file, remove_pid_file
@@ -757,10 +766,10 @@ async def kill_all_agents():
                 pass
             remove_pid_file()
 
-        return {"ok": True, "killed": killed, "runs_cancelled": len(active_runs)}
+        return {"ok": not errors, "killed": killed, "runs_cancelled": runs_cancelled, "errors": errors or None}
     except Exception as exc:
         errors.append(str(exc))
-        return {"ok": False, "killed": killed, "errors": errors}
+        return {"ok": False, "killed": killed, "runs_cancelled": runs_cancelled, "errors": errors}
     finally:
         session.close()
 

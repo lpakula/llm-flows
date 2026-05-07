@@ -290,6 +290,7 @@ class GitHubChannel:
             return
 
         self._processed_comment_ids.add(key)
+        self._react_eyes(repo, "issue_comment", comment["id"])
 
         issue_url = comment.get("issue_url", "")
         issue_data = _gh_api(issue_url.replace("https://api.github.com", ""), self.token) if issue_url else None
@@ -331,6 +332,7 @@ class GitHubChannel:
             return
 
         self._processed_comment_ids.add(key)
+        self._react_eyes(repo, "review_comment", comment["id"])
 
         pr_url = comment.get("pull_request_url", "")
         pr_data = _gh_api(pr_url.replace("https://api.github.com", ""), self.token) if pr_url else None
@@ -360,6 +362,7 @@ class GitHubChannel:
             return
 
         self._processed_comment_ids.add(key)
+        self._react_eyes(repo, "issue", issue["number"])
 
         github_ref = f"issue:{issue['number']}"
         if github_ref in self._active_refs:
@@ -425,6 +428,20 @@ class GitHubChannel:
                 body = c.get("body", "")
                 parts.append(f"**{user}** on `{path}:{line}`: {body}")
             run_vars["PR_REVIEW_COMMENTS"] = _truncate("\n\n---\n\n".join(parts))
+
+    # ── reactions ─────────────────────────────────────────────────────────
+
+    def _react_eyes(self, repo: str, kind: str, item_id: int) -> None:
+        """Add 👀 reaction so the author knows the mention was picked up."""
+        if kind == "issue":
+            endpoint = f"/repos/{repo}/issues/{item_id}/reactions"
+        elif kind == "issue_comment":
+            endpoint = f"/repos/{repo}/issues/comments/{item_id}/reactions"
+        elif kind == "review_comment":
+            endpoint = f"/repos/{repo}/pulls/comments/{item_id}/reactions"
+        else:
+            return
+        _gh_api(endpoint, self.token, method="POST", body={"content": "eyes"})
 
     # ── enqueue ───────────────────────────────────────────────────────────
 

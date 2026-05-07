@@ -76,7 +76,7 @@ export function DaemonWidget() {
     setBusy(true);
     try {
       const result = await api.killAllAgents();
-      setKillResult(`Killed ${result.killed} process(es), cancelled ${result.runs_cancelled} run(s)`);
+      setKillResult(`Killed ${result.killed} process(es), cancelled ${result.runs_cancelled ?? 0} run(s)`);
       setTimeout(() => setKillResult(null), 5000);
     } catch (e) {
       console.error("Failed to kill agents:", e);
