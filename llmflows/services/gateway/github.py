@@ -256,12 +256,6 @@ class GitHubChannel:
 
     # ── event processing ──────────────────────────────────────────────────
 
-    def _is_own_comment(self, comment: dict) -> bool:
-        if not self._bot_user:
-            return False
-        user = comment.get("user", {})
-        return user.get("login") == self._bot_user
-
     def _is_allowed_user(self, comment_or_issue: dict) -> bool:
         """Check if the comment/issue author is in the allowed_users list.
 
@@ -280,8 +274,6 @@ class GitHubChannel:
         (issue_url, flow_name) pairs already have a newer comment being
         processed — older duplicates just get 👀 without enqueuing.
         """
-        if self._is_own_comment(comment):
-            return
         if not self._is_allowed_user(comment):
             return
 
@@ -333,8 +325,6 @@ class GitHubChannel:
 
         Same newest-first dedup as ``_process_issue_comment``.
         """
-        if self._is_own_comment(comment):
-            return
         if not self._is_allowed_user(comment):
             return
 
