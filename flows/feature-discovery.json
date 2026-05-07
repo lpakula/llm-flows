@@ -6,7 +6,7 @@
     {
       "name": "discover",
       "position": 0,
-      "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project, existing flows, and the broader AI automation landscape.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform. It is NOT limited to coding — users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow.\n\n## WORKFLOW\n\n1. Project Analysis:\n   - Read `README.md` and `AGENTS.md` to understand the architecture and goals.\n   - Run `llmflows flow list` to see existing capabilities and avoid proposing things that are already flows.\n   - Use `git branch` and `git log -n 20 --oneline` to see active or recent development.\n2. Memory & Feedback:\n   - Check if `{{space.dir}}/memory/rejected-features.md` exists. If so, read it.\n   - Analyze the titles AND the feedback comments to understand why previous features were rejected.\n3. Market Research:\n   - Use web search to research advancements in AI automation, agent frameworks, and workflow orchestration.\n   {% if flow.FOCUS %}- **Specific Focus:** {{flow.FOCUS}}. Tailor research and proposals to this area.{% endif %}\n4. Propose Features:\n   - Select 3 to 5 new, innovative features.\n   - For each feature, provide a **Title**, **Why it matters**, and **How it would work** (implementation sketch).\n5. Save the output to `{{step.dir}}/_result.md`.",
+      "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project, existing flows, and the broader AI automation landscape.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform. It is NOT limited to coding — users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow.\n\n## WORKFLOW\n\n1. Project Analysis:\n   - Read `README.md` and `AGENTS.md` to understand the architecture and goals.\n   - Run `llmflows flow list` to see existing capabilities and avoid proposing things that are already flows.\n   - Use `git branch` and `git log -n 20 --oneline` to see active or recent development.\n2. Memory & Feedback:\n   - Check if `{{space.dir}}/memory/rejected-features.md` exists. If so, read it.\n   - Analyze the titles AND the feedback comments to understand why previous features were rejected.\n3. Market Research:\n   - Use web search to research advancements in AI automation, agent frameworks, and workflow orchestration.\n4. Propose Features:\n   - Select 3 to 5 new, innovative features.\n   - For each feature, provide a **Title**, **Why it matters**, and **How it would work** (implementation sketch).\n5. Save the output to `{{step.dir}}/_result.md`.",
       "step_type": "code"
     },
     {
@@ -23,10 +23,5 @@
       "step_type": "code"
     }
   ],
-  "variables": {
-    "FOCUS": {
-      "value": "",
-      "is_env": false
-    }
-  }
+  "variables": {}
 }

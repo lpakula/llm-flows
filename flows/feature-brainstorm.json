@@ -15,12 +15,6 @@
       "position": 1,
       "connectors": ["github"],
       "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the brainstorm analysis as a comment on the GitHub issue.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the full analysis as a comment on issue #{{flow.ISSUE_NUMBER}}.\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief summary of the proposed solution\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to iterate, or trigger @llmflows:feature-develop when ready to implement.\"",
-      "ifs": [
-        {
-          "command": "[ -n \"{{flow.ISSUE_NUMBER}}\" ]",
-          "message": "Only runs when triggered from a GitHub issue"
-        }
-      ],
       "gates": [
         {
           "command": "test -s {{run.dir}}/inbox.md",
