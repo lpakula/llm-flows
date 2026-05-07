@@ -220,3 +220,74 @@ class TestGitHubChannel:
         assert gh_channel._is_allowed_user({"user": {"login": "alice"}})
         assert gh_channel._is_allowed_user({"user": {"login": "Bob"}})
         assert not gh_channel._is_allowed_user({"user": {"login": "mallory"}})
+
+
+class TestPostRunComment:
+    """Tests for _post_run_comment — the outbound comment on run completion."""
+
+    def test_comment_excludes_inbox_message(self, gh_channel, gh_db):
+        """inbox_message must not appear in the GitHub comment body."""
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        run = FlowRun(space_id=space.id, flow_id=None)
+        gh_db.add(run)
+        gh_db.commit()
+
+        payload = {
+            "flow_name": "feature-develop",
+            "outcome": "completed",
+            "inbox_message": "This inbox content should NOT appear",
+            "duration_seconds": 120,
+            "cost_usd": 0.0042,
+        }
+
+        with patch("llmflows.services.gateway.github._gh_api") as mock_api:
+            gh_channel._post_run_comment("owner/repo", run, "issue:17", "/tmp/test", payload)
+
+            mock_api.assert_called_once()
+            call_args = mock_api.call_args
+            body = call_args[1]["body"]["body"] if "body" in call_args[1] else call_args[0][3]["body"]
+            assert "inbox content should NOT appear" not in body
+            assert "**llm-flows**" in body
+            assert "feature-develop" in body
+
+    def test_comment_contains_status_header(self, gh_channel, gh_db):
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        run = FlowRun(space_id=space.id, flow_id=None)
+        gh_db.add(run)
+        gh_db.commit()
+
+        payload = {
+            "flow_name": "my-flow",
+            "outcome": "completed",
+            "duration_seconds": 180,
+            "cost_usd": 0.05,
+        }
+
+        with patch("llmflows.services.gateway.github._gh_api") as mock_api:
+            gh_channel._post_run_comment("owner/repo", run, "issue:5", "/tmp/test", payload)
+
+            mock_api.assert_called_once()
+            call_args = mock_api.call_args
+            body = call_args[1]["body"]["body"] if "body" in call_args[1] else call_args[0][3]["body"]
+            assert "**llm-flows** `my-flow` — completed" in body
+            assert "3m" in body
+            assert "$0.0500" in body
+
+    def test_comment_no_ref_num_skips(self, gh_channel, gh_db):
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        run = FlowRun(space_id=space.id, flow_id=None)
+        gh_db.add(run)
+        gh_db.commit()
+
+        with patch("llmflows.services.gateway.github._gh_api") as mock_api:
+            gh_channel._post_run_comment("owner/repo", run, "invalid", "/tmp/test", {})
+            mock_api.assert_not_called()
