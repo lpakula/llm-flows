@@ -225,11 +225,12 @@ class GitHubChannel:
         since = self._last_checked.get(repo)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # On first poll, only look at comments from the last 5 minutes to avoid
-        # replaying the entire comment history.
+        # On first poll, look back 24 hours. The eyes-reaction dedup prevents
+        # re-processing, so a wide window is safe and avoids missing comments
+        # posted before the daemon started.
         if not since:
             from datetime import timedelta
-            since = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Poll issue/PR conversation comments (newest first — only latest per issue+flow triggers)
         comments = _gh_api(
