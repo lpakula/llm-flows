@@ -196,16 +196,25 @@ class GitHubChannel:
                 logger.exception("Error polling repo %s", repo)
 
     def _refresh_active_refs(self) -> None:
-        """Update the set of GITHUB_REF values that have active or queued (non-completed) runs."""
+        """Update the set of GITHUB_REF values that have recent or in-progress runs.
+
+        Includes both incomplete runs and runs created in the last 24 hours,
+        so a daemon restart doesn't re-trigger recently processed mentions.
+        """
+        from datetime import timedelta
         session = self.session_factory()
         try:
-            active_runs = (
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            recent_runs = (
                 session.query(FlowRun)
-                .filter(FlowRun.completed_at.is_(None))
+                .filter(
+                    (FlowRun.completed_at.is_(None)) |
+                    (FlowRun.created_at >= cutoff)
+                )
                 .all()
             )
             refs = set()
-            for run in active_runs:
+            for run in recent_runs:
                 rv = run.run_variables
                 if rv and rv.get("GITHUB_REF"):
                     refs.add(rv["GITHUB_REF"])

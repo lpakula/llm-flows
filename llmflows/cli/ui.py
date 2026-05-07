@@ -329,10 +329,14 @@ def _free_port(port: int) -> None:
 
 
 def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
-    """Start Vite dev server + FastAPI backend concurrently."""
+    """Start Vite dev server + FastAPI backend concurrently.
+
+    Vite runs as a subprocess; uvicorn runs in the main process so
+    Ctrl+C shuts everything down cleanly.
+    """
+    import atexit
     import signal
     import subprocess
-    import threading
 
     if not FRONTEND_DIR.exists():
         click.echo(f"Error: frontend directory not found at {FRONTEND_DIR}", err=True)
@@ -357,50 +361,33 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     if not no_daemon:
         _ensure_daemon_running()
 
-    procs: list[subprocess.Popen] = []
-
-    def shutdown(*_args):
-        for p in procs:
-            try:
-                p.terminate()
-            except OSError:
-                pass
-        for p in procs:
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
-    llmflows_pkg_dir = str(Path(__file__).parent.parent)
-    api_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "llmflows.ui.server:app",
-         "--host", host, "--port", str(api_port), "--log-level", "info",
-         "--reload", "--reload-dir", llmflows_pkg_dir],
-        cwd=os.getcwd(),
-    )
-    procs.append(api_proc)
-
     vite_env = {**os.environ, "LLMFLOWS_API_PORT": str(api_port)}
     vite_proc = subprocess.Popen(
         ["npx", "vite", "--host", host, "--port", str(vite_port)],
         cwd=str(FRONTEND_DIR),
         env=vite_env,
+        start_new_session=True,
     )
-    procs.append(vite_proc)
 
-    def _wait(p: subprocess.Popen):
-        p.wait()
-        shutdown()
+    def _kill_vite():
+        try:
+            os.killpg(vite_proc.pid, signal.SIGTERM)
+            vite_proc.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(vite_proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
 
-    for p in procs:
-        t = threading.Thread(target=_wait, args=(p,), daemon=True)
-        t.start()
+    atexit.register(_kill_vite)
 
-    signal.pause()
+    import uvicorn
+    llmflows_pkg_dir = str(Path(__file__).parent.parent)
+    uvicorn.run(
+        "llmflows.ui.server:app",
+        host=host, port=api_port, log_level="info",
+        reload=True, reload_dirs=[llmflows_pkg_dir],
+    )
 
 
 @click.command("ui")

@@ -6,14 +6,15 @@
     {
       "name": "brainstorm",
       "position": 0,
-      "connectors": ["github"],
-      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase deeply and propose ONE concrete implementation solution. This flow may be triggered multiple times on the same issue for iteration — each run should build on prior discussion in the issue thread.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}- **Task:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase thoroughly — trace relevant code paths, understand existing patterns, constraints, and conventions.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. {% if flow.ISSUE_NUMBER %}Use the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand prior brainstorm iterations and user feedback.{% endif %}\n5. Think through multiple possible approaches internally, evaluating:\n   - **Complexity** — how much code needs to change?\n   - **Risk** — what could break? How reversible is it?\n   - **Maintainability** — is the result clean and idiomatic?\n   - **Alignment** — does it match project conventions and architecture?\n6. **Select the single best approach.** Do not present multiple options — commit to one recommendation.\n7. Write the analysis to `{{step.dir}}/_result.md` with this structure:\n   - **Summary** — one paragraph describing the proposed solution\n   - **Why this approach** — brief justification for why this is the best path (mention what was considered and rejected)\n   - **Implementation plan** — ordered list of specific changes (files, functions, patterns)\n   - **Edge cases and risks** — what to watch out for during implementation\n   - **Open questions** — anything that needs user clarification before proceeding\n\n## FORBIDDEN\n\n- Do NOT make any code changes. No branches, no worktrees, no commits.\n- Do NOT propose multiple solutions — pick one and commit to it.\n- Do NOT repeat previous brainstorm output if iterating — build on it.",
-      "step_type": "code"
+      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase deeply and propose ONE concrete implementation solution. This flow may be triggered multiple times on the same issue for iteration \u2014 each run should build on prior discussion in the issue thread.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} \u2014 {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}- **Task:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase thoroughly \u2014 trace relevant code paths, understand existing patterns, constraints, and conventions.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. {% if flow.ISSUE_NUMBER %}Use the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand prior brainstorm iterations and user feedback.{% endif %}\n5. Think through multiple possible approaches internally, evaluating:\n   - **Complexity** \u2014 how much code needs to change?\n   - **Risk** \u2014 what could break? How reversible is it?\n   - **Maintainability** \u2014 is the result clean and idiomatic?\n   - **Alignment** \u2014 does it match project conventions and architecture?\n6. **Select the single best approach.** Do not present multiple options \u2014 commit to one recommendation.\n7. Write the analysis to `{{step.dir}}/_result.md` with this structure:\n   - **Summary** \u2014 one paragraph describing the proposed solution\n   - **Why this approach** \u2014 brief justification for why this is the best path (mention what was considered and rejected)\n   - **Implementation plan** \u2014 ordered list of specific changes (files, functions, patterns)\n   - **Edge cases and risks** \u2014 what to watch out for during implementation\n   - **Open questions** \u2014 anything that needs user clarification before proceeding\n\n## FORBIDDEN\n\n- Do NOT make any code changes. No branches, no worktrees, no commits.\n- Do NOT propose multiple solutions \u2014 pick one and commit to it.\n- Do NOT repeat previous brainstorm output if iterating \u2014 build on it.",
+      "step_type": "code",
+      "connectors": [
+        "github"
+      ]
     },
     {
       "name": "post-to-github",
       "position": 1,
-      "connectors": ["github"],
       "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the brainstorm analysis as a comment on the GitHub issue.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the full analysis as a comment on issue #{{flow.ISSUE_NUMBER}}.\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief summary of the proposed solution\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to iterate, or trigger @llmflows:feature-develop when ready to implement.\"",
       "gates": [
         {
@@ -21,7 +22,9 @@
           "message": "inbox.md must exist and not be empty."
         }
       ],
-      "step_type": "code"
+      "connectors": [
+        "github"
+      ]
     }
   ],
   "variables": {
