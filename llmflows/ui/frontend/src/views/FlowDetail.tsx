@@ -359,7 +359,7 @@ export function FlowDetailView() {
   };
 
   const rollbackToVersion = async (versionId: string, versionNum: number) => {
-    if (!flow || !confirm(`Rollback to version ${versionNum}? The current version will be saved automatically.`)) return;
+    if (!flow || !confirm(`Rollback to v${versionNum}? All versions after v${versionNum} will be removed.`)) return;
     try {
       await api.rollbackFlow(flow.id, versionId);
       load();
