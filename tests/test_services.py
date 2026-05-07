@@ -906,6 +906,8 @@ class TestGateRetryExhaustion:
 
         daemon = Daemon.__new__(Daemon)
         daemon._browser_active_runs = set()
+        daemon._cost_offsets = {}
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
@@ -988,6 +990,8 @@ class TestGateRetryExhaustion:
 
         daemon = Daemon.__new__(Daemon)
         daemon._browser_active_runs = set()
+        daemon._cost_offsets = {}
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
@@ -1035,6 +1039,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 60
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
         daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
@@ -1069,6 +1075,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 1
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
         daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
@@ -1104,6 +1112,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 0
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
 
         run_svc = RunService(test_db)

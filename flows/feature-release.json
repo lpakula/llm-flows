@@ -1,7 +1,7 @@
 {
   "name": "feature-release",
-  "version": 8,
-  "description": "Release a feature branch: select the worktree, merge the branch into main (with safety checks and testing), and remove the worktree directory.",
+  "version": 9,
+  "description": "Release a feature branch: select the worktree, merge the branch into main (with safety checks and testing), remove the worktree, and clean up the feature branch.",
   "steps": [
     {
       "name": "Select Worktree",
@@ -35,7 +35,7 @@
     {
       "name": "Remove Worktree",
       "position": 2,
-      "content": "# REMOVE WORKTREE\n\n## PURPOSE\n\nRemove the feature worktree directory and prune the worktree reference from git.\n\n## WORKFLOW\n\n### 1. Read the worktree path\n\nRead the absolute worktree path from the previous step's artifact: `{{run.dir}}/01-merge-to-main/worktree-path.txt`.\n\n### 2. Remove the worktree\n\nFrom the main repository root:\n\n```bash\nWORKTREE_PATH=$(cat {{run.dir}}/01-merge-to-main/worktree-path.txt)\ngit worktree remove \"$WORKTREE_PATH\" --force\ngit worktree prune\n```\n\nIf the directory still exists after `git worktree remove` (e.g. untracked files remain), remove it manually:\n\n```bash\nrm -rf \"$WORKTREE_PATH\"\n```\n\n### 3. Confirm removal\n\nRun `git worktree list` and confirm the removed worktree is no longer listed.\n\n### 4. Append to inbox notification\n\nAppend to `{{run.dir}}/inbox.md`:\n- Confirmation that the worktree has been removed\n\n### 5. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Worktree path that was removed\n- Confirmation message\n- Output of `git worktree list` after removal\n\n## FORBIDDEN\n\n- Do not remove the main worktree.\n- Do not delete anything outside the worktree path.",
+      "content": "# REMOVE WORKTREE AND BRANCH\n\n## PURPOSE\n\nRemove the feature worktree directory and delete the merged feature branch (local and remote).\n\n## WORKFLOW\n\n### 1. Read artifacts\n\n- Read the absolute worktree path: `{{run.dir}}/01-merge-to-main/worktree-path.txt`.\n- Read the branch name: `{{run.dir}}/01-merge-to-main/branch-name.txt`.\n\n### 2. Remove the worktree\n\nFrom the main repository root:\n\n```bash\nWORKTREE_PATH=$(cat {{run.dir}}/01-merge-to-main/worktree-path.txt)\ngit worktree remove \"$WORKTREE_PATH\" --force\ngit worktree prune\n```\n\n### 3. Cleanup local branch\n\nFrom the main repository root, delete the local feature branch:\n\n```bash\nBRANCH=$(cat {{run.dir}}/01-merge-to-main/branch-name.txt)\ngit branch -d \"$BRANCH\"\n```\n\nIf `-d` fails (e.g. branch not fully merged), do not force delete. Report the status in the summary.\n\n### 4. Cleanup remote branch\n\nIf `{{flow.delete_remote_branch}}` is `true`, delete the branch from origin:\n\n```bash\ngit push origin --delete \"$BRANCH\"\n```\n\n### 5. Confirm cleanup\n\n- Run `git worktree list` to confirm the worktree is gone.\n- Run `git branch` to check if the local branch was removed.\n\n### 6. Append to inbox notification\n\nAppend to `{{run.dir}}/inbox.md`:\n- Confirmation that the worktree has been removed.\n- Status of branch deletion (local and remote).\n\n### 7. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Worktree path removed\n- Branch name deleted\n- Output of `git worktree list` and `git branch` after cleanup.\n\n## FORBIDDEN\n\n- Do not remove the main worktree.\n- Do not delete the `main` branch.\n- Do not use `git branch -D` (force delete) unless you are absolutely sure it is safe.",
       "gates": [
         {
           "command": "WORKTREE_PATH=$(cat {{run.dir}}/01-merge-to-main/worktree-path.txt 2>/dev/null); test -n \"$WORKTREE_PATH\" && ! git worktree list | grep -q \"$WORKTREE_PATH\"",
@@ -47,5 +47,11 @@
         }
       ]
     }
-  ]
+  ],
+  "variables": {
+    "delete_remote_branch": {
+      "value": "true",
+      "is_env": false
+    }
+  }
 }

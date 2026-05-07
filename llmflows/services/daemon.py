@@ -35,10 +35,19 @@ def _register_user_responses(step_vars: dict, step_runs: list) -> None:
 
 
 def _extract_pi_cost(log_path: Path) -> tuple[float, int]:
-    """Parse a Pi NDJSON log file and return (total_cost_usd, total_tokens)."""
+    """Parse a Pi NDJSON log file and return (total_cost_usd, total_tokens).
+
+    Reads the entire file -- use only for final cost extraction on completed
+    steps where the log is bounded.  For in-progress polling, prefer
+    ``Daemon._extract_pi_cost_incremental``.
+    """
     total_cost = 0.0
     total_tokens = 0
     try:
+        size = log_path.stat().st_size
+        if size > 100 * 1024 * 1024:
+            logger.warning("Skipping full cost parse — log too large (%d bytes): %s", size, log_path)
+            return 0.0, 0
         with open(log_path, "r") as f:
             for line in f:
                 line = line.strip()
@@ -84,6 +93,8 @@ class Daemon:
         self.config = load_system_config()
         self.poll_interval = self.config["daemon"]["poll_interval_seconds"]
         self.run_timeout_minutes = self.config["daemon"]["run_timeout_minutes"]
+        self.max_log_size_bytes = self.config["daemon"].get("max_log_size_mb", 500) * 1024 * 1024
+        self._cost_offsets: dict[str, tuple[int, float, int]] = {}
         self._browser_active_runs: set[str] = set()
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
@@ -128,6 +139,41 @@ class Daemon:
             logger.debug("Killed idle CDP browser (pids: %s)", out.replace("\n", ", "))
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
+
+    def _extract_pi_cost_incremental(self, log_path_str: str) -> tuple[float, int]:
+        """Incrementally parse new bytes from a Pi NDJSON log for cost data.
+
+        Tracks (offset, accumulated_cost, accumulated_tokens) per log path
+        so each poll only reads newly appended lines.
+        """
+        offset, total_cost, total_tokens = self._cost_offsets.get(log_path_str, (0, 0.0, 0))
+        try:
+            log_path = Path(log_path_str)
+            size = log_path.stat().st_size
+            if size <= offset:
+                return round(total_cost, 6), total_tokens
+            with open(log_path, "r") as f:
+                f.seek(offset)
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if ev.get("type") != "message_end":
+                        continue
+                    msg = ev.get("message", {})
+                    usage = msg.get("usage", {})
+                    cost = usage.get("cost", {})
+                    total_cost += cost.get("total", 0) or 0
+                    total_tokens += usage.get("totalTokens", 0) or 0
+                new_offset = f.tell()
+            self._cost_offsets[log_path_str] = (new_offset, total_cost, total_tokens)
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+        return round(total_cost, 6), total_tokens
 
     def _check_max_spend(
         self, run, space, step_run,
@@ -198,6 +244,14 @@ class Daemon:
                 result.append(SlackChannel(config=slack_config, session_factory=get_session))
             except Exception:
                 logger.exception("Failed to create Slack channel")
+
+        gh_config = channels_config.get("github", {})
+        if gh_config.get("enabled") and gh_config.get("token"):
+            try:
+                from .gateway.github import GitHubChannel
+                result.append(GitHubChannel(config=gh_config, session_factory=get_session))
+            except Exception:
+                logger.exception("Failed to create GitHub channel")
 
         return result
 
@@ -530,7 +584,7 @@ class Daemon:
 
         if agent_running:
             if step_run.agent == "pi" and step_run.log_path:
-                c, t = _extract_pi_cost(Path(step_run.log_path))
+                c, t = self._extract_pi_cost_incremental(step_run.log_path)
                 if c or t:
                     step_run.cost_usd = c or None
                     step_run.token_count = t or None
@@ -538,6 +592,41 @@ class Daemon:
 
             if self._check_max_spend(run, space, step_run, working_path, run_svc, flow_svc):
                 return
+
+            if self.max_log_size_bytes and step_run.log_path and step_run.step_name != "__post_run__":
+                try:
+                    log_size = Path(step_run.log_path).stat().st_size
+                    if log_size > self.max_log_size_bytes:
+                        size_mb = log_size / (1024 * 1024)
+                        limit_mb = self.max_log_size_bytes / (1024 * 1024)
+                        logger.warning(
+                            "Run %s step '%s' log exceeded size limit (%.0fMB > %.0fMB) — killing agent",
+                            run.id, step_run.step_name, size_mb, limit_mb,
+                        )
+                        AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+                        run_svc.mark_step_completed(step_run.id, outcome="log_overflow")
+                        self._finalize_run(run.id)
+                        run_svc.mark_completed(run.id, outcome="log_overflow")
+                        self._launch_post_run_step(
+                            run, working_path,
+                            step_run.step_position + 1, run_svc, flow_svc,
+                            error_context={
+                                "outcome": "log_overflow",
+                                "failed_step": step_run.step_name,
+                                "error_details": f"Agent log exceeded size limit ({size_mb:.0f}MB > {limit_mb:.0f}MB).",
+                                "log_tail": _read_log_tail(step_run.log_path or ""),
+                            },
+                        )
+                        self.notifications.notify("run.log_overflow", {
+                            "flow_name": run.flow_name or run.id,
+                            "run_id": run.id,
+                            "space_name": space.name,
+                            "log_size_mb": int(size_mb),
+                            "limit_mb": int(limit_mb),
+                        })
+                        return
+                except OSError:
+                    pass
 
             if self.run_timeout_minutes and step_run.started_at and step_run.step_name != "__post_run__":
                 completed_time = sum(
@@ -610,11 +699,12 @@ class Daemon:
             self._publish_attachments(step_artifacts, run.id)
 
         if step_run.agent == "pi" and step_run.log_path:
-            c, t = _extract_pi_cost(Path(step_run.log_path))
+            c, t = self._extract_pi_cost_incremental(step_run.log_path)
             if c or t:
                 step_run.cost_usd = c or None
                 step_run.token_count = t or None
                 run_svc.session.commit()
+            self._cost_offsets.pop(step_run.log_path, None)
 
         if step_type == "hitl":
             from .context import HITL_FILE
@@ -669,9 +759,10 @@ class Daemon:
 
         cost_usd, token_count = None, None
         if step_run.agent == "pi" and step_run.log_path:
-            cost_usd, token_count = _extract_pi_cost(Path(step_run.log_path))
+            cost_usd, token_count = self._extract_pi_cost_incremental(step_run.log_path)
             cost_usd = cost_usd or None
             token_count = token_count or None
+            self._cost_offsets.pop(step_run.log_path, None)
         run_svc.mark_step_completed(
             step_run.id, outcome="completed",
             cost_usd=cost_usd, token_count=token_count,
@@ -1361,6 +1452,7 @@ class Daemon:
             inbox_id = inbox_item.id
         except Exception:
             logger.debug("Failed to create completed inbox item for run %s", run.id, exc_info=True)
+
         self.notifications.notify("run.completed", {
             "flow_name": run.flow_name or run.id,
             "run_id": run.id,

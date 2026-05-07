@@ -134,6 +134,10 @@ export interface GatewayConfig {
   slack_bot_token: string;
   slack_app_token: string;
   slack_allowed_channel_ids: string[];
+  github_enabled: boolean;
+  github_token: string;
+  github_poll_interval_seconds: number;
+  github_allowed_users: string[];
 }
 
 export interface ConnectorConfigField {

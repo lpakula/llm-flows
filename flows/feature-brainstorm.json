@@ -1,0 +1,34 @@
+{
+  "name": "feature-brainstorm",
+  "version": 1,
+  "description": "Brainstorm a solution: research the codebase, propose 2-3 approaches with trade-offs, and recommend the best one. When triggered from a GitHub issue, posts the analysis back as a comment.",
+  "steps": [
+    {
+      "name": "brainstorm",
+      "position": 0,
+      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase and propose implementation approaches. Do NOT implement anything.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}{% if flow.PR_NUMBER %}- **PR:** #{{flow.PR_NUMBER}} — {{flow.PR_TITLE}}\n- **PR URL:** {{flow.PR_URL}}\n{% endif %}- **Idea:** {{flow.IDEA}}{{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase to understand the relevant code paths, existing patterns, and constraints.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. Generate at least 2-3 distinct approaches to solve the task.\n5. For each approach, evaluate:\n   - **Complexity** — how much code needs to change?\n   - **Risk** — what could break? How reversible is it?\n   - **Maintainability** — is the result clean and understandable?\n6. Select the best approach and explain why.\n7. Write the full analysis to `{{step.dir}}/_result.md`.\n8. Write a concise summary to `{{run.dir}}/inbox.md` with the recommended approach and key reasoning.\n\n## FORBIDDEN\n\n- Do not create branches, worktrees, or make any code changes.\n- Do not commit or push anything.",
+      "connectors": [
+        "web_search"
+      ],
+      "step_type": "code"
+    },
+    {
+      "name": "post-to-github",
+      "position": 1,
+      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the brainstorm analysis as a comment on the GitHub issue or PR.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from the previous step's `_result.md`.\n2. Determine the issue/PR number from `{{flow.GITHUB_REF}}` (format is `issue:NUMBER` or `pr:NUMBER`).\n3. Post the full analysis as a comment using `gh`:\n   ```\n   gh issue comment NUMBER --body-file {{run.dir}}/artifacts/00-brainstorm/_result.md\n   ```\n   Or for PRs:\n   ```\n   gh pr comment NUMBER --body-file {{run.dir}}/artifacts/00-brainstorm/_result.md\n   ```\n4. Write confirmation to `{{step.dir}}/_result.md`.",
+      "ifs": [
+        {
+          "command": "[ -n \"{{flow.GITHUB_REF}}\" ]",
+          "message": "Only runs when triggered from GitHub"
+        }
+      ],
+      "step_type": "code"
+    }
+  ],
+  "variables": {
+    "IDEA": {
+      "value": "",
+      "is_env": false
+    }
+  }
+}

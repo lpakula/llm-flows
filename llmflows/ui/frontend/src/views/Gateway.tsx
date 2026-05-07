@@ -41,6 +41,16 @@ const CHANNELS: ChannelDef[] = [
       { key: "slack_allowed_channel_ids", label: "Channel IDs", type: "tags-string", placeholder: "C0123456789", description: "Allowed channel IDs (empty = all)" },
     ],
   },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Trigger flows from @llmflows:flow-name mentions on issues and PRs. Repos auto-detected from spaces.",
+    enabledKey: "github_enabled",
+    fields: [
+      { key: "github_token", label: "Personal access token", type: "secret", placeholder: "ghp_...", description: "GitHub PAT with repo access (for reading comments and posting results)" },
+      { key: "github_allowed_users", label: "Allowed users", type: "tags-string", placeholder: "username", description: "GitHub usernames allowed to trigger flows (required)" },
+    ],
+  },
 ];
 
 /* ---------- Modal shell ---------- */

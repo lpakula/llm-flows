@@ -127,6 +127,10 @@ class GatewayConfigBody(BaseModel):
     slack_bot_token: Optional[str] = None
     slack_app_token: Optional[str] = None
     slack_allowed_channel_ids: Optional[list[str]] = None
+    github_enabled: Optional[bool] = None
+    github_token: Optional[str] = None
+    github_poll_interval_seconds: Optional[int] = None
+    github_allowed_users: Optional[list[str]] = None
 
 
 class ConnectorCreateBody(BaseModel):
@@ -221,6 +225,7 @@ async def get_gateway_config():
     channels = config.get("channels", {})
     tg = channels.get("telegram", {})
     sl = channels.get("slack", {})
+    gh = channels.get("github", {})
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
@@ -229,6 +234,10 @@ async def get_gateway_config():
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
         "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "github_enabled": gh.get("enabled", False),
+        "github_token": gh.get("token", ""),
+        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
+        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
@@ -260,6 +269,18 @@ async def update_gateway_config(body: GatewayConfigBody):
     if body.slack_allowed_channel_ids is not None:
         sl["allowed_channel_ids"] = body.slack_allowed_channel_ids
 
+    if "github" not in config["channels"]:
+        config["channels"]["github"] = {}
+    gh = config["channels"]["github"]
+    if body.github_enabled is not None:
+        gh["enabled"] = body.github_enabled
+    if body.github_token is not None:
+        gh["token"] = body.github_token
+    if body.github_poll_interval_seconds is not None:
+        gh["poll_interval_seconds"] = body.github_poll_interval_seconds
+    if body.github_allowed_users is not None:
+        gh["allowed_users"] = body.github_allowed_users
+
     save_system_config(config)
     _signal_gateway_restart()
     return {
@@ -270,6 +291,10 @@ async def update_gateway_config(body: GatewayConfigBody):
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
         "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "github_enabled": gh.get("enabled", False),
+        "github_token": gh.get("token", ""),
+        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
+        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
