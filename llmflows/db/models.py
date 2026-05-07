@@ -519,6 +519,7 @@ class StepRun(Base):
     outcome: str = Column(String(50), nullable=True)
     attempt: int = Column(Integer, nullable=False, default=1)
     gate_failures: str = Column(Text, default="")
+    prev_gate_failures: str = Column(Text, default="")
     user_response: str = Column(Text, default="")
     cost_usd: float = Column(Float, nullable=True)
     token_count: int = Column(Integer, nullable=True)
@@ -560,6 +561,12 @@ class StepRun(Base):
                 gf = _json.loads(self.gate_failures)
             except (ValueError, TypeError):
                 pass
+        pgf = []
+        if self.prev_gate_failures:
+            try:
+                pgf = _json.loads(self.prev_gate_failures)
+            except (ValueError, TypeError):
+                pass
         return {
             "id": self.id,
             "run_id": self.flow_run_id,
@@ -574,6 +581,7 @@ class StepRun(Base):
             "outcome": self.outcome,
             "attempt": self.attempt or 1,
             "gate_failures": gf,
+            "prev_gate_failures": pgf,
             "user_response": self.user_response or "",
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
