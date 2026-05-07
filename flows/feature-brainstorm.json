@@ -1,32 +1,37 @@
 {
   "name": "feature-brainstorm",
-  "version": 1,
-  "description": "Brainstorm a solution: research the codebase, propose 2-3 approaches with trade-offs, and recommend the best one. When triggered from a GitHub issue, posts the analysis back as a comment.",
+  "version": 2,
+  "description": "Deep-research a feature from a GitHub issue: analyze the codebase, evaluate approaches, select the best one, and post a single recommended solution back to the issue for iteration.",
   "steps": [
     {
       "name": "brainstorm",
       "position": 0,
-      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase and propose implementation approaches. Do NOT implement anything.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}{% if flow.PR_NUMBER %}- **PR:** #{{flow.PR_NUMBER}} — {{flow.PR_TITLE}}\n- **PR URL:** {{flow.PR_URL}}\n{% endif %}- **Idea:** {{flow.IDEA}}{{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase to understand the relevant code paths, existing patterns, and constraints.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. Generate at least 2-3 distinct approaches to solve the task.\n5. For each approach, evaluate:\n   - **Complexity** — how much code needs to change?\n   - **Risk** — what could break? How reversible is it?\n   - **Maintainability** — is the result clean and understandable?\n6. Select the best approach and explain why.\n7. Write the full analysis to `{{step.dir}}/_result.md`.\n8. Write a concise summary to `{{run.dir}}/inbox.md` with the recommended approach and key reasoning.\n\n## FORBIDDEN\n\n- Do not create branches, worktrees, or make any code changes.\n- Do not commit or push anything.",
-      "connectors": [
-        "web_search"
-      ],
+      "connectors": ["github"],
+      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase deeply and propose ONE concrete implementation solution. This flow may be triggered multiple times on the same issue for iteration — each run should build on prior discussion in the issue thread.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}- **Task:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase thoroughly — trace relevant code paths, understand existing patterns, constraints, and conventions.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. {% if flow.ISSUE_NUMBER %}Use the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand prior brainstorm iterations and user feedback.{% endif %}\n5. Think through multiple possible approaches internally, evaluating:\n   - **Complexity** — how much code needs to change?\n   - **Risk** — what could break? How reversible is it?\n   - **Maintainability** — is the result clean and idiomatic?\n   - **Alignment** — does it match project conventions and architecture?\n6. **Select the single best approach.** Do not present multiple options — commit to one recommendation.\n7. Write the analysis to `{{step.dir}}/_result.md` with this structure:\n   - **Summary** — one paragraph describing the proposed solution\n   - **Why this approach** — brief justification for why this is the best path (mention what was considered and rejected)\n   - **Implementation plan** — ordered list of specific changes (files, functions, patterns)\n   - **Edge cases and risks** — what to watch out for during implementation\n   - **Open questions** — anything that needs user clarification before proceeding\n\n## FORBIDDEN\n\n- Do NOT make any code changes. No branches, no worktrees, no commits.\n- Do NOT propose multiple solutions — pick one and commit to it.\n- Do NOT repeat previous brainstorm output if iterating — build on it.",
       "step_type": "code"
     },
     {
       "name": "post-to-github",
       "position": 1,
-      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the brainstorm analysis as a comment on the GitHub issue or PR.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from the previous step's `_result.md`.\n2. Determine the issue/PR number from `{{flow.GITHUB_REF}}` (format is `issue:NUMBER` or `pr:NUMBER`).\n3. Post the full analysis as a comment using `gh`:\n   ```\n   gh issue comment NUMBER --body-file {{run.dir}}/artifacts/00-brainstorm/_result.md\n   ```\n   Or for PRs:\n   ```\n   gh pr comment NUMBER --body-file {{run.dir}}/artifacts/00-brainstorm/_result.md\n   ```\n4. Write confirmation to `{{step.dir}}/_result.md`.",
+      "connectors": ["github"],
+      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the brainstorm analysis as a comment on the GitHub issue.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the full analysis as a comment on issue #{{flow.ISSUE_NUMBER}}.\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief summary of the proposed solution\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to iterate, or trigger @llmflows:feature-develop when ready to implement.\"",
       "ifs": [
         {
-          "command": "[ -n \"{{flow.GITHUB_REF}}\" ]",
-          "message": "Only runs when triggered from GitHub"
+          "command": "[ -n \"{{flow.ISSUE_NUMBER}}\" ]",
+          "message": "Only runs when triggered from a GitHub issue"
+        }
+      ],
+      "gates": [
+        {
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md must exist and not be empty."
         }
       ],
       "step_type": "code"
     }
   ],
   "variables": {
-    "IDEA": {
+    "TASK_DESCRIPTION": {
       "value": "",
       "is_env": false
     }

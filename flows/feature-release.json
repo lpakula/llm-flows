@@ -1,56 +1,34 @@
 {
   "name": "feature-release",
-  "version": 9,
-  "description": "Release a feature branch: select the worktree, merge the branch into main (with safety checks and testing), remove the worktree, and clean up the feature branch.",
+  "version": 10,
+  "description": "Release a feature from a PR comment: merge the PR, run tests, tag a release, and clean up the worktree and branch.",
   "steps": [
     {
-      "name": "Select Worktree",
+      "name": "Merge and Release",
       "position": 0,
-      "content": "# SELECT WORKTREE\n\n## PURPOSE\n\nList all existing git worktrees and ask the user which one to release.\n\n## WORKFLOW\n\n1. Run `git worktree list` to get all existing worktrees.\n2. Write to `{{step.dir}}/hitl.md`:\n   - List the existing worktrees (path and branch for each), excluding the main worktree.\n   - Ask the user to type the name of the worktree (short name, e.g. `feat-my-feature`) that is ready to be merged and released.\n3. Write to `{{step.dir}}/_result.md`: the full output of `git worktree list` for subsequent steps.",
-      "step_type": "hitl"
-    },
-    {
-      "name": "Merge to Main",
-      "position": 1,
-      "content": "# MERGE TO MAIN\n\n## PURPOSE\n\nMerge the feature branch into `main`, run tests, and push.\n\n## WORKFLOW\n\n### 1. Check Main Repository\n\nIn the main repository root, ensure the working directory is clean (`git status --short` should be empty). If not, abort and ask the user to commit or stash changes in the main repo first.\n\n### 2. Resolve the worktree\n\nThe user's chosen worktree name is `{{hitl.response.0}}`.\n\n- If `{{hitl.response.0}}` is an absolute path, use it as-is.\n- If it is a short name (no slashes), resolve it to `.worktrees/{{hitl.response.0}}`.\n\nSave the absolute path to `{{step.dir}}/worktree-path.txt` (one line, no trailing newline).\n\n### 3. Determine the branch name\n\nInside the worktree directory, run:\n\n```bash\nBRANCH=$(git branch --show-current)\n```\n\nSave the branch name to `{{step.dir}}/branch-name.txt`.\n\n### 4. Ensure the branch is up to date\n\nInside the worktree, confirm there are no uncommitted changes:\n\n```bash\ngit status --short\n```\n\nIf there are uncommitted changes, abort and explain what was found.\n\n### 5. Safety Sync & Test\n\nInside the worktree, merge `main` into the feature branch to ensure stability before integrating:\n\n1. Fetch and merge `main`: `git fetch origin main && git merge origin/main`.\n   - If the merge fails due to conflicts, abort the flow and inform the user so they can resolve them manually in the worktree.\n2. Run the tests inside the worktree: `./scripts/test.sh`.\n   - Save the full test output to `{{step.dir}}/test-output.txt`.\n\nIf tests fail, abort the flow and explain what failed so the user can fix it manually in the worktree.\n\n### 6. Merge into main\n\nFrom the **main** repository root (not the worktree):\n\n1. `git checkout main` and `git pull origin main`.\n2. Merge the feature: `git merge --no-ff \"$BRANCH\" -m \"feat: merge $BRANCH into main\"`.\n\n### 7. Push and Tag\n\nIf tests pass:\n\n1. `git push origin main`.\n2. If this is a official release, follow the `release` skill to bump version and tag. Otherwise, just push the merge.\n\n### 8. Write summary and notification\n\nWrite to `{{step.dir}}/_result.md`:\n- Branch name that was merged\n- Merge commit hash (`git log -1 --format=%H`)\n- Test execution status (see `test-output.txt` for details)\n- Confirmation of push to origin\n\nWrite to `{{run.dir}}/inbox.md`:\n- Branch name that was merged\n- Test execution status\n- The new version tag (if an official release was made)\n\n## FORBIDDEN\n\n- Do not delete the worktree in this step.\n- Do not force-push.",
+      "connectors": ["github"],
+      "content": "# MERGE AND RELEASE\n\n## PURPOSE\n\nMerge the PR into main, run tests, and create a release.\n\n## CONTEXT\n\n- **PR:** #{{flow.PR_NUMBER}} — {{flow.PR_TITLE}}\n- **PR URL:** {{flow.PR_URL}}\n- **Branch:** {{flow.PR_BRANCH}}\n{% if flow.TASK_DESCRIPTION %}- **Context:** {{flow.TASK_DESCRIPTION}}{% endif %}\n\n## WORKFLOW\n\n### 1. Validate PR state\n\nUse the GitHub connector to check PR #{{flow.PR_NUMBER}} is open and mergeable.\n\nIf the PR is not mergeable (conflicts, failing checks), abort and use the GitHub connector to post a comment explaining why.\n\n### 2. Check out main and ensure it's clean\n\nIn the main repository root:\n```bash\ngit checkout main\ngit pull origin main\ngit status --short\n```\n\nIf the working directory is not clean, abort.\n\n### 3. Merge the PR\n\nUse the GitHub connector to merge PR #{{flow.PR_NUMBER}} (merge commit, delete branch).\n\nPull the merged main:\n```bash\ngit pull origin main\n```\n\n### 4. Run tests\n\nRun the full test suite to verify the merge is stable:\n```bash\n./scripts/test.sh\n```\n\nSave test output to `{{step.dir}}/test-output.txt`.\n\nIf tests fail, abort and post a comment on the PR with the failure details.\n\n### 5. Release\n\nFollow the `release` skill to bump the version, tag, and push.\n\n### 6. Clean up worktree\n\nIf a worktree exists for this branch, remove it:\n```bash\nBRANCH=\"{{flow.PR_BRANCH}}\"\nWORKTREE_PATH=\".worktrees/$BRANCH\"\nif [ -d \"$WORKTREE_PATH\" ]; then\n  git worktree remove \"$WORKTREE_PATH\" --force\n  git worktree prune\nfi\n```\n\nClean up the local branch if it still exists:\n```bash\ngit branch -d \"$BRANCH\" 2>/dev/null || true\n```\n\n### 7. Write summary and notification\n\nWrite to `{{step.dir}}/_result.md`:\n- PR that was merged\n- Merge commit hash\n- Test execution status\n- New version tag\n- Worktree cleanup status\n\nWrite to `{{run.dir}}/inbox.md`:\n- PR merged: #{{flow.PR_NUMBER}} — {{flow.PR_TITLE}}\n- New version tag\n- Test status\n- Confirmation of cleanup\n\n## FORBIDDEN\n\n- Do not force-push.\n- Do not delete the `main` branch.\n- Do not skip tests.",
       "gates": [
         {
-          "command": "test -f {{step.dir}}/worktree-path.txt",
-          "message": "worktree-path.txt must exist with the absolute path to the worktree."
-        },
-        {
-          "command": "test -f {{step.dir}}/branch-name.txt",
-          "message": "branch-name.txt must exist with the feature branch name."
-        },
-        {
           "command": "[ \"$(git rev-parse main)\" = \"$(git rev-parse origin/main)\" ]",
-          "message": "The local `main` branch must match `origin/main` (i.e. the merge must have been pushed)."
+          "message": "Local main must match origin/main after merge and push."
+        },
+        {
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md must exist and not be empty."
         }
       ],
       "skills": [
         "release",
         "testing"
-      ]
-    },
-    {
-      "name": "Remove Worktree",
-      "position": 2,
-      "content": "# REMOVE WORKTREE AND BRANCH\n\n## PURPOSE\n\nRemove the feature worktree directory and delete the merged feature branch (local and remote).\n\n## WORKFLOW\n\n### 1. Read artifacts\n\n- Read the absolute worktree path: `{{run.dir}}/01-merge-to-main/worktree-path.txt`.\n- Read the branch name: `{{run.dir}}/01-merge-to-main/branch-name.txt`.\n\n### 2. Remove the worktree\n\nFrom the main repository root:\n\n```bash\nWORKTREE_PATH=$(cat {{run.dir}}/01-merge-to-main/worktree-path.txt)\ngit worktree remove \"$WORKTREE_PATH\" --force\ngit worktree prune\n```\n\n### 3. Cleanup local branch\n\nFrom the main repository root, delete the local feature branch:\n\n```bash\nBRANCH=$(cat {{run.dir}}/01-merge-to-main/branch-name.txt)\ngit branch -d \"$BRANCH\"\n```\n\nIf `-d` fails (e.g. branch not fully merged), do not force delete. Report the status in the summary.\n\n### 4. Cleanup remote branch\n\nIf `{{flow.delete_remote_branch}}` is `true`, delete the branch from origin:\n\n```bash\ngit push origin --delete \"$BRANCH\"\n```\n\n### 5. Confirm cleanup\n\n- Run `git worktree list` to confirm the worktree is gone.\n- Run `git branch` to check if the local branch was removed.\n\n### 6. Append to inbox notification\n\nAppend to `{{run.dir}}/inbox.md`:\n- Confirmation that the worktree has been removed.\n- Status of branch deletion (local and remote).\n\n### 7. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Worktree path removed\n- Branch name deleted\n- Output of `git worktree list` and `git branch` after cleanup.\n\n## FORBIDDEN\n\n- Do not remove the main worktree.\n- Do not delete the `main` branch.\n- Do not use `git branch -D` (force delete) unless you are absolutely sure it is safe.",
-      "gates": [
-        {
-          "command": "WORKTREE_PATH=$(cat {{run.dir}}/01-merge-to-main/worktree-path.txt 2>/dev/null); test -n \"$WORKTREE_PATH\" && ! git worktree list | grep -q \"$WORKTREE_PATH\"",
-          "message": "The worktree must no longer appear in `git worktree list`."
-        },
-        {
-          "command": "test -f {{run.dir}}/inbox.md",
-          "message": "inbox.md must exist at the run directory root."
-        }
-      ]
+      ],
+      "step_type": "code",
+      "max_gate_retries": 2
     }
   ],
   "variables": {
-    "delete_remote_branch": {
-      "value": "true",
+    "TASK_DESCRIPTION": {
+      "value": "",
       "is_env": false
     }
   }
