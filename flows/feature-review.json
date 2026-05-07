@@ -6,7 +6,7 @@
     {
       "name": "research",
       "position": 0,
-      "content": "# RESEARCH INPUT\n\n## PURPOSE\n\nDeeply understand the provided input and evaluate whether it offers something useful for this project.\n\n## INPUT\n\n{{flow.INPUT}}\n\n## WORKFLOW\n\n1. Read `AGENTS.md` to understand the project architecture and conventions.\n2. Use `web_search` to research the provided input thoroughly — read documentation, release notes, or blog posts.\n3. Analyze the input with these questions:\n   - What does this do? What problem does it solve?\n   - Is there an overlap or synergy with what we already do?\n   - Could this replace something we currently do, improve an existing capability, or unlock a new one?\n   - What would adopting this look like in practice?\n4. Write your analysis to `{{step.dir}}/_result.md` with the following structure:\n   - **What it is** — 2-3 sentence summary\n   - **Relevance** — honest assessment\n   - **Opportunity** — concrete feature or improvement\n   - **Implementation sketch** — rough scope and architectural fit\n   - **Verdict** — pursue, park for later, or skip",
+      "content": "# RESEARCH INPUT\n\n## PURPOSE\n\nDeeply understand the provided input and evaluate whether it offers something useful for this project.\n\n## INPUT\n\n{{flow.INPUT}}\n\n## WORKFLOW\n\n1. Read `AGENTS.md` to understand the project architecture and conventions.\n2. Use `web_search` to research the provided input thoroughly \u2014 read documentation, release notes, or blog posts.\n3. Analyze the input with these questions:\n   - What does this do? What problem does it solve?\n   - Is there an overlap or synergy with what we already do?\n   - Could this replace something we currently do, improve an existing capability, or unlock a new one?\n   - What would adopting this look like in practice?\n4. Write your analysis to `{{step.dir}}/_result.md` with the following structure:\n   - **What it is** \u2014 2-3 sentence summary\n   - **Relevance** \u2014 honest assessment\n   - **Opportunity** \u2014 concrete feature or improvement\n   - **Implementation sketch** \u2014 rough scope and architectural fit\n   - **Verdict** \u2014 pursue, park for later, or skip",
       "step_type": "code"
     },
     {
@@ -19,19 +19,20 @@
       "name": "create-github-issue",
       "position": 2,
       "content": "# CREATE GITHUB ISSUE\n\n## PURPOSE\n\nCreate a GitHub issue with the feature analysis and trigger the feature-brainstorm flow via a comment.\n\n## WORKFLOW\n\n1. Read the analysis from `{{run.dir}}/artifacts/01-review/_result.md`.\n2. Read the user's response from `{{hitl.response.0}}`. If the user provided additional context or adjustments, incorporate them.\n3. Compose the issue title from the core opportunity (concise, under 80 chars).\n4. Compose the issue body with:\n   - The full analysis from the review step\n   - Any user feedback incorporated\n5. Use the GitHub connector to create an issue with the title and body.\n6. Use the GitHub connector to post a comment on the newly created issue:\n   `@llmflows:feature-brainstorm <one-line summary of the feature to brainstorm>`\n7. Write to `{{step.dir}}/_result.md`:\n   - Issue URL\n   - Issue number\n   - Confirmation that brainstorm was triggered\n8. Write to `{{run.dir}}/inbox.md`:\n   - Created issue URL\n   - Brief summary of the feature\n   - Note that feature-brainstorm has been triggered\n\n## FORBIDDEN\n\n- Do not make any code changes.\n- Do not create branches or worktrees.",
-      "ifs": [
-        {
-          "command": "echo \"{{hitl.response.0}}\" | grep -q \"^YES\""
-        }
-      ],
-      "connectors": ["github"],
       "gates": [
         {
           "command": "test -s {{run.dir}}/inbox.md",
           "message": "inbox.md must exist and not be empty."
         }
       ],
-      "step_type": "code"
+      "ifs": [
+        {
+          "command": "echo \"{{hitl.response.0}}\" | grep -q \"^YES\""
+        }
+      ],
+      "connectors": [
+        "github"
+      ]
     },
     {
       "name": "archive",
@@ -41,8 +42,7 @@
         {
           "command": "echo \"{{hitl.response.0}}\" | grep -q \"^NO\""
         }
-      ],
-      "step_type": "code"
+      ]
     }
   ],
   "variables": {
