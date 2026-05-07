@@ -548,7 +548,7 @@ class GitHubChannel:
             lines.append("")
             lines.append(inbox_message)
 
-        body = "\n".join(lines)
+        body = MENTION_RE.sub(r"llmflows:\1", "\n".join(lines))
         issue_number = ref_num
 
         _gh_api(
