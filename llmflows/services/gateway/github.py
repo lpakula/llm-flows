@@ -121,8 +121,7 @@ class GitHubChannel:
         self._thread: Optional[threading.Thread] = None
         self._repo_map: dict[str, dict] = {}  # "owner/repo" -> {"space_id": ..., "space_path": ...}
         self._last_checked: dict[str, str] = {}  # "owner/repo" -> ISO timestamp
-        self._active_refs: set[str] = set()  # GITHUB_REF values with active runs
-        self._processed_comment_ids: set[str] = set()
+        self._active_refs: set[tuple[str, str]] = set()  # (GITHUB_REF, flow_name) pairs with recent runs
         self._bot_user: Optional[str] = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -217,7 +216,7 @@ class GitHubChannel:
             for run in recent_runs:
                 rv = run.run_variables
                 if rv and rv.get("GITHUB_REF"):
-                    refs.add(rv["GITHUB_REF"])
+                    refs.add((rv["GITHUB_REF"], run.flow_name or ""))
             self._active_refs = refs
         finally:
             session.close()
@@ -232,33 +231,25 @@ class GitHubChannel:
             from datetime import timedelta
             since = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Poll issue/PR conversation comments
+        # Poll issue/PR conversation comments (newest first — only latest per issue+flow triggers)
         comments = _gh_api(
-            f"/repos/{repo}/issues/comments?since={since}&sort=created&direction=asc&per_page=100",
+            f"/repos/{repo}/issues/comments?since={since}&sort=created&direction=desc&per_page=100",
             self.token,
         )
         if comments and isinstance(comments, list):
+            triggered: set[tuple[str, str]] = set()  # (issue_url, flow_name)
             for comment in comments:
-                self._process_issue_comment(repo, space_info, comment)
+                self._process_issue_comment(repo, space_info, comment, triggered)
 
-        # Poll inline PR review comments
+        # Poll inline PR review comments (newest first)
         review_comments = _gh_api(
-            f"/repos/{repo}/pulls/comments?since={since}&sort=created&direction=asc&per_page=100",
+            f"/repos/{repo}/pulls/comments?since={since}&sort=created&direction=desc&per_page=100",
             self.token,
         )
         if review_comments and isinstance(review_comments, list):
+            triggered_review: set[tuple[str, str]] = set()
             for comment in review_comments:
-                self._process_review_comment(repo, space_info, comment)
-
-        # Poll new/updated issues (for mentions in issue body)
-        issues = _gh_api(
-            f"/repos/{repo}/issues?since={since}&state=open&sort=updated&direction=asc&per_page=100",
-            self.token,
-        )
-        if issues and isinstance(issues, list):
-            for issue in issues:
-                if "pull_request" not in issue:
-                    self._process_issue(repo, space_info, issue)
+                self._process_review_comment(repo, space_info, comment, triggered_review)
 
         self._last_checked[repo] = now
 
@@ -280,27 +271,37 @@ class GitHubChannel:
         login = comment_or_issue.get("user", {}).get("login", "")
         return login.lower() in self.allowed_users
 
-    def _dedupe_key(self, kind: str, comment_id: int) -> str:
-        return f"{kind}:{comment_id}"
+    def _process_issue_comment(self, repo: str, space_info: dict, comment: dict,
+                               triggered: set[tuple[str, str]]) -> None:
+        """Handle an issue or PR conversation comment.
 
-    def _process_issue_comment(self, repo: str, space_info: dict, comment: dict) -> None:
-        """Handle an issue or PR conversation comment."""
+        Comments are processed newest-first. ``triggered`` tracks which
+        (issue_url, flow_name) pairs already have a newer comment being
+        processed — older duplicates just get 👀 without enqueuing.
+        """
         if self._is_own_comment(comment):
             return
         if not self._is_allowed_user(comment):
-            return
-        key = self._dedupe_key("issue_comment", comment["id"])
-        if key in self._processed_comment_ids:
             return
 
         flow_name, task = parse_mention(comment.get("body", ""))
         if not flow_name:
             return
 
-        self._processed_comment_ids.add(key)
-        self._react_eyes(repo, "issue_comment", comment["id"])
+        if self._has_eyes_reaction(repo, "issue_comment", comment["id"]):
+            return
 
         issue_url = comment.get("issue_url", "")
+        trigger_key = (issue_url, flow_name)
+
+        if trigger_key in triggered:
+            self._react_eyes(repo, "issue_comment", comment["id"])
+            logger.info("Marked older comment %s with 👀 (newer comment already triggered %s)", comment["id"], flow_name)
+            return
+
+        self._react_eyes(repo, "issue_comment", comment["id"])
+        triggered.add(trigger_key)
+
         issue_data = _gh_api(issue_url.replace("https://api.github.com", ""), self.token) if issue_url else None
         if not issue_data:
             return
@@ -313,8 +314,8 @@ class GitHubChannel:
             event_type = "issue_comment"
             github_ref = f"issue:{issue_data['number']}"
 
-        if github_ref in self._active_refs:
-            logger.info("Skipping %s — active run exists for %s", key, github_ref)
+        if (github_ref, flow_name) in self._active_refs:
+            logger.info("Skipping comment %s — recent run exists for %s (%s)", comment["id"], github_ref, flow_name)
             return
 
         run_vars = self._build_base_vars(task, github_ref, event_type)
@@ -325,63 +326,47 @@ class GitHubChannel:
 
         self._enqueue(repo, space_info, flow_name, run_vars)
 
-    def _process_review_comment(self, repo: str, space_info: dict, comment: dict) -> None:
-        """Handle an inline PR review comment."""
+    def _process_review_comment(self, repo: str, space_info: dict, comment: dict,
+                                triggered: set[tuple[str, str]]) -> None:
+        """Handle an inline PR review comment.
+
+        Same newest-first dedup as ``_process_issue_comment``.
+        """
         if self._is_own_comment(comment):
             return
         if not self._is_allowed_user(comment):
-            return
-        key = self._dedupe_key("review_comment", comment["id"])
-        if key in self._processed_comment_ids:
             return
 
         flow_name, task = parse_mention(comment.get("body", ""))
         if not flow_name:
             return
 
-        self._processed_comment_ids.add(key)
-        self._react_eyes(repo, "review_comment", comment["id"])
+        if self._has_eyes_reaction(repo, "review_comment", comment["id"]):
+            return
 
         pr_url = comment.get("pull_request_url", "")
+        trigger_key = (pr_url, flow_name)
+
+        if trigger_key in triggered:
+            self._react_eyes(repo, "review_comment", comment["id"])
+            logger.info("Marked older review comment %s with 👀 (newer comment already triggered %s)", comment["id"], flow_name)
+            return
+
+        self._react_eyes(repo, "review_comment", comment["id"])
+        triggered.add(trigger_key)
+
         pr_data = _gh_api(pr_url.replace("https://api.github.com", ""), self.token) if pr_url else None
         if not pr_data:
             return
 
         github_ref = f"pr:{pr_data['number']}"
-        if github_ref in self._active_refs:
-            logger.info("Skipping review comment — active run exists for %s", github_ref)
+        if (github_ref, flow_name) in self._active_refs:
+            logger.info("Skipping review comment — recent run exists for %s (%s)", github_ref, flow_name)
             return
 
         run_vars = self._build_base_vars(task, github_ref, "pr_review")
         self._add_issue_vars(run_vars, pr_data)
         self._add_pr_context(run_vars, repo, pr_data["number"])
-        self._enqueue(repo, space_info, flow_name, run_vars)
-
-    def _process_issue(self, repo: str, space_info: dict, issue: dict) -> None:
-        """Handle a new or updated issue body containing a mention."""
-        if not self._is_allowed_user(issue):
-            return
-        key = self._dedupe_key("issue", issue["id"])
-        if key in self._processed_comment_ids:
-            return
-
-        flow_name, task = parse_mention(issue.get("body", ""))
-        if not flow_name:
-            return
-
-        self._processed_comment_ids.add(key)
-        self._react_eyes(repo, "issue", issue["number"])
-
-        github_ref = f"issue:{issue['number']}"
-        if github_ref in self._active_refs:
-            logger.info("Skipping issue #%s — active run exists", issue["number"])
-            return
-
-        if not task:
-            task = issue.get("title", "")
-
-        run_vars = self._build_base_vars(task, github_ref, "issue")
-        self._add_issue_vars(run_vars, issue)
         self._enqueue(repo, space_info, flow_name, run_vars)
 
     # ── variable builders ─────────────────────────────────────────────────
@@ -439,6 +424,26 @@ class GitHubChannel:
 
     # ── reactions ─────────────────────────────────────────────────────────
 
+    def _has_eyes_reaction(self, repo: str, kind: str, item_id: int) -> bool:
+        """Check if the bot already reacted with 👀 (meaning we already processed this)."""
+        if not self._bot_user:
+            return False
+        if kind == "issue":
+            endpoint = f"/repos/{repo}/issues/{item_id}/reactions"
+        elif kind == "issue_comment":
+            endpoint = f"/repos/{repo}/issues/comments/{item_id}/reactions"
+        elif kind == "review_comment":
+            endpoint = f"/repos/{repo}/pulls/comments/{item_id}/reactions"
+        else:
+            return False
+        reactions = _gh_api(endpoint, self.token)
+        if not reactions or not isinstance(reactions, list):
+            return False
+        return any(
+            r.get("content") == "eyes" and r.get("user", {}).get("login") == self._bot_user
+            for r in reactions
+        )
+
     def _react_eyes(self, repo: str, kind: str, item_id: int) -> None:
         """Add 👀 reaction so the author knows the mention was picked up."""
         if kind == "issue":
@@ -476,7 +481,7 @@ class GitHubChannel:
                          flow_name, run.id, run_vars.get("GITHUB_REF", "?"), repo)
 
             github_ref = run_vars.get("GITHUB_REF", "")
-            self._active_refs.add(github_ref)
+            self._active_refs.add((github_ref, flow_name))
         finally:
             session.close()
 
@@ -503,7 +508,7 @@ class GitHubChannel:
             if not github_ref:
                 return
 
-            self._active_refs.discard(github_ref)
+            self._active_refs.discard((github_ref, run.flow_name or ""))
 
             space = SpaceService(session).get(run.space_id)
             if not space:
