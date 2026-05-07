@@ -524,7 +524,6 @@ class GitHubChannel:
 
         flow_name = payload.get("flow_name", "?")
         outcome = payload.get("outcome", "completed")
-        inbox_message = payload.get("inbox_message") or payload.get("summary") or ""
 
         lines = [f"**llm-flows** `{flow_name}` — {outcome}"]
 
@@ -543,10 +542,6 @@ class GitHubChannel:
             meta.append(f"${cost:.4f}")
         if meta:
             lines[0] += f"  ({' · '.join(meta)})"
-
-        if inbox_message:
-            lines.append("")
-            lines.append(inbox_message)
 
         body = MENTION_RE.sub(r"llmflows:\1", "\n".join(lines))
         issue_number = ref_num
