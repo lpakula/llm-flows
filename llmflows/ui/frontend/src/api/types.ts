@@ -204,6 +204,7 @@ export interface StepRunDetail {
   agent: string;
   model: string;
   gate_failures?: GateFailure[];
+  prev_gate_failures?: GateFailure[];
   user_response?: string;
   user_message?: string;
   step_result?: string;

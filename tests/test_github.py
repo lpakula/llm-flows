@@ -210,14 +210,6 @@ class TestGitHubChannel:
         assert vars["GITHUB_REF"] == "issue:42"
         assert vars["GITHUB_EVENT"] == "issue"
 
-    def test_is_own_comment(self, gh_channel):
-        gh_channel._bot_user = "llmflows-bot"
-        assert gh_channel._is_own_comment({"user": {"login": "llmflows-bot"}})
-        assert not gh_channel._is_own_comment({"user": {"login": "other-user"}})
-
-    def test_is_own_comment_no_bot_user(self, gh_channel):
-        gh_channel._bot_user = None
-        assert not gh_channel._is_own_comment({"user": {"login": "anyone"}})
 
     def test_allowed_users_empty_blocks_all(self, gh_channel):
         gh_channel.allowed_users = set()

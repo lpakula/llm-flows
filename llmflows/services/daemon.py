@@ -1127,7 +1127,7 @@ class Daemon:
         step_run.attempt = attempt
         if gate_failures:
             import json as _json
-            step_run.gate_failures = _json.dumps(gate_failures)
+            step_run.prev_gate_failures = _json.dumps(gate_failures)
         run_svc.session.commit()
 
         run_svc.update_run_step(run.id, step_name, flow_name)
