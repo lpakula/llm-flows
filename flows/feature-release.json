@@ -1,6 +1,6 @@
 {
   "name": "feature-release",
-  "version": 11,
+  "version": 12,
   "description": "Release a feature from a PR comment: merge the PR, run tests, tag a release, and clean up the worktree and branch.",
   "steps": [
     {
