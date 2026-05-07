@@ -196,12 +196,11 @@ class GitHubChannel:
                 logger.exception("Error polling repo %s", repo)
 
     def _refresh_active_refs(self) -> None:
-        """Update the set of GITHUB_REF values that have active (non-completed) runs."""
+        """Update the set of GITHUB_REF values that have active or queued (non-completed) runs."""
         session = self.session_factory()
         try:
             active_runs = (
                 session.query(FlowRun)
-                .filter(FlowRun.started_at.isnot(None))
                 .filter(FlowRun.completed_at.is_(None))
                 .all()
             )
