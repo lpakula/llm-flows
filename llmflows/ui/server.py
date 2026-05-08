@@ -29,10 +29,12 @@ from ..services.chat import (
     get_skill_paths as _get_skill_paths,
     resolve_chat_model as _resolve_chat_model,
 )
+from ..services.audit import FlowAuditService, SecurityAuditService
 from ..services.flow import FlowService
 from ..services.space import SpaceService
 from ..services.run import RunService
 from ..services.skill import SkillService
+from ..services.skillssh import SkillsShService, parse_skill_ref
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -152,6 +154,7 @@ class ConnectorUpdateBody(BaseModel):
 
 class SpaceSettingsUpdate(BaseModel):
     max_concurrent_tasks: Optional[int] = None
+    audit_flows_on_import: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -937,6 +940,7 @@ async def get_space_settings(space_id: str):
             raise HTTPException(status_code=404, detail="Space not found")
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
+            "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
         }
     finally:
         session.close()
@@ -953,12 +957,15 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
         updates = {}
         if body.max_concurrent_tasks is not None:
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
+        if body.audit_flows_on_import is not None:
+            updates["audit_flows_on_import"] = body.audit_flows_on_import
         if updates:
             space_svc.update(space_id, **updates)
             session.refresh(space)
 
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
+            "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
         }
     finally:
         session.close()
@@ -1045,6 +1052,18 @@ async def schedule_flow_run(space_id: str, body: ScheduleBody):
         if blockers:
             messages = "; ".join(w["message"] for w in blockers)
             raise HTTPException(status_code=400, detail=messages)
+
+        all_safe, unsafe_skills = SecurityAuditService.all_skills_safe(space.path)
+        if not all_safe:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsafe or unaudited skills: {', '.join(unsafe_skills)}. Audit or mark them safe before running.",
+            )
+        if not FlowAuditService.is_safe(space.path, flow.name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Flow '{flow.name}' has not passed security audit. Run an audit or mark it safe before running.",
+            )
 
         run = run_svc.enqueue(space_id, body.flow_id, run_variables=run_vars or None)
         return run.to_dict()
@@ -1952,6 +1971,13 @@ async def approve_flow_improvement(item_id: str):
         if not flow:
             raise HTTPException(status_code=500, detail="Failed to apply proposal")
 
+        FlowAuditService.clear_audit(space.path, flow.name)
+        if space.audit_flows_on_import:
+            try:
+                FlowAuditService.run_audit(space.path, flow.name, flow_json)
+            except Exception:
+                pass
+
         run_svc = RunService(session)
         run_svc.archive_inbox_item(item_id)
 
@@ -2127,6 +2153,7 @@ async def list_space_flows(space_id: str):
         for f in flows:
             s = stats_map.get(f.id, {})
             last_run = s.get("last_run_at")
+            audit = FlowAuditService.get_audit(space.path, f.name)
             result.append({
                 "id": f.id,
                 "space_id": f.space_id,
@@ -2146,6 +2173,7 @@ async def list_space_flows(space_id: str):
                 "queued_run_count": queued_map.get(f.id, 0),
                 "schedule_enabled": bool(f.schedule_enabled),
                 "starred": bool(f.starred),
+                "audit": audit.to_dict() if audit else None,
                 "created_at": f.created_at.isoformat() if f.created_at else None,
                 "updated_at": f.updated_at.isoformat() if f.updated_at else None,
             })
@@ -2204,6 +2232,18 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="No flows found in file. Expected a flow object with 'name' and 'steps', or {\"flows\": [...]}.")
         flow_svc = FlowService(session)
         count = flow_svc._import_flows_data(data, space_id=space_id, skip_existing=False)
+
+        for flow_data in data.get("flows", []):
+            name = flow_data.get("name", "")
+            if not name:
+                continue
+            FlowAuditService.clear_audit(space.path, name)
+            if space.audit_flows_on_import:
+                try:
+                    FlowAuditService.run_audit(space.path, name, flow_data)
+                except Exception:
+                    pass
+
         return {"imported": count}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
@@ -2223,7 +2263,81 @@ async def get_flow(flow_id: str):
             raise HTTPException(status_code=404, detail="Flow not found")
         result = flow.to_dict()
         result["warnings"] = flow_svc.validate_flow(flow_id)
+        space_svc = SpaceService(session)
+        space = space_svc.get(flow.space_id)
+        if space:
+            audit = FlowAuditService.get_audit(space.path, flow.name)
+            result["audit"] = audit.to_dict() if audit else None
         return result
+    finally:
+        session.close()
+
+
+@app.get("/api/flows/{flow_id}/audit")
+async def get_flow_audit(flow_id: str):
+    """Return the security audit result for a flow."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space_svc = SpaceService(session)
+        space = space_svc.get(flow.space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        audit = FlowAuditService.get_audit(space.path, flow.name)
+        if audit is None:
+            return {"status": None}
+        return audit.to_dict()
+    finally:
+        session.close()
+
+
+@app.post("/api/flows/{flow_id}/audit")
+async def run_flow_audit(flow_id: str):
+    """Trigger a security audit for a flow."""
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space_svc = SpaceService(session)
+        space = space_svc.get(flow.space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        result = FlowAuditService.run_audit(space.path, flow.name, flow.to_dict())
+        return result.to_dict()
+    finally:
+        session.close()
+
+
+class AuditExemptBody(BaseModel):
+    explanation: str
+
+
+@app.post("/api/flows/{flow_id}/audit/exempt")
+async def exempt_flow_audit(flow_id: str, body: AuditExemptBody):
+    """Save an exemption explanation to flow memory and re-run audit with that context."""
+    from ..services.context import ContextService
+
+    session, _ = _get_services()
+    try:
+        flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        space_svc = SpaceService(session)
+        space = space_svc.get(flow.space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+
+        flow_dir = ContextService.get_flow_dir(Path(space.path), flow.name)
+        ContextService.write_memory_file(flow_dir, "audit.md", body.explanation)
+
+        result = FlowAuditService.run_audit(space.path, flow.name, flow.to_dict())
+        return result.to_dict()
     finally:
         session.close()
 
@@ -2555,14 +2669,13 @@ async def reorder_flow_steps(flow_id: str, body: ReorderSteps):
 
 @app.get("/api/spaces/{space_id}/skills")
 async def list_space_skills(space_id: str):
-    """Return discovered skills for a space."""
+    """Return discovered skills for a space, with source metadata."""
     session, space_svc = _get_services()
     try:
         space = space_svc.get(space_id)
         if not space:
             raise HTTPException(status_code=404, detail="Space not found")
-        skills = SkillService.discover(space.path)
-        return [{"name": s.name, "path": s.path, "description": s.description, "compatibility": s.compatibility} for s in skills]
+        return SkillsShService.list_with_sources(space.path)
     finally:
         session.close()
 
@@ -2581,6 +2694,88 @@ async def get_skill_content(space_id: str, skill_name: str):
         return {"content": content}
     finally:
         session.close()
+
+
+class SkillInstallBody(BaseModel):
+    source: str
+
+
+@app.post("/api/spaces/{space_id}/skills/install")
+async def install_skill(space_id: str, body: SkillInstallBody):
+    """Install a skill from skills.sh (owner/repo@skill format)."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        result = SkillsShService.install_from_ref(space.path, body.source)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error)
+        return {"ok": True, "skill_name": result.skill_name, "path": result.path}
+    finally:
+        session.close()
+
+
+@app.delete("/api/spaces/{space_id}/skills/{skill_name}")
+async def remove_skill(space_id: str, skill_name: str):
+    """Remove an installed skill."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        if not SkillsShService.remove(space.path, skill_name):
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+@app.get("/api/spaces/{space_id}/skills/{skill_name}/audit")
+async def get_skill_audit(space_id: str, skill_name: str):
+    """Return the security audit result for a skill."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        audit = SecurityAuditService.get_audit(space.path, skill_name)
+        if audit is None:
+            return {"status": None}
+        return audit.to_dict()
+    finally:
+        session.close()
+
+
+@app.post("/api/spaces/{space_id}/skills/{skill_name}/audit")
+async def run_skill_audit(space_id: str, skill_name: str):
+    """Trigger a security audit for a skill."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+        content = SkillService.get_content(space.path, skill_name)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        result = SecurityAuditService.run_audit(space.path, skill_name)
+        return result.to_dict()
+    finally:
+        session.close()
+
+
+@app.get("/api/skills/search")
+async def search_skills(q: str = "", limit: int = 20):
+    """Search skills.sh / GitHub for skills."""
+    if not q.strip():
+        return []
+    results = SkillsShService.search_github(q, limit=limit)
+    return [
+        {"name": s.name, "owner": s.owner, "repo": s.repo,
+         "description": s.description, "slug": s.slug,
+         "github_url": s.github_url, "install_count": s.install_count}
+        for s in results
+    ]
 
 
 @app.get("/api/agents")

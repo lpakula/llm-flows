@@ -9,9 +9,11 @@ import { MarkdownContent } from "@/components/MarkdownContent";
 import { AttachmentsGrid } from "@/components/AttachmentsGrid";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { StepModal } from "@/components/StepModal";
+import { AuditBadge } from "@/components/AuditBadge";
+import { AuditPanel } from "@/components/AuditPanel";
 import type {
   Flow, FlowStep, FlowRun, FlowWarning, Gate, AgentAlias, SkillInfo,
-  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion,
+  ConnectorConfig, StepRunInfo, GateFailure, FlowVersion, AuditResult,
 } from "@/api/types";
 import {
   statusBadge, displayStatus, formatSeconds, formatCost,
@@ -60,6 +62,7 @@ export function FlowDetailView() {
   const [aliases, setAliases] = useState<AgentAlias[]>([]);
   const [spaceSkills, setSpaceSkills] = useState<SkillInfo[]>([]);
   const [mcpConnectors, setMcpConnectors] = useState<ConnectorConfig[]>([]);
+  const [audit, setAudit] = useState<AuditResult | null>(null);
 
   // Inline editing
   const [editingName, setEditingName] = useState(false);
@@ -131,6 +134,7 @@ export function FlowDetailView() {
       api.getConnectors(),
     ]);
     setFlow(f);
+    setAudit(f.audit ?? null);
     setSelectedSpaceId(f.space_id);
     setNameValue(f.name);
     setDescValue(f.description || "");
@@ -464,13 +468,16 @@ export function FlowDetailView() {
                 className="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
             </div>
           ) : (
-            <h2
-              className="text-xl font-semibold text-white cursor-pointer hover:text-blue-300 transition"
-              onClick={() => setEditingName(true)}
-              title="Click to edit"
-            >
-              {flow.name}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2
+                className="text-xl font-semibold text-white cursor-pointer hover:text-blue-300 transition"
+                onClick={() => setEditingName(true)}
+                title="Click to edit"
+              >
+                {flow.name}
+              </h2>
+              <AuditBadge audit={audit} size="md" hideIfSafe={false} hideIfUnsafe />
+            </div>
           )}
           {editingDesc ? (
             <div className="flex items-center gap-2 mt-1">
@@ -512,6 +519,14 @@ export function FlowDetailView() {
           </ul>
         </div>
       )}
+
+      {/* Flow audit */}
+      <AuditPanel
+        audit={audit}
+        onRunAudit={() => api.runFlowAudit(flow.id)}
+        onExempt={(explanation) => api.exemptFlowAudit(flow.id, explanation)}
+        onAuditComplete={(result) => setAudit(result)}
+      />
 
       {/* Settings: two-column layout */}
       <div className="grid grid-cols-2 gap-6 mb-6">

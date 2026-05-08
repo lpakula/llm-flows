@@ -339,7 +339,7 @@ class Daemon:
         self, flow_svc: FlowService, run_svc: RunService, session,
     ) -> None:
         """Enqueue runs for flows whose schedule_next_at has passed."""
-        from ..db.models import Flow as FlowModel
+        from ..db.models import Flow as FlowModel, Space
         now = datetime.now(timezone.utc)
         due_flows = (
             session.query(FlowModel)
@@ -355,6 +355,16 @@ class Daemon:
             try:
                 warnings = flow_svc.validate_flow(flow.id, space_id=flow.space_id)
                 blockers = [w for w in warnings if w["warning_type"] in ("missing_alias", "missing_variable")]
+
+                from .audit import SecurityAuditService, FlowAuditService
+                space = session.query(Space).filter_by(id=flow.space_id).first() if flow.space_id else None
+                if space:
+                    all_safe, unsafe_skills = SecurityAuditService.all_skills_safe(space.path)
+                    if not all_safe:
+                        blockers.append({"message": f"Unsafe/unaudited skills: {', '.join(unsafe_skills)}"})
+                    if not FlowAuditService.is_safe(space.path, flow.name):
+                        blockers.append({"message": f"Flow '{flow.name}' has not passed security audit"})
+
                 if blockers:
                     logger.warning(
                         "Skipping scheduled run for flow %s (%s): %s",
@@ -1316,6 +1326,9 @@ class Daemon:
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         rejected_proposals = ContextService.read_rejected_proposals(flow_dir)
 
+        from .audit import FlowAuditService
+        audit = FlowAuditService.get_audit(space.path, run.flow_name or "")
+
         post_run_vars = {
             "run": {"id": run.id, "dir": str(artifacts_dir)},
             "flow_name": run.flow_name or "",
@@ -1323,6 +1336,9 @@ class Daemon:
             "outcome": run.outcome or "completed",
             "language": language,
             "rejected_proposals": rejected_proposals,
+            "audit_status": audit.status if audit else None,
+            "audit_summary": audit.summary if audit else None,
+            "audit_findings": audit.findings if audit else None,
         }
         if error_context:
             post_run_vars.update(error_context)

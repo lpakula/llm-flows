@@ -7,6 +7,7 @@ export interface Space {
 
 export interface SpaceSettings {
   max_concurrent_tasks: number;
+  audit_flows_on_import: boolean;
 }
 
 export type StepType = "agent" | "code" | "hitl";
@@ -81,6 +82,7 @@ export interface Flow {
   last_run_at?: string | null;
   active_run_count?: number;
   queued_run_count?: number;
+  audit?: AuditResult | null;
   created_at: string;
   updated_at: string;
 }
@@ -298,11 +300,36 @@ export interface AgentConfigEntry {
   value: string;
 }
 
+export interface AuditResult {
+  status: "safe" | "unsafe" | "pending" | "error" | null;
+  summary: string;
+  findings: string[];
+  audited_at: string;
+}
+
 export interface SkillInfo {
   name: string;
   path: string;
   description: string;
   compatibility: string;
+  source?: {
+    registry: string;
+    owner: string;
+    repo: string;
+    skill: string;
+    slug: string;
+  } | null;
+  audit?: AuditResult | null;
+}
+
+export interface RegistrySkill {
+  name: string;
+  owner: string;
+  repo: string;
+  description: string;
+  slug: string;
+  github_url: string;
+  install_count: number;
 }
 
 export interface LogEntry {

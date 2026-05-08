@@ -1,5 +1,6 @@
 """Tests for the FastAPI REST API."""
 
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -9,13 +10,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from llmflows.db.models import AgentAlias, Base, Flow, FlowStep, Space
+from llmflows.services.audit import AuditResult, FlowAuditService
 from llmflows.services.flow import FlowService
 from llmflows.services.space import SpaceService
 from llmflows.ui.server import app
 
 
 @pytest.fixture
-def api_db():
+def api_db(tmp_path):
     """Set up a shared in-memory DB and patch the server to use it."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -25,8 +27,11 @@ def api_db():
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
 
+    space_path = str(tmp_path / "test-space")
+    (tmp_path / "test-space").mkdir()
+
     setup_session = Session()
-    space = Space(name="test-space", path="/tmp/test-space")
+    space = Space(name="test-space", path=space_path)
     setup_session.add(space)
     setup_session.flush()
 
@@ -38,6 +43,8 @@ def api_db():
     alias = AgentAlias(name="normal", type="pi", agent="cursor", model="default")
     setup_session.add(alias)
     setup_session.commit()
+
+    FlowAuditService.save_audit(space_path, "default", AuditResult(status="safe", summary="Test fixture"))
 
     space_id = space.id
     flow_id = flow.id

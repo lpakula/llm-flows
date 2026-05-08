@@ -63,6 +63,23 @@ Read each skill file and follow its instructions before starting the step.
 - **{{ skill.name }}** — {{ skill.description or "No description" }} → `{{ skill.path }}`
 {%- endfor %}
 {%- endif %}
+{%- if audit_status %}
+
+---
+
+## Security Audit — {{ audit_status | upper }}
+{% if audit_summary -%}
+{{ audit_summary }}
+{% endif -%}
+{% if audit_findings -%}
+**Findings:**
+{% for f in audit_findings -%}
+- {{ f }}
+{% endfor -%}
+{% endif -%}
+
+**Do not** introduce patterns that would trigger security audit failures: destructive commands without safeguards, credential exfiltration, obfuscated code, or unauthorized network access.
+{%- endif %}
 
 ---
 

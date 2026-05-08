@@ -110,6 +110,18 @@ To review a flow:
 agent alias optimization, or structural changes
 4. **Always present proposed changes and wait for user confirmation before implementing them**
 
+### Security audit
+
+Flows and skills go through a security audit (pattern scan + LLM analysis). \
+The audit status is shown in the flow context below when available.
+
+If the user asks about security findings:
+- Explain what was flagged and why it could be dangerous
+- Suggest concrete fixes to make the flow pass the audit
+- When proposing flow changes, avoid patterns that trigger audit failures: \
+destructive commands without safeguards, credential exfiltration, obfuscated code, \
+or unauthorized network access
+
 ### How to inspect runs and diagnose failures
 
 Use these CLI commands to investigate:
@@ -216,9 +228,10 @@ def resolve_chat_env() -> dict[str, str]:
 
 def build_flow_context(flow_name: str, space_id: str) -> str:
     """Build rich flow context for the chat system prompt."""
+    from .audit import FlowAuditService
     from .flow import FlowService
     from ..db.database import get_session as _gs
-    from ..db.models import FlowRun
+    from ..db.models import FlowRun, Space as _SpaceModel
 
     db = _gs()
     try:
@@ -241,6 +254,23 @@ def build_flow_context(flow_name: str, space_id: str) -> str:
                 prefix = f"**{w['step_name']}**: " if w.get("step_name") else ""
                 parts.append(f"- {prefix}{w['message']}")
             parts.append("")
+
+        _space = db.query(_SpaceModel).filter_by(id=space_id).first()
+        if _space:
+            audit = FlowAuditService.get_audit(_space.path, flow_name)
+            if audit and audit.status in ("unsafe", "error"):
+                parts.append(f"### Security audit — {audit.status.upper()}\n")
+                if audit.summary:
+                    parts.append(f"{audit.summary}\n")
+                if audit.findings:
+                    parts.append("Findings:")
+                    for f in audit.findings:
+                        parts.append(f"- {f}")
+                parts.append("")
+            elif audit and audit.status == "safe":
+                parts.append("### Security audit\n\nPassed — no issues found.\n")
+            else:
+                parts.append("### Security audit\n\nNo audit has been run yet.\n")
 
         runs = (
             db.query(FlowRun)
