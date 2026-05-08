@@ -1,40 +1,24 @@
 {
   "name": "feature-develop",
-  "version": 3,
-  "description": "Develop a feature in a git worktree: pick or create a worktree (branch name = worktree name), implement, test, screenshot, commit, and open a PR.",
+  "version": 7,
+  "description": "Implement a feature from a GitHub issue: create a worktree, develop the solution, run tests, and open a PR linking back to the issue.",
   "steps": [
     {
-      "name": "Select Worktree",
+      "name": "Implement",
       "position": 0,
-      "content": "# SELECT WORKTREE\n\n## PURPOSE\n\nList all existing git worktrees and ask the user which one to use, or whether to create a new one.\n\n## WORKFLOW\n\n1. Run `git worktree list` to get all existing worktrees.\n2. Write to `{{step.dir}}/hitl.md`:\n   - List the existing worktrees (path and branch for each).\n   - Ask the user to either type the name of an existing worktree to continue work there, or provide a new short name (e.g. `feat-my-feature`) to create a fresh one. The name will be used as both the worktree directory name and the git branch name.\n3. Write to `{{step.dir}}/_result.md`: the full output of `git worktree list` for subsequent steps.",
-      "gates": [
-        {
-          "command": "[ -n \"{{flow.TASK_DESCRIPTION}}\" ]",
-          "message": "TASK_DESCRIPTION must not be empty. Please provide a description of the feature to develop."
-        }
-      ],
-      "step_type": "hitl"
-    },
-    {
-      "name": "Research and Implement",
-      "position": 1,
-      "content": "# RESEARCH AND IMPLEMENT\n\n## PURPOSE\n\nResearch the codebase, implement the feature `{{flow.TASK_DESCRIPTION}}`, run tests, and take a screenshot of the new feature.\n\n## WORKFLOW\n\n### 1. Set up the worktree\n\nThe user's chosen worktree name is `{{hitl.response.0}}`.\n\n- If `{{hitl.response.0}}` is an absolute path that already exists, use it as-is.\n- If it is a short name (no slashes), check `.worktrees/{{hitl.response.0}}`:\n  - If it exists, use it.\n  - If it does not exist, create it: `git worktree add .worktrees/{{hitl.response.0}} -b {{hitl.response.0}}` (use `{{flow.BASE_BRANCH}}` as base).\n\nSave the absolute path of the worktree to `{{step.dir}}/worktree-path.txt` (one line, no trailing newline).\n\n### 2. Set up an isolated Python environment\n\nAll commands from this point forward run inside the worktree directory.\n\n- Create a venv if it does not already exist: `python -m venv .venv`\n- Install the project and dev deps: `.venv/bin/pip install -e '.[dev]' -q`\n\n### 3. Research and implement\n\n- Explore the codebase to understand where changes are needed.\n- Implement the feature. All code changes must stay inside the worktree.\n- Write unit tests for the new code.\n\n### 4. Run tests\n\nFrom inside the worktree: `.venv/bin/pytest`\n\nAll tests must pass before continuing.\n\n### 5. Screenshot the new feature\n\n**Start the isolated UI** with `--no-daemon`. Prepend `.venv/bin` to `PATH`. Use a unique `LLMFLOWS_HOME` for isolation.\n\n```bash\nexport LLMFLOWS_HOME=~/.llmflows-worktree-{{hitl.response.0}}\nexport PATH=\"$(pwd)/.venv/bin:$PATH\"\nllmflows space list | grep -q \"worktree-{{hitl.response.0}}\" || llmflows register --name worktree-{{hitl.response.0}}\nllmflows ui --no-daemon > {{step.dir}}/ui.log 2>&1 &\n```\n\n**Wait for the UI to start and read the port.**\n\n```bash\nfor i in {1..15}; do\n  UI_PORT=$(sed -n 's|.*llmflows UI: http://localhost:\\([0-9]*\\).*|\\1|p' {{step.dir}}/ui.log | head -1)\n  if [ -n \"$UI_PORT\" ]; then break; fi\n  sleep 2\ndone\necho \"$UI_PORT\" > {{step.dir}}/ui-port.txt\n```\n\n**Take targeted screenshots** using Playwright. Save to `{{attachment.dir}}/feature.png`.\n\n### 6. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Approach rationale\n- List of changed files\n- Test output summary\n\n## FORBIDDEN\n\n- Do not commit or push.\n- Do not make changes outside the worktree.\n- Do not touch the production daemon.",
+      "content": "# IMPLEMENT\n\n## PURPOSE\n\nImplement the feature described in the GitHub issue. Create a worktree, develop, test, and screenshot.\n\n## CONTEXT\n\n- **Issue:** #{{flow.ISSUE_NUMBER}} \u2014 {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n- **Task:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n### 1. Gather context from the issue\n\nUse the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand the brainstorm discussion and the agreed-upon implementation plan.\n\n### 2. Create a worktree\n\nDerive a branch name from the issue (e.g., `feat/issue-{{flow.ISSUE_NUMBER}}-<slug>`).\n\n```bash\nBRANCH=\"feat/issue-{{flow.ISSUE_NUMBER}}-<slug>\"\ngit worktree add .worktrees/$BRANCH -b $BRANCH\n```\n\nSave the absolute path to `{{step.dir}}/worktree-path.txt`.\n\n### 3. Set up an isolated Python environment\n\nAll commands from this point forward run inside the worktree directory.\n\n- Create a venv if it does not already exist: `python -m venv .venv`\n- Install the project and dev deps: `.venv/bin/pip install -e '.[dev]' -q`\n\n### 4. Implement the feature\n\n- Follow the implementation plan from the issue discussion.\n- Write clean, idiomatic code following project conventions.\n- Write unit tests for the new code.\n\n### 5. Run tests\n\nFrom inside the worktree: `.venv/bin/pytest`\n\nAll tests must pass before continuing.\n\n### 6. Screenshot the new feature\n\nStart the isolated UI with `--no-daemon`. Prepend `.venv/bin` to `PATH`. Use a unique `LLMFLOWS_HOME` for isolation.\n\n```bash\nexport LLMFLOWS_HOME=~/.llmflows-worktree-issue-{{flow.ISSUE_NUMBER}}\nexport PATH=\"$(pwd)/.venv/bin:$PATH\"\nllmflows space list | grep -q \"worktree-issue-{{flow.ISSUE_NUMBER}}\" || llmflows register --name worktree-issue-{{flow.ISSUE_NUMBER}}\nllmflows ui --no-daemon > {{step.dir}}/ui.log 2>&1 &\n```\n\nWait for the UI to start and take targeted screenshots using Playwright. Save to `{{attachment.dir}}/feature.png`.\n\nStop the UI process.\n\n### 7. Write summary\n\nWrite to `{{step.dir}}/_result.md`:\n- Approach rationale\n- List of changed files\n- Test output summary\n\n## FORBIDDEN\n\n- Do not commit or push (next step handles that).\n- Do not make changes outside the worktree.\n- Do not touch the production daemon.",
       "gates": [
         {
           "command": "test -f {{step.dir}}/worktree-path.txt",
           "message": "worktree-path.txt must exist."
         },
         {
-          "command": "cd $(cat {{step.dir}}/worktree-path.txt) && git diff --quiet || true && [ -n \"$(git status --short)\" ]",
+          "command": "cd $(cat {{step.dir}}/worktree-path.txt) && [ -n \"$(git status --short)\" ]",
           "message": "You must implement some changes in the worktree."
         },
         {
           "command": "cd $(cat {{step.dir}}/worktree-path.txt) && .venv/bin/pytest",
           "message": "All tests must pass inside the worktree."
-        },
-        {
-          "command": "ls {{attachment.dir}}/*.png 2>/dev/null | grep -q .",
-          "message": "At least one screenshot (.png) is required."
         }
       ],
       "agent_alias": "max",
@@ -46,29 +30,27 @@
     },
     {
       "name": "Commit and PR",
-      "position": 2,
-      "content": "# COMMIT AND PR\n\n## PURPOSE\n\nCommit changes, push, and create/update a PR.\n\n## WORKFLOW\n\n1. Navigate to worktree: `cd $(cat {{run.dir}}/artifacts/01-research-and-implement/worktree-path.txt)`.\n2. Commit source changes only.\n3. Push branch to origin.\n4. Create PR using `gh pr create` or update existing with `gh pr comment`.\n5. Save PR URL to `{{step.dir}}/pr-url.txt`.\n6. Write `{{run.dir}}/inbox.md` for notification.\n\nInclude cleanup instructions in `inbox.md`:\n- `rm -rf <worktree-path>`\n- `llmflows space delete worktree-{{hitl.response.0}}` (with `LLMFLOWS_HOME=~/.llmflows-worktree-{{hitl.response.0}}`)\n- `rm -rf ~/.llmflows-worktree-{{hitl.response.0}}`",
+      "position": 1,
+      "content": "# COMMIT AND PR\n\n## PURPOSE\n\nCommit changes, push, and create a PR that references the original issue.\n\n## WORKFLOW\n\n1. Navigate to worktree: `cd $(cat {{run.dir}}/artifacts/00-implement/worktree-path.txt)`.\n2. Commit source changes with a meaningful message referencing the issue:\n   ```bash\n   git add -A\n   git commit -m \"feat: <description> (closes #{{flow.ISSUE_NUMBER}})\"\n   ```\n3. Push branch to origin.\n4. Use the GitHub connector to create a PR:\n   - Title should describe the feature\n   - Body should reference the issue: `Closes #{{flow.ISSUE_NUMBER}}`\n   - Include a summary of the implementation from the previous step\n5. Save PR URL to `{{step.dir}}/pr-url.txt`.\n6. Read the implementation summary from `{{run.dir}}/artifacts/00-implement/_result.md`.\n7. Read the worktree path: `WORKTREE=$(cat {{run.dir}}/artifacts/00-implement/worktree-path.txt)`.\n8. Write `{{run.dir}}/inbox.md` for notification:\n   - The implementation summary\n   - The PR URL\n   - An \"Open in Cursor\" link: `[Open in Cursor](cursor://file/$WORKTREE)`\n   - Note: \"Comment @llmflows:feature-release on the PR when ready to release.\"\n\n## FORBIDDEN\n\n- Do not force-push.\n- Do not merge the PR.",
       "gates": [
         {
           "command": "test -f {{step.dir}}/pr-url.txt && grep -q 'github.com' {{step.dir}}/pr-url.txt",
           "message": "Valid GitHub PR URL is required."
         },
         {
-          "command": "test -f {{run.dir}}/inbox.md",
-          "message": "inbox.md is required for notification."
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md is required and must not be empty."
         }
       ],
-      "step_type": "code",
-      "max_gate_retries": 3
+      "max_gate_retries": 3,
+      "connectors": [
+        "github"
+      ]
     }
   ],
   "variables": {
     "TASK_DESCRIPTION": {
       "value": "",
-      "is_env": false
-    },
-    "BASE_BRANCH": {
-      "value": "main",
       "is_env": false
     }
   }

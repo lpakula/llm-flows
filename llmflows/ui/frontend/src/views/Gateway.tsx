@@ -17,6 +17,7 @@ type ChannelDef = {
   description: string;
   enabledKey: keyof GatewayConfig;
   fields: ChannelFieldDef[];
+  help?: string[];
 };
 
 const CHANNELS: ChannelDef[] = [
@@ -39,6 +40,21 @@ const CHANNELS: ChannelDef[] = [
       { key: "slack_bot_token", label: "Bot token", type: "secret", placeholder: "xoxb-...", description: "Slack Bot User OAuth Token" },
       { key: "slack_app_token", label: "App token", type: "secret", placeholder: "xapp-...", description: "Slack App-Level Token for Socket Mode" },
       { key: "slack_allowed_channel_ids", label: "Channel IDs", type: "tags-string", placeholder: "C0123456789", description: "Allowed channel IDs (empty = all)" },
+    ],
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Trigger flows from @llmflows:flow-name mentions on issues and PRs. Repos auto-detected from spaces.",
+    enabledKey: "github_enabled",
+    fields: [
+      { key: "github_token", label: "Personal access token", type: "secret", placeholder: "ghp_... or github_pat_...", description: "Classic token with repo scope, or fine-grained with permissions below" },
+      { key: "github_allowed_users", label: "Allowed users", type: "tags-string", placeholder: "username", description: "GitHub usernames allowed to trigger flows (required)" },
+    ],
+    help: [
+      "Post `@llmflows:flow-name` as a comment on any issue or PR to trigger a flow.",
+      "**Classic token** — select the `repo` scope.",
+      "**Fine-grained token** — select repository permissions: Issues (read & write), Pull requests (read & write), Contents (read-only).",
     ],
   },
 ];
@@ -109,6 +125,14 @@ function ChannelConfigModal({
         </div>
 
         <p className="text-sm text-gray-500">{channel.description}</p>
+
+        {channel.help && channel.help.length > 0 && (
+          <ul className="text-xs text-gray-500 space-y-1 list-disc list-inside">
+            {channel.help.map((line, i) => (
+              <li key={i} dangerouslySetInnerHTML={{ __html: line.replace(/`([^`]+)`/g, '<code class="text-gray-400 bg-gray-800 px-1 rounded">$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong class="text-gray-400">$1</strong>') }} />
+            ))}
+          </ul>
+        )}
 
         {/* Enable / Disable toggle */}
         <div className="flex items-center justify-between py-2">

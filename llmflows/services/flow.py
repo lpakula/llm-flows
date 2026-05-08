@@ -649,7 +649,7 @@ class FlowService:
         return self.session.query(FlowVersion).filter_by(id=version_id).first()
 
     def rollback_to_version(self, flow_id: str, version_id: str) -> Optional[Flow]:
-        """Restore a flow to a previous version. Saves the current state first."""
+        """Restore a flow to a previous version, preserving full version history."""
         version = self.get_version(version_id)
         if not version or version.flow_id != flow_id:
             return None
@@ -657,11 +657,23 @@ class FlowService:
         if not flow:
             return None
 
-        self.save_version(flow_id, description=f"Auto-saved before rollback to v{version.version}")
-
         snapshot = version.get_snapshot()
         if not snapshot:
             return None
+
+        current_snapshot = self.build_flow_snapshot(flow.name, space_id=flow.space_id)
+        if current_snapshot:
+            pre_rollback = FlowVersion(
+                flow_id=flow_id,
+                version=flow.version or 1,
+                snapshot=json.dumps(current_snapshot),
+                description="Pre-rollback snapshot",
+            )
+            self.session.add(pre_rollback)
+
+        all_versions = self.list_versions(flow_id)
+        max_version = max((v.version for v in all_versions), default=0)
+        max_version = max(max_version, flow.version or 0)
 
         for step in list(flow.steps):
             self.session.delete(step)
@@ -674,6 +686,7 @@ class FlowService:
         snap_vars = snapshot.get("variables")
         if snap_vars:
             flow.variables = json.dumps(snap_vars)
+        flow.version = max_version + 1
         flow.updated_at = datetime.now(timezone.utc)
 
         for i, step_data in enumerate(snapshot.get("steps", [])):

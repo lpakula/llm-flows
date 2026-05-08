@@ -1,32 +1,36 @@
 {
   "name": "feature-discovery",
-  "version": 27,
-  "description": "Discover new features for llm-flows across all automation use cases.",
-  "variables": {
-    "FOCUS": {
-      "value": "",
-      "is_env": false
-    }
-  },
+  "version": 32,
+  "description": "Discover potential features: research the project and AI landscape, propose 3-5 features, and create GitHub issues for selected ones to trigger brainstorming.",
   "steps": [
     {
-      "name": "discover",
+      "name": "Research & Propose",
       "position": 0,
-      "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project and the broader AI automation landscape.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform. It is NOT limited to coding — users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow. Features should serve this broad audience.\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` in the project root to understand the current architecture, state, and capabilities of llm-flows.\n2. Check if `{{space.dir}}/memory/rejected-features.md` exists. If it does, read it to avoid proposing features that have already been rejected.\n3. Use `web_search` to research the latest advancements in AI automation platforms, workflow orchestrators (e.g., n8n, Zapier, Make, Temporal), agent frameworks, and how people are using LLMs to automate everyday tasks.\n4. {% if flow.FOCUS %}**Focus area:** {{flow.FOCUS}}\n   Prioritize features that align with this specific focus.\n   {% endif %}\n5. Select 3 to 5 new, innovative features that would genuinely improve llm-flows and are not already implemented.\n6. For each feature, write:\n   - **Title** — a clear name\n   - **Why it matters** — what problem it solves and why you believe it's worth implementing\n   - **How it would work** — a brief sketch of the implementation approach (key components, where it fits in the architecture, rough effort)\n7. Save the output to `{{step.dir}}/_result.md`.",
+      "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project, existing flows, and the broader AI automation landscape.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform. It is NOT limited to coding \u2014 users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow.\n\n## WORKFLOW\n\n1. Project Analysis:\n   - Read `README.md` and `AGENTS.md` to understand the architecture and goals.\n   - Run `llmflows flow list` to see existing capabilities and avoid proposing things that are already flows.\n   - Use the GitHub connector to list existing issues and avoid proposing features that are already being discussed or implemented.\n   - Use `git branch` and `git log -n 20 --oneline` to see active or recent development.\n2. Memory & Feedback:\n   - Check if `{{space.dir}}/memory/rejected-features.md` exists. If so, read it.\n   - Analyze the titles AND the feedback comments to understand why previous features were rejected.\n3. Market Research:\n   - Use web search and browser to research advancements in AI automation, agent frameworks, and workflow orchestration.\n4. Propose Features:\n   - Select 3 to 5 new, innovative features.\n   - For each feature, provide a **Title**, **Why it matters**, and **How it would work** (implementation sketch).\n5. Save the output to `{{step.dir}}/_result.md`.",
+      "step_type": "agent",
       "connectors": [
-        "web_search"
+        "web_search",
+        "browser",
+        "github"
       ]
     },
     {
-      "name": "review",
+      "name": "Select Features",
       "position": 1,
-      "content": "# REVIEW FEATURES\n\n## PURPOSE\n\nPresent the discovered features to the user for selection.\n\n## WORKFLOW\n\n1. Read the features from the previous step's context.\n2. Write the list to `{{step.dir}}/hitl.md`, ending with the question: \"Which feature would you like to implement? Type the number to accept it, or type 0 to reject all of them.\"\n3. Write the exact same list to `{{step.dir}}/_result.md` so the next step knows what the options were.",
+      "content": "# REVIEW FEATURES\n\n## PURPOSE\n\nPresent the discovered features to the user for selection and feedback.\n\n## WORKFLOW\n\n1. Read the features from the previous step's context.\n2. Write the list to `{{step.dir}}/hitl.md`, ending with the question: \"Which feature would you like to implement? Type the number (and optionally any feedback/refinement) to accept it, or type 0 to reject all of them (with feedback).\"\n3. Write the exact same list to `{{step.dir}}/_result.md` for parsing.",
       "step_type": "hitl"
     },
     {
-      "name": "process",
+      "name": "Create Issues",
       "position": 2,
-      "content": "# PROCESS SELECTION\n\n## PURPOSE\n\nQueue the `feature-develop` flow for the selected feature and update the rejected features memory.\n\n## WORKFLOW\n\n1. Read the user's response from `{{hitl.response.0}}`.\n2. Compare the response against the numbered list of features in `01-review/_result.md`.\n3. Identify which feature was selected (if any) and which were rejected.\n   - If the user entered a number (e.g., \"1\") or a name, that feature is selected.\n   - All other features in the list are rejected.\n   - If the user entered \"0\", all features are rejected.\n4. Update Rejected Memory:\n   - Ensure the directory `{{space.dir}}/memory` exists (`mkdir -p {{space.dir}}/memory`).\n   - Append the title and brief description of all REJECTED features to `{{space.dir}}/memory/rejected-features.md`.\n5. Schedule Development:\n   - If a feature was selected, use the shell tool to run:\n     `llmflows run schedule --flow feature-develop --var TASK=\"<title, rationale, and implementation sketch of the selected feature>\"`\n6. Write a summary of what was done (which feature was scheduled, which were rejected) to `{{step.dir}}/_result.md`."
+      "content": "# PROCESS SELECTION\n\n## PURPOSE\n\nCreate a GitHub issue for the selected feature (triggering brainstorm) and update the rejected features memory.\n\n## WORKFLOW\n\n1. Read the user's response from `{{hitl.response.0}}`.\n2. Identify Selection & Feedback:\n   - If the user entered a number (e.g., \"4\") or a feature name, that is the **Selected Feature**.\n   - Any additional text provided (e.g., \"4, but focus on X\") is **Implementation Feedback**.\n   - If the user entered \"0\", all features are rejected. Text after \"0\" is **Rejection Feedback**.\n3. Update Memory:\n   - Ensure `{{space.dir}}/memory` exists.\n   - Read existing `{{space.dir}}/memory/rejected-features.md` if it exists.\n   - Append NEW rejected features (titles/descriptions) and any Rejection Feedback to the file. Avoid duplicating features that are already in the memory.\n4. Create GitHub Issue:\n   - If a feature was selected, use the GitHub connector to create an issue with the feature title and body (description, implementation sketch, and user feedback).\n   - Use the GitHub connector to post a comment on the newly created issue:\n     `@llmflows:feature-brainstorm <Feature Title>`\n5. Write a summary to `{{step.dir}}/_result.md`:\n   - Created issue URL (if applicable)\n   - Memory updates made\n   - Rejection feedback captured (if applicable)\n6. Write to `{{run.dir}}/inbox.md`:\n   - If feature selected: issue URL and note that brainstorm was triggered\n   - If rejected: confirmation that feedback was saved to memory",
+      "connectors": [
+        "github"
+      ],
+      "step_type": "agent"
     }
-  ]
+  ],
+  "schedule_cron": "0 20 * * 1-5",
+  "schedule_timezone": "Europe/Warsaw",
+  "schedule_enabled": true
 }

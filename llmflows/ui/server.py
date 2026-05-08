@@ -129,6 +129,10 @@ class GatewayConfigBody(BaseModel):
     slack_bot_token: Optional[str] = None
     slack_app_token: Optional[str] = None
     slack_allowed_channel_ids: Optional[list[str]] = None
+    github_enabled: Optional[bool] = None
+    github_token: Optional[str] = None
+    github_poll_interval_seconds: Optional[int] = None
+    github_allowed_users: Optional[list[str]] = None
 
 
 class ConnectorCreateBody(BaseModel):
@@ -224,6 +228,7 @@ async def get_gateway_config():
     channels = config.get("channels", {})
     tg = channels.get("telegram", {})
     sl = channels.get("slack", {})
+    gh = channels.get("github", {})
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
@@ -232,6 +237,10 @@ async def get_gateway_config():
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
         "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "github_enabled": gh.get("enabled", False),
+        "github_token": gh.get("token", ""),
+        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
+        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
@@ -263,6 +272,18 @@ async def update_gateway_config(body: GatewayConfigBody):
     if body.slack_allowed_channel_ids is not None:
         sl["allowed_channel_ids"] = body.slack_allowed_channel_ids
 
+    if "github" not in config["channels"]:
+        config["channels"]["github"] = {}
+    gh = config["channels"]["github"]
+    if body.github_enabled is not None:
+        gh["enabled"] = body.github_enabled
+    if body.github_token is not None:
+        gh["token"] = body.github_token
+    if body.github_poll_interval_seconds is not None:
+        gh["poll_interval_seconds"] = body.github_poll_interval_seconds
+    if body.github_allowed_users is not None:
+        gh["allowed_users"] = body.github_allowed_users
+
     save_system_config(config)
     _signal_gateway_restart()
     return {
@@ -273,6 +294,10 @@ async def update_gateway_config(body: GatewayConfigBody):
         "slack_bot_token": sl.get("bot_token", ""),
         "slack_app_token": sl.get("app_token", ""),
         "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
+        "github_enabled": gh.get("enabled", False),
+        "github_token": gh.get("token", ""),
+        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
+        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
@@ -679,22 +704,27 @@ async def kill_all_agents():
     from ..db.models import FlowRun
 
     killed = 0
+    runs_cancelled = 0
     errors = []
     session, space_svc = _get_services()
     try:
-        spaces = space_svc.list()
-        for space in spaces:
-            llmflows_dir = Path(space.path) / ".llmflows"
-            if not llmflows_dir.is_dir():
-                continue
-            for pid_file in llmflows_dir.rglob("agent.pid"):
-                try:
-                    pid = int(pid_file.read_text().strip())
-                    os.kill(pid, sig.SIGKILL)
-                    killed += 1
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass
-                pid_file.unlink(missing_ok=True)
+        # Kill agent processes
+        try:
+            spaces = space_svc.list()
+            for space in spaces:
+                llmflows_dir = Path(space.path) / ".llmflows"
+                if not llmflows_dir.is_dir():
+                    continue
+                for pid_file in llmflows_dir.rglob("agent.pid"):
+                    try:
+                        pid = int(pid_file.read_text().strip())
+                        os.kill(pid, sig.SIGKILL)
+                        killed += 1
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
+                    pid_file.unlink(missing_ok=True)
+        except Exception as exc:
+            errors.append(f"agent kill: {exc}")
 
         # Kill CDP browser on port 9222
         try:
@@ -712,18 +742,22 @@ async def kill_all_agents():
             pass
 
         # Mark all active runs as cancelled
-        run_svc = RunService(session)
-        active_runs = (
-            session.query(FlowRun)
-            .filter(FlowRun.started_at.isnot(None))
-            .filter(FlowRun.completed_at.is_(None))
-            .all()
-        )
-        for run in active_runs:
-            active_step = run_svc.get_active_step(run.id)
-            if active_step:
-                run_svc.mark_step_completed(active_step.id, outcome="cancelled")
-            run_svc.mark_completed(run.id, outcome="cancelled")
+        try:
+            run_svc = RunService(session)
+            active_runs = (
+                session.query(FlowRun)
+                .filter(FlowRun.started_at.isnot(None))
+                .filter(FlowRun.completed_at.is_(None))
+                .all()
+            )
+            for run in active_runs:
+                active_step = run_svc.get_active_step(run.id)
+                if active_step:
+                    run_svc.mark_step_completed(active_step.id, outcome="cancelled")
+                run_svc.mark_completed(run.id, outcome="cancelled")
+            runs_cancelled = len(active_runs)
+        except Exception as exc:
+            errors.append(f"run cancel: {exc}")
 
         # Kill the daemon process itself
         from ..services.daemon import read_pid_file, remove_pid_file
@@ -735,10 +769,10 @@ async def kill_all_agents():
                 pass
             remove_pid_file()
 
-        return {"ok": True, "killed": killed, "runs_cancelled": len(active_runs)}
+        return {"ok": not errors, "killed": killed, "runs_cancelled": runs_cancelled, "errors": errors or None}
     except Exception as exc:
         errors.append(str(exc))
-        return {"ok": False, "killed": killed, "errors": errors}
+        return {"ok": False, "killed": killed, "runs_cancelled": runs_cancelled, "errors": errors}
     finally:
         session.close()
 

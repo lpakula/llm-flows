@@ -89,7 +89,7 @@ export function AuditPanel({
         </ul>
       )}
 
-      {onExempt && audit?.status && audit.status !== "safe" && (
+      {onExempt && audit?.status && (
         <div className="mt-3">
           {!showExempt ? (
             <button

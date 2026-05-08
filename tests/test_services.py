@@ -900,12 +900,14 @@ class TestGateRetryExhaustion:
 
         sr2 = run_svc.create_step_run(run.id, "build", 0, flow.name)
         sr2.attempt = 2
-        sr2.gate_failures = json.dumps([{"command": "false", "message": "Always fails", "output": ""}])
+        sr2.prev_gate_failures = json.dumps([{"command": "false", "message": "Always fails", "output": ""}])
         test_db.commit()
         run_svc.mark_step_completed(sr2.id, outcome="completed")
 
         daemon = Daemon.__new__(Daemon)
         daemon._browser_active_runs = set()
+        daemon._cost_offsets = {}
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
@@ -942,6 +944,96 @@ class TestGateRetryExhaustion:
         assert d["outcome"] == "gate_failed"
         assert len(d["gate_failures"]) == 1
         assert d["gate_failures"][0]["message"] == "Gate check failed"
+
+    def test_prev_gate_failures_to_dict(self, test_db, test_space):
+        """prev_gate_failures should be exposed in to_dict() separately from gate_failures."""
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("pgf-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+
+        sr = run_svc.create_step_run(run.id, "build", 0, flow.name)
+        sr.attempt = 2
+        sr.prev_gate_failures = json.dumps([
+            {"command": "pytest", "message": "Tests must pass", "output": "FAILED"},
+        ])
+        test_db.commit()
+        test_db.refresh(sr)
+
+        d = sr.to_dict()
+        assert d["attempt"] == 2
+        assert len(d["prev_gate_failures"]) == 1
+        assert d["prev_gate_failures"][0]["message"] == "Tests must pass"
+        assert d["gate_failures"] == []
+
+    def test_retry_stores_prev_gate_failures_not_gate_failures(self, test_db, test_space, temp_dir):
+        """When _launch_step is called with gate_failures, they should be stored
+        in prev_gate_failures on the new step_run, not in gate_failures."""
+        from unittest.mock import MagicMock, patch as _patch
+        from llmflows.services.daemon import Daemon
+        from llmflows.services.context import ContextService
+
+        space_path = Path(test_space.path)
+        space_path.mkdir(parents=True, exist_ok=True)
+
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("retry-pgf-flow", space_id=test_space.id, steps=[
+            {
+                "name": "build",
+                "position": 0,
+                "content": "# Build",
+                "gates": [{"command": "false", "message": "Always fails"}],
+                "max_gate_retries": 3,
+            },
+        ])
+
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+        snapshot = flow_svc.build_flow_snapshot(flow.name, space_id=test_space.id)
+        run.flow_snapshot = json.dumps(snapshot)
+        test_db.commit()
+
+        daemon = Daemon.__new__(Daemon)
+        daemon._browser_active_runs = set()
+        daemon._cost_offsets = {}
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon.notifications = MagicMock()
+
+        gate_failures_input = [
+            {"command": "false", "message": "Always fails", "output": ""},
+        ]
+
+        def fake_executor_launch(ctx):
+            result = MagicMock()
+            result.success = True
+            result.prompt_content = ""
+            result.log_path = ""
+            result.is_sync = False
+            return result
+
+        config = {"daemon": {"gate_timeout_seconds": 60}}
+        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
+             _patch("llmflows.services.daemon.resolve_alias", return_value=("cursor", "default")), \
+             _patch("llmflows.services.daemon.get_executor") as mock_get_exec:
+            mock_executor = MagicMock()
+            mock_executor.launch = fake_executor_launch
+            mock_get_exec.return_value = mock_executor
+            daemon._launch_step(
+                run, space_path, "build", 0, flow.name,
+                run_svc, flow_svc,
+                gate_failures=gate_failures_input,
+            )
+
+        step_runs = run_svc.list_step_runs(run.id)
+        retry_sr = [sr for sr in step_runs if sr.step_name == "build"][-1]
+        test_db.refresh(retry_sr)
+
+        assert retry_sr.gate_failures in ("", None)
+        pgf = json.loads(retry_sr.prev_gate_failures)
+        assert len(pgf) == 1
+        assert pgf[0]["message"] == "Always fails"
 
     def test_unlimited_retries_do_not_exhaust(self, test_db, test_space, temp_dir):
         """When max_gate_retries is 0 (unlimited), the daemon should always retry."""
@@ -988,6 +1080,8 @@ class TestGateRetryExhaustion:
 
         daemon = Daemon.__new__(Daemon)
         daemon._browser_active_runs = set()
+        daemon._cost_offsets = {}
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
@@ -1035,6 +1129,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 60
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
         daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
@@ -1069,6 +1165,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 1
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
         daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
@@ -1104,6 +1202,8 @@ class TestDaemonTimeout:
 
         daemon = Daemon.__new__(Daemon)
         daemon.run_timeout_minutes = 0
+        daemon.max_log_size_bytes = 500 * 1024 * 1024
+        daemon._cost_offsets = {}
         daemon._browser_active_runs = set()
 
         run_svc = RunService(test_db)
