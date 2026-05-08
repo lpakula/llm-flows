@@ -7,6 +7,7 @@ export interface Space {
 
 export interface SpaceSettings {
   max_concurrent_tasks: number;
+  audit_flows_on_import: boolean;
 }
 
 export type StepType = "agent" | "code" | "hitl";
@@ -81,6 +82,7 @@ export interface Flow {
   last_run_at?: string | null;
   active_run_count?: number;
   queued_run_count?: number;
+  audit?: AuditResult | null;
   created_at: string;
   updated_at: string;
 }

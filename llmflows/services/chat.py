@@ -216,9 +216,10 @@ def resolve_chat_env() -> dict[str, str]:
 
 def build_flow_context(flow_name: str, space_id: str) -> str:
     """Build rich flow context for the chat system prompt."""
+    from .audit import FlowAuditService
     from .flow import FlowService
     from ..db.database import get_session as _gs
-    from ..db.models import FlowRun
+    from ..db.models import FlowRun, Space as _SpaceModel
 
     db = _gs()
     try:
@@ -241,6 +242,23 @@ def build_flow_context(flow_name: str, space_id: str) -> str:
                 prefix = f"**{w['step_name']}**: " if w.get("step_name") else ""
                 parts.append(f"- {prefix}{w['message']}")
             parts.append("")
+
+        _space = db.query(_SpaceModel).filter_by(id=space_id).first()
+        if _space:
+            audit = FlowAuditService.get_audit(_space.path, flow_name)
+            if audit and audit.status in ("unsafe", "error"):
+                parts.append(f"### Security audit — {audit.status.upper()}\n")
+                if audit.summary:
+                    parts.append(f"{audit.summary}\n")
+                if audit.findings:
+                    parts.append("Findings:")
+                    for f in audit.findings:
+                        parts.append(f"- {f}")
+                parts.append("")
+            elif audit and audit.status == "safe":
+                parts.append("### Security audit\n\nPassed — no issues found.\n")
+            else:
+                parts.append("### Security audit\n\nNo audit has been run yet.\n")
 
         runs = (
             db.query(FlowRun)

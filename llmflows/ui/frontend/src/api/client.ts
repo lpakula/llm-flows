@@ -175,6 +175,11 @@ export const api = {
   getSkillAudit: (spaceId: string, name: string) => get<import("./types").AuditResult>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}/audit`),
   runSkillAudit: (spaceId: string, name: string) => post<import("./types").AuditResult>(`/api/spaces/${spaceId}/skills/${encodeURIComponent(name)}/audit`, {}),
 
+  // Flow Audit
+  getFlowAudit: (flowId: string) => get<import("./types").AuditResult>(`/api/flows/${flowId}/audit`),
+  runFlowAudit: (flowId: string) => post<import("./types").AuditResult>(`/api/flows/${flowId}/audit`, {}),
+  exemptFlowAudit: (flowId: string, explanation: string) => post<import("./types").AuditResult>(`/api/flows/${flowId}/audit/exempt`, { explanation }),
+
   // Daemon
   getDaemonStatus: () => get<DaemonStatus>("/api/daemon/status"),
   getDaemonLogs: (lines = 300) => get<{ lines: string[] }>(`/api/daemon/logs?lines=${lines}`),

