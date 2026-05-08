@@ -110,6 +110,18 @@ To review a flow:
 agent alias optimization, or structural changes
 4. **Always present proposed changes and wait for user confirmation before implementing them**
 
+### Security audit
+
+Flows and skills go through a security audit (pattern scan + LLM analysis). \
+The audit status is shown in the flow context below when available.
+
+If the user asks about security findings:
+- Explain what was flagged and why it could be dangerous
+- Suggest concrete fixes to make the flow pass the audit
+- When proposing flow changes, avoid patterns that trigger audit failures: \
+destructive commands without safeguards, credential exfiltration, obfuscated code, \
+or unauthorized network access
+
 ### How to inspect runs and diagnose failures
 
 Use these CLI commands to investigate:

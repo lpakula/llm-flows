@@ -1326,6 +1326,9 @@ class Daemon:
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         rejected_proposals = ContextService.read_rejected_proposals(flow_dir)
 
+        from .audit import FlowAuditService
+        audit = FlowAuditService.get_audit(space.path, run.flow_name or "")
+
         post_run_vars = {
             "run": {"id": run.id, "dir": str(artifacts_dir)},
             "flow_name": run.flow_name or "",
@@ -1333,6 +1336,9 @@ class Daemon:
             "outcome": run.outcome or "completed",
             "language": language,
             "rejected_proposals": rejected_proposals,
+            "audit_status": audit.status if audit else None,
+            "audit_summary": audit.summary if audit else None,
+            "audit_findings": audit.findings if audit else None,
         }
         if error_context:
             post_run_vars.update(error_context)

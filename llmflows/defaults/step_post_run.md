@@ -94,6 +94,29 @@ Both files are required — `improvement.md` is shown to the user, `flow.json` i
 
 Write all output in {{ language }}.
 
+{% if audit_status -%}
+## Security Audit
+
+**Status:** {{ audit_status }}
+{% if audit_summary -%}
+**Summary:** {{ audit_summary }}
+{% endif -%}
+{% if audit_findings -%}
+**Findings:**
+{% for f in audit_findings -%}
+- {{ f }}
+{% endfor -%}
+{% endif -%}
+
+When proposing improvements, you **must not** introduce patterns that would trigger security audit failures:
+- No destructive commands (rm -rf, format, etc.) unless absolutely necessary and scoped
+- No credential exfiltration patterns (curl with env vars, piping secrets)
+- No obfuscated code (base64 decode + exec, eval of encoded strings)
+- No unauthorized network access or data exfiltration
+
+If the current flow has audit findings, try to address them in your proposal when possible.
+
+{% endif -%}
 ## RULES
 
 - Only propose changes if they would meaningfully improve the flow

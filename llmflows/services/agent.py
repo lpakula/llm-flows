@@ -86,6 +86,9 @@ class AgentService:
         spc_vars = space_variables or {}
         step_dir = str(step_output_dir) if step_output_dir else ""
         attachment_dir = str(SYSTEM_DIR / "attachments" / run_id)
+        from .audit import FlowAuditService
+        audit = FlowAuditService.get_audit(str(space_root), flow_name) if flow_name else None
+
         prompt_vars = {
             "run_id": run_id,
             "run": {"id": run_id, "dir": str(artifacts_dir)},
@@ -104,6 +107,9 @@ class AgentService:
             "step_type": step_type,
             "space_variables": spc_vars,
             "skills": skills or [],
+            "audit_status": audit.status if audit else None,
+            "audit_summary": audit.summary if audit else None,
+            "audit_findings": audit.findings if audit else None,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)
