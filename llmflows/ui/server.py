@@ -2342,6 +2342,42 @@ async def exempt_flow_audit(flow_id: str, body: AuditExemptBody):
         session.close()
 
 
+@app.post("/api/spaces/{space_id}/audit/all")
+async def run_all_audits(space_id: str):
+    """Run security audits on all flows and skills in a space."""
+    session, space_svc = _get_services()
+    try:
+        space = space_svc.get(space_id)
+        if not space:
+            raise HTTPException(status_code=404, detail="Space not found")
+
+        flow_svc = FlowService(session)
+        flows = flow_svc.list_by_space(space_id)
+
+        flow_results = []
+        for f in flows:
+            result = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
+            flow_results.append({
+                "id": f.id,
+                "name": f.name,
+                "type": "flow",
+                "audit": result.to_dict(),
+            })
+
+        skill_results = []
+        for skill_info in SkillService.discover(space.path):
+            result = SecurityAuditService.run_audit(space.path, skill_info.name)
+            skill_results.append({
+                "name": skill_info.name,
+                "type": "skill",
+                "audit": result.to_dict(),
+            })
+
+        return {"flows": flow_results, "skills": skill_results}
+    finally:
+        session.close()
+
+
 @app.get("/api/flows/{flow_id}/versions")
 async def list_flow_versions(flow_id: str):
     """List all saved versions of a flow."""
@@ -2599,6 +2635,12 @@ async def add_flow_step(flow_id: str, body: StepCreate):
         )
         if not step:
             raise HTTPException(status_code=404, detail="Flow not found")
+        flow = flow_svc.get(flow_id)
+        if flow:
+            space_svc = SpaceService(session)
+            space = space_svc.get(flow.space_id)
+            if space:
+                FlowAuditService.clear_audit(space.path, flow.name)
         return step.to_dict()
     finally:
         session.close()
@@ -2635,6 +2677,12 @@ async def update_flow_step(flow_id: str, step_id: str, body: StepUpdate):
         step = flow_svc.update_step(step_id, **updates)
         if not step:
             raise HTTPException(status_code=404, detail="Step not found")
+        flow = flow_svc.get(flow_id)
+        if flow:
+            space_svc = SpaceService(session)
+            space = space_svc.get(flow.space_id)
+            if space:
+                FlowAuditService.clear_audit(space.path, flow.name)
         return step.to_dict()
     finally:
         session.close()
@@ -2645,8 +2693,14 @@ async def delete_flow_step(flow_id: str, step_id: str):
     session, _ = _get_services()
     try:
         flow_svc = FlowService(session)
+        flow = flow_svc.get(flow_id)
         if not flow_svc.remove_step(step_id):
             raise HTTPException(status_code=404, detail="Step not found")
+        if flow:
+            space_svc = SpaceService(session)
+            space = space_svc.get(flow.space_id)
+            if space:
+                FlowAuditService.clear_audit(space.path, flow.name)
         return {"ok": True}
     finally:
         session.close()

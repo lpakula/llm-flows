@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
-import type { Space, SpaceSettings } from "@/api/types";
+import { useInterval } from "@/hooks/useInterval";
+import { ShieldCheck, ShieldAlert, ShieldOff } from "lucide-react";
+import { SecurityAuditModal, type AuditResource } from "@/components/SecurityAuditModal";
+import type { Space, SpaceSettings, Flow, SkillInfo } from "@/api/types";
 
 export function SpaceSettingsView() {
   const { spaceId } = useParams<{ spaceId: string }>();
@@ -17,6 +20,29 @@ export function SpaceSettingsView() {
   const [nameDirty, setNameDirty] = useState(false);
   const [nameSaving, setNameSaving] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
+
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+
+  const refreshAudit = useCallback(async () => {
+    if (!spaceId) return;
+    try {
+      const [f, s] = await Promise.all([api.listFlows(spaceId), api.listSkills(spaceId)]);
+      setFlows(f);
+      setSkills(s);
+    } catch { /* ignore */ }
+  }, [spaceId]);
+  useEffect(() => { refreshAudit(); }, [refreshAudit]);
+  useInterval(refreshAudit, 10000);
+
+  const unsafeFlows = flows.filter((f) => f.audit?.status === "unsafe").length;
+  const unauditedFlows = flows.filter((f) => !f.audit?.status).length;
+  const unsafeSkills = skills.filter((s) => s.audit?.status === "unsafe").length;
+  const unauditedSkills = skills.filter((s) => !s.audit?.status).length;
+  const totalUnsafe = unsafeFlows + unsafeSkills;
+  const totalUnaudited = unauditedFlows + unauditedSkills;
+  const allClear = totalUnsafe === 0 && totalUnaudited === 0;
 
   useEffect(() => {
     if (!spaceId) return;
@@ -142,6 +168,66 @@ export function SpaceSettingsView() {
           </tbody>
         </table>
       </div>
+
+      <div className="border border-gray-800 rounded-xl overflow-hidden mb-8">
+        <div className="px-4 py-3 bg-gray-900/60 border-b border-gray-800">
+          <h3 className="text-sm font-medium text-white">Security</h3>
+        </div>
+        <div className="px-4 py-4 bg-gray-900">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {allClear ? (
+                <ShieldCheck size={18} className="text-emerald-400" />
+              ) : totalUnsafe > 0 ? (
+                <ShieldAlert size={18} className="text-red-400" />
+              ) : (
+                <ShieldOff size={18} className="text-amber-400" />
+              )}
+              <div>
+                {allClear ? (
+                  <p className="text-sm text-emerald-400 font-medium">All resources passed security audit</p>
+                ) : (
+                  <p className="text-sm text-white">
+                    {totalUnsafe > 0 && <span className="text-red-400 font-medium">{totalUnsafe} unsafe</span>}
+                    {totalUnsafe > 0 && totalUnaudited > 0 && <span className="text-gray-500 mx-1.5">·</span>}
+                    {totalUnaudited > 0 && <span className="text-amber-400 font-medium">{totalUnaudited} unaudited</span>}
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {flows.length} flow{flows.length !== 1 ? "s" : ""}, {skills.length} skill{skills.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowAuditModal(true)}
+              className="text-xs text-blue-400 hover:text-blue-300 transition font-medium"
+            >
+              View details
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {spaceId && (
+        <SecurityAuditModal
+          open={showAuditModal}
+          onClose={() => setShowAuditModal(false)}
+          flows={flows.map((f): AuditResource => ({
+            name: f.name,
+            key: f.id,
+            link: `/space/${spaceId}/flow/${f.id}`,
+            audit: f.audit ?? null,
+          }))}
+          skills={skills.map((s): AuditResource => ({
+            name: s.name,
+            key: s.name,
+            audit: s.audit ?? null,
+          }))}
+          onAuditFlow={(flowId) => api.runFlowAudit(flowId)}
+          onAuditSkill={(skillName) => api.runSkillAudit(spaceId, skillName)}
+          onComplete={refreshAudit}
+        />
+      )}
 
       <div className="border border-red-900/50 rounded-xl overflow-hidden">
         <div className="px-4 py-3 bg-red-950/20 border-b border-red-900/50">

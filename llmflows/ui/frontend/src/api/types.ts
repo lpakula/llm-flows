@@ -307,6 +307,18 @@ export interface AuditResult {
   audited_at: string;
 }
 
+export interface BulkAuditEntry {
+  id?: string;
+  name: string;
+  type: "flow" | "skill";
+  audit: AuditResult;
+}
+
+export interface BulkAuditResult {
+  flows: BulkAuditEntry[];
+  skills: BulkAuditEntry[];
+}
+
 export interface SkillInfo {
   name: string;
   path: string;

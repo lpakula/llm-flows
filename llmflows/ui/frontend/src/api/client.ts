@@ -179,6 +179,7 @@ export const api = {
   getFlowAudit: (flowId: string) => get<import("./types").AuditResult>(`/api/flows/${flowId}/audit`),
   runFlowAudit: (flowId: string) => post<import("./types").AuditResult>(`/api/flows/${flowId}/audit`, {}),
   exemptFlowAudit: (flowId: string, explanation: string) => post<import("./types").AuditResult>(`/api/flows/${flowId}/audit/exempt`, { explanation }),
+  runAllAudits: (spaceId: string) => post<import("./types").BulkAuditResult>(`/api/spaces/${spaceId}/audit/all`, {}),
 
   // Daemon
   getDaemonStatus: () => get<DaemonStatus>("/api/daemon/status"),

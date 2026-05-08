@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { RefreshCw, MessageSquareText } from "lucide-react";
-import { AuditBadge } from "./AuditBadge";
 import type { AuditResult } from "@/api/types";
 
 export function AuditPanel({
@@ -45,56 +44,65 @@ export function AuditPanel({
     }
   };
 
-  const borderColor = audit?.status === "safe"
-    ? "border-emerald-500/30"
-    : audit?.status === "unsafe"
-    ? "border-red-500/30"
-    : !audit?.status
-    ? "border-amber-500/40"
-    : "border-gray-700";
-
   const busy = running || exempting;
 
   if (audit?.status === "safe") return null;
 
-  return (
-    <div className={`border ${borderColor} rounded-lg p-3 mb-4 ${!audit?.status ? "bg-amber-500/5" : audit?.status === "unsafe" ? "bg-red-500/5" : ""}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-gray-300">Security Audit</span>
-          <AuditBadge audit={audit} size="md" />
-        </div>
-        <div className="flex items-center gap-2">
+  if (!audit?.status) {
+    return (
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-5 py-3 mb-4">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-amber-300/80">
+            No security audit yet.
+          </span>
           <button
             onClick={handleRunAudit}
-            disabled={busy}
-            className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 disabled:opacity-50 transition"
-            title="Run security audit"
+            disabled={running}
+            className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition font-medium"
           >
             <RefreshCw size={11} className={running ? "animate-spin" : ""} />
-            {running ? "Auditing..." : audit?.status ? "Re-audit" : "Run audit"}
+            {running ? "Auditing..." : "Run audit"}
           </button>
         </div>
       </div>
+    );
+  }
 
-      {audit?.summary && (
-        <p className="text-xs text-gray-400 mb-1">{audit.summary}</p>
+  return (
+    <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-3 mb-4">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-red-400">Security Audit</h4>
+        <button
+          onClick={handleRunAudit}
+          disabled={busy}
+          className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition font-medium"
+        >
+          <RefreshCw size={11} className={running ? "animate-spin" : ""} />
+          {running ? "Auditing..." : "Re-audit"}
+        </button>
+      </div>
+
+      {audit.summary && (
+        <p className="text-xs text-red-300/80 mt-2">{audit.summary}</p>
       )}
 
-      {audit?.findings && audit.findings.length > 0 && (
-        <ul className="mt-2 space-y-0.5 list-disc list-inside marker:text-red-400">
+      {audit.findings && audit.findings.length > 0 && (
+        <ul className="mt-2 space-y-1">
           {audit.findings.map((f, i) => (
-            <li key={i} className="text-[11px] text-red-300/80">{f}</li>
+            <li key={i} className="text-xs text-red-300/80">
+              {audit.findings!.length > 1 && <span className="text-red-400 font-mono mr-1">•</span>}
+              {f}
+            </li>
           ))}
         </ul>
       )}
 
-      {onExempt && audit?.status && (
-        <div className="mt-3">
+      {onExempt && (
+        <div className="mt-3 pt-3 border-t border-red-500/20">
           {!showExempt ? (
             <button
               onClick={() => setShowExempt(true)}
-              className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 transition"
+              className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 font-medium transition"
             >
               <MessageSquareText size={11} />
               Exempt — explain why these are safe
@@ -106,13 +114,13 @@ export function AuditPanel({
                 onChange={(e) => setExplanation(e.target.value)}
                 placeholder="Explain why the flagged patterns are expected behavior (e.g. 'rm -rf in step 2 cleans the build directory before rebuilding')..."
                 rows={3}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 resize-y"
+                className="w-full bg-gray-800/50 border border-red-500/20 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-red-500/40 resize-y"
               />
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleExempt}
                   disabled={busy || !explanation.trim()}
-                  className="flex items-center gap-1 text-[11px] px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md disabled:opacity-40 transition"
+                  className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition font-medium"
                 >
                   <RefreshCw size={10} className={exempting ? "animate-spin" : ""} />
                   {exempting ? "Analyzing..." : "Submit and re-audit"}
@@ -120,26 +128,13 @@ export function AuditPanel({
                 <button
                   onClick={() => { setShowExempt(false); setExplanation(""); }}
                   disabled={busy}
-                  className="text-[11px] text-gray-500 hover:text-gray-300 disabled:opacity-50 transition"
+                  className="text-xs text-red-300/50 hover:text-red-300 disabled:opacity-50 transition"
                 >
                   Cancel
                 </button>
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {!audit?.status && (
-        <div className="flex items-center gap-2">
-          <p className="text-xs text-gray-500">No audit yet.</p>
-          <button
-            onClick={handleRunAudit}
-            disabled={running}
-            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
-          >
-            Run audit
-          </button>
         </div>
       )}
     </div>

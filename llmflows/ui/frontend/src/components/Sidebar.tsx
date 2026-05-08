@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle, FolderPlus, Folder, FolderGit2, ChevronUp, Loader2, BellOff, Bell } from "lucide-react";
+import { Workflow, Settings, Bot, SlidersHorizontal, Inbox, Radio, BookOpen, Wrench, MessageCircle, FolderPlus, Folder, FolderGit2, ChevronUp, Loader2, BellOff, Bell, ShieldAlert, ShieldOff } from "lucide-react";
 import { useApp } from "@/App";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import { DaemonWidget } from "./DaemonWidget";
+import { SecurityAuditModal, type AuditResource } from "./SecurityAuditModal";
+import type { Flow, SkillInfo } from "@/api/types";
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `w-full text-left px-3 py-1.5 rounded-lg text-sm transition flex items-center gap-2.5 ${
@@ -171,6 +173,24 @@ export function Sidebar() {
   const [inboxMuted, setInboxMuted] = useState(false);
 
   const selectedSpace = spaces.find((s) => s.id === selectedSpaceId) || null;
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+
+  const refreshAudit = useCallback(async () => {
+    if (!selectedSpaceId) { setFlows([]); setSkills([]); return; }
+    try {
+      const [f, s] = await Promise.all([api.listFlows(selectedSpaceId), api.listSkills(selectedSpaceId)]);
+      setFlows(f);
+      setSkills(s);
+    } catch { /* ignore */ }
+  }, [selectedSpaceId]);
+  useEffect(() => { refreshAudit(); }, [refreshAudit]);
+  useInterval(refreshAudit, 10000);
+
+  const hasUnsafe = flows.some((f) => f.audit?.status === "unsafe") || skills.some((s) => s.audit?.status === "unsafe");
+  const hasUnaudited = flows.some((f) => !f.audit?.status) || skills.some((s) => !s.audit?.status);
+  const hasAuditConcern = hasUnsafe || hasUnaudited;
 
   const refreshInbox = useCallback(async () => {
     try {
@@ -336,6 +356,19 @@ export function Sidebar() {
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 pt-2 space-y-0.5">
         {selectedSpace && (
           <>
+            {hasAuditConcern && (
+              <button
+                onClick={() => setShowAuditModal(true)}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition ${
+                  hasUnsafe
+                    ? "text-red-400 hover:bg-red-500/10"
+                    : "text-amber-400 hover:bg-amber-500/10"
+                }`}
+              >
+                {hasUnsafe ? <ShieldAlert size={14} className="flex-shrink-0" /> : <ShieldOff size={14} className="flex-shrink-0" />}
+                Security Audit
+              </button>
+            )}
             <NavLink to={`/space/${selectedSpace.id}/flows`} className={navClass}>
               <Workflow size={14} className="flex-shrink-0" />
               Flows
@@ -351,6 +384,27 @@ export function Sidebar() {
           </>
         )}
       </nav>
+
+      {selectedSpaceId && (
+        <SecurityAuditModal
+          open={showAuditModal}
+          onClose={() => setShowAuditModal(false)}
+          flows={flows.map((f): AuditResource => ({
+            name: f.name,
+            key: f.id,
+            link: `/space/${selectedSpaceId}/flow/${f.id}`,
+            audit: f.audit ?? null,
+          }))}
+          skills={skills.map((s): AuditResource => ({
+            name: s.name,
+            key: s.name,
+            audit: s.audit ?? null,
+          }))}
+          onAuditFlow={(flowId) => api.runFlowAudit(flowId)}
+          onAuditSkill={(skillName) => api.runSkillAudit(selectedSpaceId, skillName)}
+          onComplete={refreshAudit}
+        />
+      )}
 
       <div className="flex-shrink-0 border-t border-gray-800 pt-2 pb-1">
         <div className="px-3 pb-1">

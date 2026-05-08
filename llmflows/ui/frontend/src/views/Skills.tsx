@@ -5,7 +5,7 @@ import { useInterval } from "@/hooks/useInterval";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { AuditBadge } from "@/components/AuditBadge";
 import { AuditPanel } from "@/components/AuditPanel";
-import { Search, Download, Trash2, ExternalLink, Package, ArrowDownWideNarrow } from "lucide-react";
+import { Search, Download, Trash2, ExternalLink, Package, ArrowDownWideNarrow, RefreshCw } from "lucide-react";
 import type { SkillInfo, RegistrySkill, AuditResult } from "@/api/types";
 
 function SkillPreviewModal({
@@ -24,6 +24,7 @@ function SkillPreviewModal({
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState(false);
+  const [reauditing, setReauditing] = useState(false);
   const [audit, setAudit] = useState<AuditResult | null | undefined>(skill.audit);
 
   useEffect(() => {
@@ -62,6 +63,24 @@ function SkillPreviewModal({
             <div className="flex items-center gap-2">
               <h3 className="text-base font-mono font-semibold text-gray-100">{skill.name}</h3>
               <AuditBadge audit={audit} size="md" />
+              {audit?.status === "safe" && (
+                <button
+                  onClick={async () => {
+                    setReauditing(true);
+                    try {
+                      const result = await api.runSkillAudit(spaceId, skill.name);
+                      setAudit(result);
+                      onAuditUpdate?.();
+                    } catch { /* ignore */ }
+                    setReauditing(false);
+                  }}
+                  disabled={reauditing}
+                  className="text-gray-500 hover:text-gray-300 disabled:opacity-50 transition"
+                  title="Re-audit skill"
+                >
+                  <RefreshCw size={12} className={reauditing ? "animate-spin" : ""} />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <p className="text-[11px] text-gray-500 font-mono">{skill.path}</p>
@@ -119,7 +138,7 @@ function SkillCard({ skill, onClick }: { skill: SkillInfo; onClick: () => void }
         <span className="ml-auto shrink-0"><AuditBadge audit={skill.audit} hideIfSafe showUnverified /></span>
       </div>
       {skill.description && (
-        <p className="text-xs text-gray-400 leading-relaxed mt-1.5">{skill.description}</p>
+        <p className="text-xs text-gray-400 leading-relaxed mt-1.5 line-clamp-2">{skill.description}</p>
       )}
       {skill.compatibility && (
         <p className="text-[11px] text-gray-500 mt-1 italic">{skill.compatibility}</p>
