@@ -71,7 +71,7 @@ const ROWS: SettingRow[] = [
   {
     key: "keep_awake",
     label: "Keep awake",
-    description: "Prevent the Mac from sleeping while the daemon is running, including with closed lid (macOS only)",
+    description: "Prevent the system from sleeping while the daemon is running (macOS and Linux)",
     type: "bool",
   },
 ];
