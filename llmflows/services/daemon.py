@@ -3,6 +3,8 @@
 import json
 import logging
 import signal
+import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,8 +98,63 @@ class Daemon:
         self.max_log_size_bytes = self.config["daemon"].get("max_log_size_mb", 500) * 1024 * 1024
         self._cost_offsets: dict[str, tuple[int, float, int]] = {}
         self._browser_active_runs: set[str] = set()
+        self._keep_awake_proc: Optional[subprocess.Popen] = None
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
+
+    @staticmethod
+    def _keep_awake_command() -> list[str] | None:
+        """Return the platform-specific command to inhibit sleep, or None."""
+        if sys.platform == "darwin":
+            return ["caffeinate", "-s", "-i"]
+        if sys.platform == "linux":
+            return [
+                "systemd-inhibit",
+                "--what=idle:sleep",
+                "--who=llmflows",
+                "--why=Daemon is running",
+                "--mode=block",
+                "sleep", "infinity",
+            ]
+        return None
+
+    def _start_keep_awake(self) -> None:
+        """Start a subprocess to prevent the system from sleeping."""
+        if not self.config.get("daemon", {}).get("keep_awake", False):
+            return
+        cmd = self._keep_awake_command()
+        if cmd is None:
+            logger.info("keep_awake is enabled but not supported on %s", sys.platform)
+            return
+        try:
+            self._keep_awake_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Started keep-awake (pid=%d, cmd=%s)", self._keep_awake_proc.pid, cmd[0])
+        except FileNotFoundError:
+            logger.warning("%s binary not found — keep_awake will have no effect", cmd[0])
+        except OSError:
+            logger.warning("Failed to start keep-awake process", exc_info=True)
+
+    def _stop_keep_awake(self) -> None:
+        """Terminate the keep-awake subprocess if running."""
+        if self._keep_awake_proc is None:
+            return
+        if self._keep_awake_proc.poll() is not None:
+            self._keep_awake_proc = None
+            return
+        try:
+            self._keep_awake_proc.terminate()
+            self._keep_awake_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._keep_awake_proc.kill()
+            self._keep_awake_proc.wait(timeout=2)
+        except OSError:
+            pass
+        logger.info("Stopped keep-awake process")
+        self._keep_awake_proc = None
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
@@ -270,6 +327,8 @@ class Daemon:
         signal.signal(signal.SIGUSR1, self._handle_gateway_restart)
         signal.signal(signal.SIGUSR2, self._handle_reexec)
 
+        self._start_keep_awake()
+
         for ch in self._build_channels():
             self.notifications.register(ch)
         self.notifications.start_all()
@@ -284,6 +343,7 @@ class Daemon:
             self._stop_event.wait(self.poll_interval)
 
         self.notifications.stop_all()
+        self._stop_keep_awake()
 
         if self._reexec:
             self._do_reexec()
@@ -308,8 +368,8 @@ class Daemon:
     def _do_reexec(self) -> None:
         """Replace the current process with a fresh daemon to pick up new code."""
         import os
-        import sys
 
+        self._stop_keep_awake()
         remove_pid_file()
         bin_path = Path(sys.prefix) / "bin" / "llmflows"
         if not bin_path.is_file():

@@ -119,6 +119,7 @@ class DaemonConfigBody(BaseModel):
     run_timeout_minutes: Optional[int] = None
     gate_timeout_seconds: Optional[int] = None
     post_run_language: Optional[str] = None
+    keep_awake: Optional[bool] = None
 
 
 class GatewayConfigBody(BaseModel):
@@ -218,6 +219,8 @@ async def update_daemon_config(body: DaemonConfigBody):
         config["daemon"]["gate_timeout_seconds"] = body.gate_timeout_seconds
     if body.post_run_language is not None:
         config["daemon"]["post_run_language"] = body.post_run_language
+    if body.keep_awake is not None:
+        config["daemon"]["keep_awake"] = body.keep_awake
     save_system_config(config)
     return config["daemon"]
 

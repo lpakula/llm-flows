@@ -208,6 +208,32 @@ class TestFlowVersioningAPI:
         assert response.status_code == 404
 
 
+class TestDaemonConfigAPI:
+    def test_get_daemon_config(self, client, api_db):
+        config = {"daemon": {"poll_interval_seconds": 10, "keep_awake": False}}
+        with patch("llmflows.ui.server.load_system_config", return_value=config):
+            response = client.get("/api/config/daemon")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["poll_interval_seconds"] == 10
+        assert data["keep_awake"] is False
+
+    def test_update_daemon_config_keep_awake(self, client, api_db):
+        stored = {"daemon": {"keep_awake": False}}
+        with (
+            patch("llmflows.ui.server.load_system_config", return_value=stored),
+            patch("llmflows.ui.server.save_system_config") as mock_save,
+        ):
+            response = client.patch(
+                "/api/config/daemon",
+                json={"keep_awake": True},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["keep_awake"] is True
+        mock_save.assert_called_once()
+
+
 class TestGatewayAPI:
     def test_get_gateway_config(self, client, api_db):
         with patch("llmflows.ui.server.load_system_config", return_value={}):
