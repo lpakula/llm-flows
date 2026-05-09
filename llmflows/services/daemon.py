@@ -3,6 +3,8 @@
 import json
 import logging
 import signal
+import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,8 +98,46 @@ class Daemon:
         self.max_log_size_bytes = self.config["daemon"].get("max_log_size_mb", 500) * 1024 * 1024
         self._cost_offsets: dict[str, tuple[int, float, int]] = {}
         self._browser_active_runs: set[str] = set()
+        self._caffeinate_proc: Optional[subprocess.Popen] = None
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
+
+    def _start_caffeinate(self) -> None:
+        """Start a caffeinate subprocess to prevent macOS from sleeping."""
+        if not self.config.get("daemon", {}).get("keep_awake", False):
+            return
+        if sys.platform != "darwin":
+            logger.info("keep_awake is enabled but has no effect on %s (macOS only)", sys.platform)
+            return
+        try:
+            self._caffeinate_proc = subprocess.Popen(
+                ["caffeinate", "-s", "-i"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Started caffeinate (pid=%d) to prevent system sleep", self._caffeinate_proc.pid)
+        except FileNotFoundError:
+            logger.warning("caffeinate binary not found — keep_awake will have no effect")
+        except OSError:
+            logger.warning("Failed to start caffeinate", exc_info=True)
+
+    def _stop_caffeinate(self) -> None:
+        """Terminate the caffeinate subprocess if running."""
+        if self._caffeinate_proc is None:
+            return
+        if self._caffeinate_proc.poll() is not None:
+            self._caffeinate_proc = None
+            return
+        try:
+            self._caffeinate_proc.terminate()
+            self._caffeinate_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._caffeinate_proc.kill()
+            self._caffeinate_proc.wait(timeout=2)
+        except OSError:
+            pass
+        logger.info("Stopped caffeinate")
+        self._caffeinate_proc = None
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
@@ -270,6 +310,8 @@ class Daemon:
         signal.signal(signal.SIGUSR1, self._handle_gateway_restart)
         signal.signal(signal.SIGUSR2, self._handle_reexec)
 
+        self._start_caffeinate()
+
         for ch in self._build_channels():
             self.notifications.register(ch)
         self.notifications.start_all()
@@ -284,6 +326,7 @@ class Daemon:
             self._stop_event.wait(self.poll_interval)
 
         self.notifications.stop_all()
+        self._stop_caffeinate()
 
         if self._reexec:
             self._do_reexec()
@@ -308,8 +351,8 @@ class Daemon:
     def _do_reexec(self) -> None:
         """Replace the current process with a fresh daemon to pick up new code."""
         import os
-        import sys
 
+        self._stop_caffeinate()
         remove_pid_file()
         bin_path = Path(sys.prefix) / "bin" / "llmflows"
         if not bin_path.is_file():

@@ -126,6 +126,7 @@ export interface DaemonConfig {
   run_timeout_minutes: number;
   gate_timeout_seconds: number;
   post_run_language: string;
+  keep_awake: boolean;
 }
 
 export interface GatewayConfig {

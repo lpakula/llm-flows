@@ -1265,3 +1265,112 @@ class TestChannelManagerMute:
             mgr.notify("step.awaiting_user", {"step_name": "ask"})
 
         ch.send.assert_called_once()
+
+
+class TestKeepAwake:
+    """Tests for the keep_awake / caffeinate feature."""
+
+    def test_start_caffeinate_disabled(self):
+        from llmflows.services.daemon import Daemon
+        from unittest.mock import MagicMock
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.config = {"daemon": {"keep_awake": False}}
+        daemon._caffeinate_proc = None
+
+        with patch("llmflows.services.daemon.subprocess") as mock_sub:
+            daemon._start_caffeinate()
+
+        mock_sub.Popen.assert_not_called()
+        assert daemon._caffeinate_proc is None
+
+    def test_start_caffeinate_enabled_on_darwin(self):
+        from llmflows.services.daemon import Daemon
+        from unittest.mock import MagicMock
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.config = {"daemon": {"keep_awake": True}}
+        daemon._caffeinate_proc = None
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+
+        with patch("llmflows.services.daemon.sys") as mock_sys, \
+             patch("llmflows.services.daemon.subprocess") as mock_sub:
+            mock_sys.platform = "darwin"
+            mock_sub.Popen.return_value = mock_proc
+            daemon._start_caffeinate()
+
+        mock_sub.Popen.assert_called_once_with(
+            ["caffeinate", "-s", "-i"],
+            stdout=mock_sub.DEVNULL,
+            stderr=mock_sub.DEVNULL,
+        )
+        assert daemon._caffeinate_proc is mock_proc
+
+    def test_start_caffeinate_non_darwin(self):
+        from llmflows.services.daemon import Daemon
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.config = {"daemon": {"keep_awake": True}}
+        daemon._caffeinate_proc = None
+
+        with patch("llmflows.services.daemon.sys") as mock_sys, \
+             patch("llmflows.services.daemon.subprocess") as mock_sub:
+            mock_sys.platform = "linux"
+            daemon._start_caffeinate()
+
+        mock_sub.Popen.assert_not_called()
+        assert daemon._caffeinate_proc is None
+
+    def test_start_caffeinate_binary_not_found(self):
+        from llmflows.services.daemon import Daemon
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.config = {"daemon": {"keep_awake": True}}
+        daemon._caffeinate_proc = None
+
+        with patch("llmflows.services.daemon.sys") as mock_sys, \
+             patch("llmflows.services.daemon.subprocess") as mock_sub:
+            mock_sys.platform = "darwin"
+            mock_sub.Popen.side_effect = FileNotFoundError
+            daemon._start_caffeinate()
+
+        assert daemon._caffeinate_proc is None
+
+    def test_stop_caffeinate(self):
+        from llmflows.services.daemon import Daemon
+        from unittest.mock import MagicMock
+
+        daemon = Daemon.__new__(Daemon)
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        daemon._caffeinate_proc = mock_proc
+
+        daemon._stop_caffeinate()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=2)
+        assert daemon._caffeinate_proc is None
+
+    def test_stop_caffeinate_already_dead(self):
+        from llmflows.services.daemon import Daemon
+        from unittest.mock import MagicMock
+
+        daemon = Daemon.__new__(Daemon)
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0
+        daemon._caffeinate_proc = mock_proc
+
+        daemon._stop_caffeinate()
+
+        mock_proc.terminate.assert_not_called()
+        assert daemon._caffeinate_proc is None
+
+    def test_stop_caffeinate_none(self):
+        from llmflows.services.daemon import Daemon
+
+        daemon = Daemon.__new__(Daemon)
+        daemon._caffeinate_proc = None
+        daemon._stop_caffeinate()
+        assert daemon._caffeinate_proc is None

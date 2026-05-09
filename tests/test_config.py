@@ -15,6 +15,7 @@ def test_default_config():
     assert "ui" in DEFAULT_CONFIG
     assert DEFAULT_CONFIG["daemon"]["poll_interval_seconds"] == 10
     assert DEFAULT_CONFIG["ui"]["port"] == 4300
+    assert DEFAULT_CONFIG["daemon"]["keep_awake"] is False
 
 
 def test_load_system_config_defaults():

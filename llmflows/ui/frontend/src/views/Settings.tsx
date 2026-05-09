@@ -68,6 +68,12 @@ const ROWS: SettingRow[] = [
       { value: "Ukrainian", label: "Ukrainian" },
     ],
   },
+  {
+    key: "keep_awake",
+    label: "Keep awake",
+    description: "Prevent the Mac from sleeping while the daemon is running, including with closed lid (macOS only)",
+    type: "bool",
+  },
 ];
 
 function SelectDropdown({ value, options, onSelect }: {
