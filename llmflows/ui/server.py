@@ -1970,16 +1970,26 @@ async def approve_flow_improvement(item_id: str):
             raise HTTPException(status_code=400, detail="Run has no associated flow")
 
         flow_svc = FlowService(session)
+        flow_obj = flow_svc.get(run.flow_id)
+        flow_name = flow_obj.name if flow_obj else run.flow_name or ""
+
+        audit_result = None
+        if space.audit_flows_on_import:
+            audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
+            if audit_result.status == "unsafe":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Security audit failed: {audit_result.summary}",
+                )
+
         flow = flow_svc.apply_flow_proposal(run.flow_id, flow_json)
         if not flow:
             raise HTTPException(status_code=500, detail="Failed to apply proposal")
 
-        FlowAuditService.clear_audit(space.path, flow.name)
-        if space.audit_flows_on_import:
-            try:
-                FlowAuditService.run_audit(space.path, flow.name, flow_json)
-            except Exception:
-                pass
+        if audit_result:
+            FlowAuditService.save_audit(space.path, flow.name, audit_result)
+        else:
+            FlowAuditService.clear_audit(space.path, flow.name)
 
         run_svc = RunService(session)
         run_svc.archive_inbox_item(item_id)
@@ -2233,6 +2243,24 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             data = {"flows": [data]}
         if not data.get("flows"):
             raise HTTPException(status_code=400, detail="No flows found in file. Expected a flow object with 'name' and 'steps', or {\"flows\": [...]}.")
+
+        audit_results: dict[str, AuditResult] = {}
+        if space.audit_flows_on_import:
+            unsafe_flows = []
+            for flow_data in data["flows"]:
+                name = flow_data.get("name", "")
+                if not name:
+                    continue
+                result = FlowAuditService.run_audit(space.path, name, flow_data)
+                audit_results[name] = result
+                if result.status == "unsafe":
+                    unsafe_flows.append(f"{name}: {result.summary}")
+            if unsafe_flows:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Security audit failed for: {'; '.join(unsafe_flows)}",
+                )
+
         flow_svc = FlowService(session)
         count = flow_svc._import_flows_data(data, space_id=space_id, skip_existing=False)
 
@@ -2240,12 +2268,10 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             name = flow_data.get("name", "")
             if not name:
                 continue
-            FlowAuditService.clear_audit(space.path, name)
-            if space.audit_flows_on_import:
-                try:
-                    FlowAuditService.run_audit(space.path, name, flow_data)
-                except Exception:
-                    pass
+            if name in audit_results:
+                FlowAuditService.save_audit(space.path, name, audit_results[name])
+            else:
+                FlowAuditService.clear_audit(space.path, name)
 
         return {"imported": count}
     except json.JSONDecodeError:
