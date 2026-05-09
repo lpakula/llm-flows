@@ -195,25 +195,21 @@ class GitHubChannel:
                 logger.exception("Error polling repo %s", repo)
 
     def _refresh_active_refs(self) -> None:
-        """Update the set of GITHUB_REF values that have recent or in-progress runs.
+        """Update the set of GITHUB_REF values that have in-progress runs.
 
-        Includes both incomplete runs and runs created in the last 24 hours,
-        so a daemon restart doesn't re-trigger recently processed mentions.
+        Only genuinely in-flight runs block re-triggers. The 👀 reaction is the
+        primary replay guard for completed comments — keeping completed runs here
+        was incorrectly blocking follow-up triggers after a run finished.
         """
-        from datetime import timedelta
         session = self.session_factory()
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-            recent_runs = (
+            in_flight_runs = (
                 session.query(FlowRun)
-                .filter(
-                    (FlowRun.completed_at.is_(None)) |
-                    (FlowRun.created_at >= cutoff)
-                )
+                .filter(FlowRun.completed_at.is_(None))
                 .all()
             )
             refs = set()
-            for run in recent_runs:
+            for run in in_flight_runs:
                 rv = run.run_variables
                 if rv and rv.get("GITHUB_REF"):
                     refs.add((rv["GITHUB_REF"], run.flow_name or ""))
@@ -292,7 +288,6 @@ class GitHubChannel:
             logger.info("Marked older comment %s with 👀 (newer comment already triggered %s)", comment["id"], flow_name)
             return
 
-        self._react_eyes(repo, "issue_comment", comment["id"])
         triggered.add(trigger_key)
 
         issue_data = _gh_api(issue_url.replace("https://api.github.com", ""), self.token) if issue_url else None
@@ -308,8 +303,10 @@ class GitHubChannel:
             github_ref = f"issue:{issue_data['number']}"
 
         if (github_ref, flow_name) in self._active_refs:
-            logger.info("Skipping comment %s — recent run exists for %s (%s)", comment["id"], github_ref, flow_name)
+            logger.info("Skipping comment %s — run in-flight for %s (%s)", comment["id"], github_ref, flow_name)
             return
+
+        self._react_eyes(repo, "issue_comment", comment["id"])
 
         run_vars = self._build_base_vars(task, github_ref, event_type)
         self._add_issue_vars(run_vars, issue_data)
@@ -343,7 +340,6 @@ class GitHubChannel:
             logger.info("Marked older review comment %s with 👀 (newer comment already triggered %s)", comment["id"], flow_name)
             return
 
-        self._react_eyes(repo, "review_comment", comment["id"])
         triggered.add(trigger_key)
 
         pr_data = _gh_api(pr_url.replace("https://api.github.com", ""), self.token) if pr_url else None
@@ -352,8 +348,10 @@ class GitHubChannel:
 
         github_ref = f"pr:{pr_data['number']}"
         if (github_ref, flow_name) in self._active_refs:
-            logger.info("Skipping review comment — recent run exists for %s (%s)", github_ref, flow_name)
+            logger.info("Skipping review comment — run in-flight for %s (%s)", github_ref, flow_name)
             return
+
+        self._react_eyes(repo, "review_comment", comment["id"])
 
         run_vars = self._build_base_vars(task, github_ref, "pr_review")
         self._add_issue_vars(run_vars, pr_data)
