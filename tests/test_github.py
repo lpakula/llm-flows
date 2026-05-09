@@ -222,6 +222,122 @@ class TestGitHubChannel:
         assert not gh_channel._is_allowed_user({"user": {"login": "mallory"}})
 
 
+class TestRefreshActiveRefs:
+    """Bug fix: _refresh_active_refs must only include in-flight runs."""
+
+    def _make_snapshot(self, flow_name, run_vars):
+        """Build a minimal flow_snapshot JSON with variables."""
+        variables = {k: {"value": v, "is_env": False} for k, v in run_vars.items()}
+        return json.dumps({"name": flow_name, "variables": variables})
+
+    def test_completed_runs_excluded(self, gh_channel, gh_db):
+        """Completed runs should NOT block re-triggers."""
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        flow = Flow(name="feature-brainstorm", space_id=space.id)
+        gh_db.add(flow)
+        gh_db.commit()
+
+        completed_run = FlowRun(
+            space_id=space.id,
+            flow_id=flow.id,
+            completed_at=datetime(2026, 5, 9, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        completed_run.flow_snapshot = self._make_snapshot(
+            "feature-brainstorm", {"GITHUB_REF": "issue:23", "GITHUB_EVENT": "issue_comment"})
+        gh_db.add(completed_run)
+        gh_db.commit()
+
+        gh_channel._refresh_active_refs()
+        assert ("issue:23", "feature-brainstorm") not in gh_channel._active_refs
+
+    def test_inflight_runs_included(self, gh_channel, gh_db):
+        """In-flight runs (completed_at is None) SHOULD block re-triggers."""
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        flow = Flow(name="feature-develop", space_id=space.id)
+        gh_db.add(flow)
+        gh_db.commit()
+
+        active_run = FlowRun(
+            space_id=space.id,
+            flow_id=flow.id,
+            completed_at=None,
+        )
+        active_run.flow_snapshot = self._make_snapshot(
+            "feature-develop", {"GITHUB_REF": "issue:10", "GITHUB_EVENT": "issue_comment"})
+        gh_db.add(active_run)
+        gh_db.commit()
+
+        gh_channel._refresh_active_refs()
+        assert ("issue:10", "feature-develop") in gh_channel._active_refs
+
+
+class TestEyesReactionOrdering:
+    """Bug fix: eyes reaction must only fire after _active_refs check passes."""
+
+    def test_no_eyes_when_run_inflight(self, gh_channel, gh_db):
+        """If a run is in-flight, the comment should NOT get 👀."""
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel._active_refs = {("issue:5", "feature-develop")}
+
+        comment = {
+            "id": 999,
+            "body": "@llmflows:feature-develop improve error handling",
+            "user": {"login": "alice"},
+            "issue_url": "https://api.github.com/repos/org/repo/issues/5",
+        }
+
+        issue_data = {"number": 5, "title": "Improve errors", "body": "...", "html_url": "https://github.com/org/repo/issues/5"}
+
+        with patch("llmflows.services.gateway.github._gh_api") as mock_api:
+            mock_api.return_value = issue_data
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                with patch.object(gh_channel, "_react_eyes") as mock_eyes:
+                    gh_channel.allowed_users = {"alice"}
+                    triggered = set()
+                    gh_channel._process_issue_comment("org/repo", {"space_id": "s1", "space_name": "test"}, comment, triggered)
+                    mock_eyes.assert_not_called()
+
+    def test_eyes_when_no_run_inflight(self, gh_channel, gh_db):
+        """If no run is in-flight, the comment SHOULD get 👀 and enqueue."""
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel._active_refs = set()
+
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        flow = Flow(name="feature-develop", space_id=space.id)
+        gh_db.add(flow)
+        gh_db.commit()
+
+        comment = {
+            "id": 888,
+            "body": "@llmflows:feature-develop add caching",
+            "user": {"login": "bob"},
+            "issue_url": "https://api.github.com/repos/org/repo/issues/7",
+        }
+
+        issue_data = {"number": 7, "title": "Caching", "body": "...", "html_url": "https://github.com/org/repo/issues/7"}
+
+        with patch("llmflows.services.gateway.github._gh_api", return_value=issue_data):
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                with patch.object(gh_channel, "_react_eyes") as mock_eyes:
+                    gh_channel.allowed_users = {"bob"}
+                    triggered = set()
+                    gh_channel._process_issue_comment(
+                        "org/repo",
+                        {"space_id": space.id, "space_name": "test"},
+                        comment, triggered,
+                    )
+                    mock_eyes.assert_called_once_with("org/repo", "issue_comment", 888)
+
+
 class TestPostRunComment:
     """Tests for _post_run_comment — the outbound comment on run completion."""
 
