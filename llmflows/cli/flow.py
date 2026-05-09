@@ -182,14 +182,55 @@ def flow_export(output, name):
 @click.argument("file", type=click.Path(exists=True))
 def flow_import(file):
     """Import flows from a JSON file."""
+    from ..services.audit import FlowAuditService
+
     session = _get_session()
     try:
         space = _resolve_space(session)
+
+        data = json.loads(Path(file).read_text())
+        if "flows" not in data and "name" in data:
+            data = {"flows": [data]}
+        if not data.get("flows"):
+            raise click.ClickException(
+                f"No flows found in {file}. Expected a flow object with 'name' "
+                "and 'steps', or {\"flows\": [...]}."
+            )
+
+        audit_results: dict = {}
+        if space.audit_flows_on_import:
+            click.echo("Running security audit...")
+            unsafe_flows = []
+            for flow_data in data["flows"]:
+                name = flow_data.get("name", "")
+                if not name:
+                    continue
+                result = FlowAuditService.run_audit(space.path, name, flow_data)
+                audit_results[name] = result
+                if result.status == "unsafe":
+                    unsafe_flows.append((name, result))
+            if unsafe_flows:
+                for name, result in unsafe_flows:
+                    click.secho(f"\n  ✗ {name}", fg="red", bold=True)
+                    click.echo(f"    {result.summary}")
+                    for finding in result.findings:
+                        click.echo(f"    • {finding}")
+                click.echo()
+                raise SystemExit(1)
+
         flow_svc = FlowService(session)
         try:
-            count = flow_svc.import_flows(Path(file), space.id)
+            count = flow_svc._import_flows_data(data, space_id=space.id, skip_existing=False)
         except ValueError as e:
             raise click.ClickException(str(e))
+
+        for flow_data in data.get("flows", []):
+            name = flow_data.get("name", "")
+            if not name:
+                continue
+            if name in audit_results:
+                FlowAuditService.save_audit(space.path, name, audit_results[name])
+
         click.echo(f"Imported {count} flow(s) from {file}")
     finally:
         session.close()

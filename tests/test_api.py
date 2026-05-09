@@ -430,6 +430,143 @@ class TestFlowMemoryAPI:
             Base.metadata.drop_all(engine)
 
 
+class TestFlowImportAudit:
+    """Tests for pre-import security audit enforcement (issue #25)."""
+
+    def _make_client_with_audit(self, tmp_path, audit_enabled=True):
+        """Set up a DB, space with audit toggle, and return (client, space_id)."""
+        import io
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+
+        space_path = str(tmp_path / "audit-space")
+        (tmp_path / "audit-space").mkdir()
+
+        session = Session()
+        space = Space(
+            name="audit-space",
+            path=space_path,
+            audit_flows_on_import=audit_enabled,
+        )
+        session.add(space)
+        session.flush()
+        alias = AgentAlias(name="normal", type="pi", agent="cursor", model="default")
+        session.add(alias)
+        session.commit()
+        space_id = space.id
+        session.close()
+
+        def mock_services():
+            s = Session()
+            return s, SpaceService(s)
+
+        return Session, space_id, space_path, mock_services
+
+    def test_import_rejected_when_unsafe(self, tmp_path):
+        import io, json
+        Session, space_id, space_path, mock_svc = self._make_client_with_audit(tmp_path, audit_enabled=True)
+
+        unsafe_result = AuditResult(status="unsafe", summary="Dangerous patterns found", findings=["rm -rf /"])
+        payload = json.dumps({"flows": [{"name": "bad-flow", "steps": [{"name": "s1", "position": 0}]}]})
+
+        with (
+            patch("llmflows.ui.server._get_services", mock_svc),
+            patch("llmflows.services.audit.FlowAuditService.run_audit", return_value=unsafe_result) as mock_audit,
+        ):
+            c = TestClient(app)
+            resp = c.post(
+                f"/api/spaces/{space_id}/flows/import",
+                files={"file": ("f.json", io.BytesIO(payload.encode()), "application/json")},
+            )
+        assert resp.status_code == 422
+        assert "bad-flow" in resp.json()["detail"]
+        mock_audit.assert_called_once()
+
+        session = Session()
+        assert session.query(Flow).filter_by(name="bad-flow").first() is None
+        session.close()
+
+    def test_import_succeeds_when_safe(self, tmp_path):
+        import io, json
+        Session, space_id, space_path, mock_svc = self._make_client_with_audit(tmp_path, audit_enabled=True)
+
+        safe_result = AuditResult(status="safe", summary="All clear")
+        payload = json.dumps({"flows": [{"name": "good-flow", "version": 1, "steps": [{"name": "s1", "position": 0}]}]})
+
+        with (
+            patch("llmflows.ui.server._get_services", mock_svc),
+            patch("llmflows.services.audit.FlowAuditService.run_audit", return_value=safe_result),
+            patch("llmflows.services.audit.FlowAuditService.save_audit") as mock_save,
+        ):
+            c = TestClient(app)
+            resp = c.post(
+                f"/api/spaces/{space_id}/flows/import",
+                files={"file": ("f.json", io.BytesIO(payload.encode()), "application/json")},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["imported"] == 1
+        mock_save.assert_called_once_with(space_path, "good-flow", safe_result)
+
+    def test_import_skips_audit_when_disabled(self, tmp_path):
+        import io, json
+        Session, space_id, space_path, mock_svc = self._make_client_with_audit(tmp_path, audit_enabled=False)
+
+        payload = json.dumps({"flows": [{"name": "any-flow", "version": 1, "steps": [{"name": "s1", "position": 0}]}]})
+
+        with (
+            patch("llmflows.ui.server._get_services", mock_svc),
+            patch("llmflows.services.audit.FlowAuditService.run_audit") as mock_audit,
+        ):
+            c = TestClient(app)
+            resp = c.post(
+                f"/api/spaces/{space_id}/flows/import",
+                files={"file": ("f.json", io.BytesIO(payload.encode()), "application/json")},
+            )
+        assert resp.status_code == 200
+        mock_audit.assert_not_called()
+
+    def test_import_rejects_all_when_one_unsafe(self, tmp_path):
+        import io, json
+        Session, space_id, space_path, mock_svc = self._make_client_with_audit(tmp_path, audit_enabled=True)
+
+        safe_result = AuditResult(status="safe", summary="OK")
+        unsafe_result = AuditResult(status="unsafe", summary="Bad stuff", findings=["exfiltration"])
+
+        def side_effect(path, name, flow_dict):
+            return unsafe_result if name == "evil-flow" else safe_result
+
+        payload = json.dumps({"flows": [
+            {"name": "nice-flow", "steps": [{"name": "s1", "position": 0}]},
+            {"name": "evil-flow", "steps": [{"name": "s1", "position": 0}]},
+        ]})
+
+        with (
+            patch("llmflows.ui.server._get_services", mock_svc),
+            patch("llmflows.services.audit.FlowAuditService.run_audit", side_effect=side_effect),
+        ):
+            c = TestClient(app)
+            resp = c.post(
+                f"/api/spaces/{space_id}/flows/import",
+                files={"file": ("f.json", io.BytesIO(payload.encode()), "application/json")},
+            )
+        assert resp.status_code == 422
+        assert "evil-flow" in resp.json()["detail"]
+
+        session = Session()
+        assert session.query(Flow).filter_by(name="nice-flow").first() is None
+        assert session.query(Flow).filter_by(name="evil-flow").first() is None
+        session.close()
+
+
 class TestInboxMuteAPI:
     def test_get_inbox_muted_default(self, client):
         with patch("llmflows.ui.server.load_system_config", return_value={"daemon": {}}):
