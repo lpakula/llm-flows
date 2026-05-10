@@ -34,6 +34,7 @@ The channel passes these variables to every run. Declare the ones your flow need
 | `ISSUE_NUMBER` | Issue number (e.g. `42`) |
 | `ISSUE_TITLE` | Issue title |
 | `ISSUE_BODY` | Full issue body text |
+| `ISSUE_COMMENTS` | All conversation comments on the issue (formatted as `**user**: body`) |
 | `ISSUE_URL` | GitHub URL to the issue |
 
 ### PR context (when triggered from a PR comment or review comment)

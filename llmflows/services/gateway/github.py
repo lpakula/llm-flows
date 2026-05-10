@@ -317,6 +317,8 @@ class GitHubChannel:
 
         if is_pr:
             self._add_pr_context(run_vars, repo, issue_data["number"])
+        else:
+            self._add_issue_comments(run_vars, repo, issue_data["number"])
 
         self._enqueue(repo, space_info, flow_name, run_vars)
 
@@ -378,6 +380,19 @@ class GitHubChannel:
         run_vars["ISSUE_TITLE"] = issue.get("title", "")
         run_vars["ISSUE_BODY"] = _truncate(issue.get("body", "") or "")
         run_vars["ISSUE_URL"] = issue.get("html_url", "")
+
+    def _add_issue_comments(self, run_vars: dict, repo: str, issue_number: int) -> None:
+        """Fetch all conversation comments on an issue."""
+        comments = _gh_api(
+            f"/repos/{repo}/issues/{issue_number}/comments?per_page=100", self.token,
+        )
+        if comments and isinstance(comments, list):
+            parts = []
+            for c in comments:
+                user = c.get("user", {}).get("login", "?")
+                body = c.get("body", "")
+                parts.append(f"**{user}**: {body}")
+            run_vars["ISSUE_COMMENTS"] = _truncate("\n\n---\n\n".join(parts))
 
     def _add_pr_context(self, run_vars: dict, repo: str, pr_number: int) -> None:
         """Fetch full PR metadata, conversation comments, and review comments."""
