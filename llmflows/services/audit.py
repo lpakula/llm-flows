@@ -259,12 +259,7 @@ class SecurityAuditService:
 
     @staticmethod
     def get_audit_path(project_path: str, skill_name: str) -> Path:
-        return (
-            Path(project_path)
-            / SkillService.SKILLS_DIR
-            / skill_name
-            / AUDIT_FILE
-        )
+        return Path(project_path) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
 
     @staticmethod
     def get_audit(project_path: str, skill_name: str) -> AuditResult | None:

@@ -416,7 +416,8 @@ class TestSkillsAPI:
         assert resp.status_code == 404
 
     def test_list_skills_includes_audit(self, skills_client, skills_api_db):
-        audit_dir = Path(skills_api_db["tmpdir"]) / ".agents" / "skills" / "local-test"
+        audit_dir = Path(skills_api_db["tmpdir"]) / ".llmflows" / "skills" / "local-test"
+        audit_dir.mkdir(parents=True, exist_ok=True)
         (audit_dir / ".audit.json").write_text(json.dumps({
             "status": "safe",
             "summary": "No issues found",
@@ -431,7 +432,8 @@ class TestSkillsAPI:
         assert data[0]["audit"]["status"] == "safe"
 
     def test_get_skill_audit(self, skills_client, skills_api_db):
-        audit_dir = Path(skills_api_db["tmpdir"]) / ".agents" / "skills" / "local-test"
+        audit_dir = Path(skills_api_db["tmpdir"]) / ".llmflows" / "skills" / "local-test"
+        audit_dir.mkdir(parents=True, exist_ok=True)
         (audit_dir / ".audit.json").write_text(json.dumps({
             "status": "unsafe",
             "summary": "Dangerous patterns detected",
@@ -634,7 +636,9 @@ class TestSecurityAuditService:
         skill_dir = temp_dir / ".agents" / "skills" / "checked"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("# Test")
-        (skill_dir / ".audit.json").write_text(json.dumps({
+        audit_dir = temp_dir / ".llmflows" / "skills" / "checked"
+        audit_dir.mkdir(parents=True)
+        (audit_dir / ".audit.json").write_text(json.dumps({
             "status": "safe", "summary": "", "findings": [], "audited_at": "",
         }))
 
@@ -645,7 +649,9 @@ class TestSecurityAuditService:
         skill_dir = temp_dir / ".agents" / "skills" / "bad"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("# Bad")
-        (skill_dir / ".audit.json").write_text(json.dumps({
+        audit_dir = temp_dir / ".llmflows" / "skills" / "bad"
+        audit_dir.mkdir(parents=True)
+        (audit_dir / ".audit.json").write_text(json.dumps({
             "status": "unsafe", "summary": "Dangerous", "findings": ["X"], "audited_at": "",
         }))
 
