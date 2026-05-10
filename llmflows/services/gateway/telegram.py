@@ -561,7 +561,11 @@ class TelegramBot:
                 session = self.session_factory()
                 try:
                     run_svc = RunService(session)
-                    run = run_svc.enqueue(ctx["space_id"], ctx["flow_id"], run_variables=ctx["overrides"])
+                    try:
+                        run = run_svc.enqueue(ctx["space_id"], ctx["flow_id"], run_variables=ctx["overrides"])
+                    except ValueError as e:
+                        await update.message.reply_text(f"Cannot run {ctx['flow_name']}: {e}")
+                        return
                     await update.message.reply_text(
                         f"Queued <b>{ctx['flow_name']}</b>\nRun <code>{run.id}</code>",
                         parse_mode="HTML",
@@ -845,7 +849,11 @@ class TelegramBot:
                 return
 
             run_svc = RunService(session)
-            run = run_svc.enqueue(space_id, flow_id)
+            try:
+                run = run_svc.enqueue(space_id, flow_id)
+            except ValueError as e:
+                await query.edit_message_text(f"Cannot run {flow.name}: {e}")
+                return
             await query.edit_message_text(
                 f"Queued <b>{flow.name}</b>\nRun <code>{run.id}</code>",
                 parse_mode="HTML",

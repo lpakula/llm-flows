@@ -416,15 +416,6 @@ class Daemon:
                 warnings = flow_svc.validate_flow(flow.id, space_id=flow.space_id)
                 blockers = [w for w in warnings if w["warning_type"] in ("missing_alias", "missing_variable")]
 
-                from .audit import SecurityAuditService, FlowAuditService
-                space = session.query(Space).filter_by(id=flow.space_id).first() if flow.space_id else None
-                if space:
-                    all_safe, unsafe_skills = SecurityAuditService.all_skills_safe(space.path)
-                    if not all_safe:
-                        blockers.append({"message": f"Unsafe/unaudited skills: {', '.join(unsafe_skills)}"})
-                    if not FlowAuditService.is_safe(space.path, flow.name):
-                        blockers.append({"message": f"Flow '{flow.name}' has not passed security audit"})
-
                 if blockers:
                     logger.warning(
                         "Skipping scheduled run for flow %s (%s): %s",

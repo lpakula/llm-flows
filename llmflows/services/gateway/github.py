@@ -461,11 +461,18 @@ class GitHubChannel:
                 return
 
             run_svc = RunService(session)
-            run = run_svc.enqueue(
-                space_id=space_info["space_id"],
-                flow_id=flow.id,
-                run_variables=run_vars,
-            )
+            try:
+                run = run_svc.enqueue(
+                    space_id=space_info["space_id"],
+                    flow_id=flow.id,
+                    run_variables=run_vars,
+                )
+            except ValueError as e:
+                logger.warning("GitHub: rejected flow '%s' for %s (repo %s): %s",
+                               flow_name, run_vars.get("GITHUB_REF", "?"), repo, e)
+                github_ref = run_vars.get("GITHUB_REF", "")
+                self._post_error_comment(repo, github_ref, str(e))
+                return
             logger.info("GitHub: enqueued flow '%s' run %s for %s (repo %s)",
                          flow_name, run.id, run_vars.get("GITHUB_REF", "?"), repo)
 

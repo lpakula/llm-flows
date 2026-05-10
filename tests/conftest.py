@@ -3,6 +3,7 @@
 import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -18,6 +19,14 @@ def reset_database_engine():
     reset_engine()
     yield
     reset_engine()
+
+
+@pytest.fixture(autouse=True)
+def _bypass_audit_checks():
+    """Allow enqueue without audit files in tests."""
+    with patch("llmflows.services.audit.FlowAuditService.is_safe", return_value=True), \
+         patch("llmflows.services.audit.SecurityAuditService.all_skills_safe", return_value=(True, [])):
+        yield
 
 
 @pytest.fixture

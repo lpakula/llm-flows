@@ -15,17 +15,38 @@ class RunService:
         self.session = session
 
     def enqueue(self, space_id: str, flow_id: str, run_variables: dict[str, str] | None = None) -> FlowRun:
-        """Create a FlowRun in the queue, optionally with run-time variable values baked into the snapshot."""
+        """Create a FlowRun in the queue, optionally with run-time variable values baked into the snapshot.
+
+        Raises ValueError if the flow or any skills have not passed security audit.
+        """
         from .flow import FlowService
+        from .audit import FlowAuditService, SecurityAuditService
+
+        flow_svc = FlowService(self.session)
+        flow = flow_svc.get(flow_id)
+        if not flow:
+            raise ValueError(f"Flow not found: {flow_id}")
+
+        space = self.session.query(Space).filter_by(id=space_id).first()
+        if space:
+            if not FlowAuditService.is_safe(space.path, flow.name):
+                raise ValueError(
+                    f"Flow '{flow.name}' has not passed security audit. "
+                    "Run an audit or mark it safe before running."
+                )
+            all_safe, unsafe_skills = SecurityAuditService.all_skills_safe(space.path)
+            if not all_safe:
+                raise ValueError(
+                    f"Unsafe or unaudited skills: {', '.join(unsafe_skills)}. "
+                    "Audit or mark them safe before running."
+                )
+
         run = FlowRun(
             space_id=space_id,
             flow_id=flow_id,
         )
         if run_variables:
-            flow_svc = FlowService(self.session)
-            flow = flow_svc.get(flow_id)
-            flow_name = flow.name if flow else ""
-            snapshot = flow_svc.build_flow_snapshot(flow_name, space_id=space_id)
+            snapshot = flow_svc.build_flow_snapshot(flow.name, space_id=space_id)
             if snapshot:
                 snap_vars = snapshot.get("variables", {})
                 for k, v in run_variables.items():

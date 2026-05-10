@@ -273,7 +273,11 @@ class SlackChannel:
                 session = self.session_factory()
                 try:
                     run_svc = RunService(session)
-                    run = run_svc.enqueue(ctx["space_id"], ctx["flow_id"], run_variables=ctx["overrides"])
+                    try:
+                        run = run_svc.enqueue(ctx["space_id"], ctx["flow_id"], run_variables=ctx["overrides"])
+                    except ValueError as e:
+                        say(text=f"Cannot run *{ctx['flow_name']}*: {e}", channel=channel)
+                        return
                     say(text=f"Queued *{ctx['flow_name']}*\nRun `{run.id}`", channel=channel)
                 finally:
                     session.close()
@@ -929,7 +933,11 @@ class SlackChannel:
                 return
 
             run_svc = RunService(session)
-            run = run_svc.enqueue(space_id, flow_id)
+            try:
+                run = run_svc.enqueue(space_id, flow_id)
+            except ValueError as e:
+                self._update_message(channel, message_ts, f"Cannot run *{flow.name}*: {e}")
+                return
             self._update_message(
                 channel, message_ts,
                 f"Queued *{flow.name}*\nRun `{run.id}`",

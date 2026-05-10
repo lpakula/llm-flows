@@ -1056,19 +1056,10 @@ async def schedule_flow_run(space_id: str, body: ScheduleBody):
             messages = "; ".join(w["message"] for w in blockers)
             raise HTTPException(status_code=400, detail=messages)
 
-        all_safe, unsafe_skills = SecurityAuditService.all_skills_safe(space.path)
-        if not all_safe:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsafe or unaudited skills: {', '.join(unsafe_skills)}. Audit or mark them safe before running.",
-            )
-        if not FlowAuditService.is_safe(space.path, flow.name):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Flow '{flow.name}' has not passed security audit. Run an audit or mark it safe before running.",
-            )
-
-        run = run_svc.enqueue(space_id, body.flow_id, run_variables=run_vars or None)
+        try:
+            run = run_svc.enqueue(space_id, body.flow_id, run_variables=run_vars or None)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         return run.to_dict()
     finally:
         session.close()
