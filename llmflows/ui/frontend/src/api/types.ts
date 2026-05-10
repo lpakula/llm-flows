@@ -8,6 +8,7 @@ export interface Space {
 export interface SpaceSettings {
   max_concurrent_tasks: number;
   audit_flows_on_import: boolean;
+  block_unsafe_runs: boolean;
 }
 
 export type StepType = "agent" | "code" | "hitl";
@@ -239,6 +240,7 @@ export interface InboxItem {
   flow_name: string;
   prompt: string;
   user_message: string;
+  inbox_title: string;
   log_path: string;
   awaiting_since: string;
 }
@@ -264,6 +266,8 @@ export interface CompletedRunItem {
   flow_name: string;
   outcome: string;
   summary: string;
+  inbox_title: string;
+  inbox_body: string;
   duration_seconds: number | null;
   cost_usd: number | null;
   completed_at: string;

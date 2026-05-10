@@ -156,6 +156,7 @@ class ConnectorUpdateBody(BaseModel):
 class SpaceSettingsUpdate(BaseModel):
     max_concurrent_tasks: Optional[int] = None
     audit_flows_on_import: Optional[bool] = None
+    block_unsafe_runs: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -944,6 +945,7 @@ async def get_space_settings(space_id: str):
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
             "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
+            "block_unsafe_runs": bool(space.block_unsafe_runs) if space.block_unsafe_runs is not None else True,
         }
     finally:
         session.close()
@@ -962,6 +964,8 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
         if body.audit_flows_on_import is not None:
             updates["audit_flows_on_import"] = body.audit_flows_on_import
+        if body.block_unsafe_runs is not None:
+            updates["block_unsafe_runs"] = body.block_unsafe_runs
         if updates:
             space_svc.update(space_id, **updates)
             session.refresh(space)
@@ -969,6 +973,7 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
             "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
+            "block_unsafe_runs": bool(space.block_unsafe_runs) if space.block_unsafe_runs is not None else True,
         }
     finally:
         session.close()
@@ -1844,6 +1849,8 @@ async def get_inbox():
                 except (PermissionError, OSError):
                     pass
 
+                hitl_title, _ = ContextService.parse_inbox_message(user_message)
+
                 awaiting.append({
                     "inbox_id": item.id,
                     "step_run_id": sr.id,
@@ -1857,6 +1864,7 @@ async def get_inbox():
                     "flow_name": run.flow_name or "",
                     "prompt": sr.prompt or "",
                     "user_message": user_message,
+                    "inbox_title": hitl_title,
                     "log_path": sr.log_path or "",
                     "awaiting_since": (sr.awaiting_user_at.isoformat() + "Z") if sr.awaiting_user_at else None,
                 })
@@ -1884,6 +1892,8 @@ async def get_inbox():
                     run_svc.archive_inbox_item(item.id)
                     continue
 
+                inbox_title, inbox_body = ContextService.parse_inbox_message(inbox_message)
+
                 completed.append({
                     "inbox_id": item.id,
                     "run_id": run.id,
@@ -1893,6 +1903,8 @@ async def get_inbox():
                     "flow_name": run.flow_name or "",
                     "outcome": run.outcome or "",
                     "summary": inbox_message,
+                    "inbox_title": inbox_title,
+                    "inbox_body": inbox_body,
                     "duration_seconds": run.duration_seconds,
                     "cost_usd": run.cost_usd,
                     "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,

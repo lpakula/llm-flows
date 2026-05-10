@@ -138,6 +138,7 @@ class Space(Base):
     inbox_completed_runs: bool = Column(Boolean, default=True)
     variables: str = Column(Text, default="{}")
     audit_flows_on_import: bool = Column(Boolean, default=True)
+    block_unsafe_runs: bool = Column(Boolean, default=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     flows = relationship("Flow", back_populates="space", cascade="all, delete-orphan")

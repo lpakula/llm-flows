@@ -140,31 +140,6 @@ export function SpaceSettingsView() {
                 )}
               </td>
             </tr>
-            <tr className="bg-gray-900 border-b border-gray-800">
-              <td className="px-4 py-3 font-medium text-white whitespace-nowrap">Auto-audit on import</td>
-              <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">Automatically run security audit when flows are imported</td>
-              <td className="px-4 py-3">
-                <button
-                  onClick={async () => {
-                    if (!spaceId || !settings) return;
-                    const updated = await api.updateSpaceSettings(spaceId, {
-                      audit_flows_on_import: !settings.audit_flows_on_import,
-                    });
-                    setSettings(updated);
-                  }}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                    settings?.audit_flows_on_import ? "bg-blue-600" : "bg-gray-700"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                      settings?.audit_flows_on_import ? "translate-x-[18px]" : "translate-x-[3px]"
-                    }`}
-                  />
-                </button>
-              </td>
-              <td className="px-4 py-3"></td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -173,7 +148,7 @@ export function SpaceSettingsView() {
         <div className="px-4 py-3 bg-gray-900/60 border-b border-gray-800">
           <h3 className="text-sm font-medium text-white">Security</h3>
         </div>
-        <div className="px-4 py-4 bg-gray-900">
+        <div className="px-4 py-4 bg-gray-900 border-b border-gray-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {allClear ? (
@@ -205,6 +180,54 @@ export function SpaceSettingsView() {
               View details
             </button>
           </div>
+        </div>
+        <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex items-center justify-between">
+          <div>
+            <p className="text-sm text-white">Security audit on import</p>
+            <p className="text-xs text-gray-500 mt-0.5">Automatically run security audit before flows are imported</p>
+          </div>
+          <button
+            onClick={async () => {
+              if (!spaceId || !settings) return;
+              const updated = await api.updateSpaceSettings(spaceId, {
+                audit_flows_on_import: !settings.audit_flows_on_import,
+              });
+              setSettings(updated);
+            }}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+              settings?.audit_flows_on_import ? "bg-blue-600" : "bg-gray-700"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                settings?.audit_flows_on_import ? "translate-x-[18px]" : "translate-x-[3px]"
+              }`}
+            />
+          </button>
+        </div>
+        <div className="px-4 py-3 bg-gray-900 flex items-center justify-between">
+          <div>
+            <p className="text-sm text-white">Block unsafe runs</p>
+            <p className="text-xs text-gray-500 mt-0.5">Require security audit to pass before runs can be enqueued</p>
+          </div>
+          <button
+            onClick={async () => {
+              if (!spaceId || !settings) return;
+              const updated = await api.updateSpaceSettings(spaceId, {
+                block_unsafe_runs: !settings.block_unsafe_runs,
+              });
+              setSettings(updated);
+            }}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+              settings?.block_unsafe_runs ? "bg-blue-600" : "bg-gray-700"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                settings?.block_unsafe_runs ? "translate-x-[18px]" : "translate-x-[3px]"
+              }`}
+            />
+          </button>
         </div>
       </div>
 
