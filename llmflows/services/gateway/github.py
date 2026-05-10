@@ -174,7 +174,7 @@ class GitHubChannel:
             session.close()
 
     def _resolve_bot_user(self) -> None:
-        """Fetch the authenticated user's login to skip self-authored comments."""
+        """Fetch the authenticated user's login for reaction-based dedup."""
         data = _gh_api("/user", self.token)
         if data and "login" in data:
             self._bot_user = data["login"]
@@ -240,8 +240,7 @@ class GitHubChannel:
         if comments and isinstance(comments, list):
             triggered: set[tuple[str, str]] = set()  # (issue_url, flow_name)
             for comment in comments:
-                if not self._is_bot_user(comment):
-                    self._process_issue_comment(repo, space_info, comment, triggered)
+                self._process_issue_comment(repo, space_info, comment, triggered)
 
         # Poll inline PR review comments (newest first)
         review_comments = _gh_api(
@@ -251,8 +250,7 @@ class GitHubChannel:
         if review_comments and isinstance(review_comments, list):
             triggered_review: set[tuple[str, str]] = set()
             for comment in review_comments:
-                if not self._is_bot_user(comment):
-                    self._process_review_comment(repo, space_info, comment, triggered_review)
+                self._process_review_comment(repo, space_info, comment, triggered_review)
 
         self._last_checked[repo] = now
 
@@ -267,12 +265,6 @@ class GitHubChannel:
             return False
         login = comment_or_issue.get("user", {}).get("login", "")
         return login.lower() in self.allowed_users
-
-    def _is_bot_user(self, item: dict) -> bool:
-        """True if the item was authored by the bot's own GitHub user."""
-        if not self._bot_user:
-            return False
-        return item.get("user", {}).get("login") == self._bot_user
 
     def _process_issue_comment(self, repo: str, space_info: dict, comment: dict,
                                triggered: set[tuple[str, str]]) -> None:
