@@ -3,9 +3,10 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApp } from "@/App";
 import { useInterval } from "@/hooks/useInterval";
-import type { Flow, Space } from "@/api/types";
+import type { Flow, Space, SkillInfo } from "@/api/types";
 import { formatCost, formatSeconds } from "@/lib/format";
 import { AuditBadge } from "@/components/AuditBadge";
+import { SecurityAuditModal, type AuditResource } from "@/components/SecurityAuditModal";
 import { Circle, Star, Clock, CalendarClock } from "lucide-react";
 
 function shortDateTime(iso: string | null | undefined): string {
@@ -22,14 +23,18 @@ export function SpaceFlowsView() {
   const [flows, setFlows] = useState<Flow[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newFlow, setNewFlow] = useState({ name: "", description: "", copy_from: "" });
+  const [showImportAudit, setShowImportAudit] = useState(false);
+  const [importedCount, setImportedCount] = useState(0);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
   const navigate = useNavigate();
   const { reload } = useApp();
 
   const load = useCallback(async () => {
     if (!spaceId) return;
-    const [s, f] = await Promise.all([api.getSpace(spaceId), api.listFlows(spaceId)]);
+    const [s, f, sk] = await Promise.all([api.getSpace(spaceId), api.listFlows(spaceId), api.listSkills(spaceId)]);
     setSpace(s);
     setFlows(f);
+    setSkills(sk);
   }, [spaceId]);
 
   useEffect(() => {
@@ -73,10 +78,15 @@ export function SpaceFlowsView() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const result = await api.importFlows(spaceId, file);
-      alert(`Imported ${result.imported} flow(s)`);
-      load();
+      const result = await api.importFlows(spaceId, file, true);
+      setImportedCount(result.imported);
+      await load();
       reload();
+      if (result.should_audit) {
+        setShowImportAudit(true);
+      } else {
+        alert(`Imported ${result.imported} flow(s)`);
+      }
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Import failed");
     }
@@ -204,6 +214,30 @@ export function SpaceFlowsView() {
           <div className="col-span-3 text-gray-500 text-center py-12">No flows</div>
         )}
       </div>
+
+      {spaceId && (
+        <SecurityAuditModal
+          open={showImportAudit}
+          onClose={() => setShowImportAudit(false)}
+          title="Import Security Audit"
+          subtitle={`Imported ${importedCount} flow(s) — auditing for safety`}
+          autoRun
+          flows={flows.map((f): AuditResource => ({
+            name: f.name,
+            key: f.id,
+            link: `/space/${spaceId}/flow/${f.id}`,
+            audit: f.audit ?? null,
+          }))}
+          skills={skills.map((s): AuditResource => ({
+            name: s.name,
+            key: s.name,
+            audit: s.audit ?? null,
+          }))}
+          onAuditFlow={(flowId) => api.runFlowAudit(flowId)}
+          onAuditSkill={(skillName) => api.runSkillAudit(spaceId, skillName)}
+          onComplete={load}
+        />
+      )}
     </div>
   );
 }

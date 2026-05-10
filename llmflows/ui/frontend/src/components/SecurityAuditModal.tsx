@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { AuditResult } from "@/api/types";
 import { X, RefreshCw, ShieldAlert, ShieldOff, ShieldCheck, ExternalLink, Loader2 } from "lucide-react";
@@ -119,6 +119,9 @@ export function SecurityAuditModal({
   onAuditFlow,
   onAuditSkill,
   onComplete,
+  autoRun,
+  title,
+  subtitle,
 }: {
   open: boolean;
   onClose: () => void;
@@ -127,15 +130,32 @@ export function SecurityAuditModal({
   onAuditFlow: (key: string) => Promise<AuditResult>;
   onAuditSkill: (key: string) => Promise<AuditResult>;
   onComplete: () => void;
+  autoRun?: boolean;
+  title?: string;
+  subtitle?: string;
 }) {
   const navigate = useNavigate();
   const [auditing, setAuditing] = useState(false);
   const [auditingKeys, setAuditingKeys] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, AuditResult>>(new Map());
+  const autoRunTriggered = useRef(false);
 
   const applyOverrides = useCallback((resources: AuditResource[]): AuditResource[] =>
     resources.map((r) => overrides.has(r.key) ? { ...r, audit: overrides.get(r.key)! } : r),
   [overrides]);
+
+  const handleRunAllRef = useRef<(() => void) | undefined>(undefined);
+
+  useEffect(() => {
+    if (open && autoRun && !autoRunTriggered.current && handleRunAllRef.current) {
+      autoRunTriggered.current = true;
+      handleRunAllRef.current();
+    }
+  }, [open, autoRun]);
+
+  useEffect(() => {
+    if (!open) autoRunTriggered.current = false;
+  }, [open]);
 
   if (!open) return null;
 
@@ -176,6 +196,7 @@ export function SecurityAuditModal({
     setAuditing(false);
     onComplete();
   };
+  handleRunAllRef.current = handleRunAll;
 
   const handleNavigate = (path: string) => { onClose(); navigate(path); };
 
@@ -190,7 +211,10 @@ export function SecurityAuditModal({
     >
       <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-          <h3 className="text-base font-semibold text-white">Security Audit</h3>
+          <div>
+            <h3 className="text-base font-semibold text-white">{title || "Security Audit"}</h3>
+            {subtitle && <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>}
+          </div>
           <div className="flex items-center gap-3">
             {(toAuditCount > 0 || auditing) && (
               <button

@@ -156,13 +156,14 @@ export const api = {
   getFlowMemory: (flowId: string) => get<{ files: { name: string; content: string }[] }>(`/api/flows/${flowId}/memory`),
   clearFlowMemory: (flowId: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory`),
   deleteMemoryFile: (flowId: string, filename: string) => del<{ ok: boolean }>(`/api/flows/${flowId}/memory/${encodeURIComponent(filename)}`),
-  importFlows: (spaceId: string, file: File) => {
+  importFlows: (spaceId: string, file: File, skipAudit = false) => {
     const formData = new FormData();
     formData.append("file", file);
-    return fetch(`/api/spaces/${spaceId}/flows/import`, { method: "POST", body: formData }).then(async (r) => {
+    const url = `/api/spaces/${spaceId}/flows/import${skipAudit ? "?skip_audit=true" : ""}`;
+    return fetch(url, { method: "POST", body: formData }).then(async (r) => {
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || `Import failed (${r.status})`);
-      return data;
+      return data as { imported: number; should_audit: boolean };
     });
   },
 

@@ -137,7 +137,7 @@ class Space(Base):
     max_concurrent_tasks: int = Column(Integer, default=1)
     inbox_completed_runs: bool = Column(Boolean, default=True)
     variables: str = Column(Text, default="{}")
-    audit_flows_on_import: bool = Column(Boolean, default=False)
+    audit_flows_on_import: bool = Column(Boolean, default=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     flows = relationship("Flow", back_populates="space", cascade="all, delete-orphan")
@@ -171,7 +171,7 @@ class Space(Base):
             "path": self.path,
             "max_concurrent_tasks": self.max_concurrent_tasks if self.max_concurrent_tasks is not None else 1,
             "variables": self.get_variables(),
-            "audit_flows_on_import": bool(self.audit_flows_on_import) if self.audit_flows_on_import is not None else False,
+            "audit_flows_on_import": bool(self.audit_flows_on_import) if self.audit_flows_on_import is not None else True,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

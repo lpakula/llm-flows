@@ -2231,7 +2231,7 @@ async def export_flow_to_disk(flow_id: str):
 
 
 @app.post("/api/spaces/{space_id}/flows/import")
-async def import_space_flows(space_id: str, file: UploadFile = File(...)):
+async def import_space_flows(space_id: str, file: UploadFile = File(...), skip_audit: bool = False):
     session, space_svc = _get_services()
     try:
         space = space_svc.get(space_id)
@@ -2245,7 +2245,7 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="No flows found in file. Expected a flow object with 'name' and 'steps', or {\"flows\": [...]}.")
 
         audit_results: dict[str, AuditResult] = {}
-        if space.audit_flows_on_import:
+        if space.audit_flows_on_import and not skip_audit:
             unsafe_flows = []
             for flow_data in data["flows"]:
                 name = flow_data.get("name", "")
@@ -2273,7 +2273,7 @@ async def import_space_flows(space_id: str, file: UploadFile = File(...)):
             else:
                 FlowAuditService.clear_audit(space.path, name)
 
-        return {"imported": count}
+        return {"imported": count, "should_audit": space.audit_flows_on_import and skip_audit}
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
     except ValueError as e:
