@@ -1,0 +1,36 @@
+{
+  "name": "gh-brainstorm",
+  "version": 1,
+  "description": "Deep-research a feature from a GitHub issue: analyze the codebase, propose up to 3 high-level approaches, and post them to the issue for the user to select or refine.",
+  "steps": [
+    {
+      "name": "brainstorm",
+      "position": 0,
+      "content": "# BRAINSTORM\n\n## PURPOSE\n\nResearch the codebase and propose up to 3 distinct high-level approaches to solve the task. Each approach should be a concise strategic option — not a detailed plan.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}- **Task:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n1. Read `README.md` and `AGENTS.md` to understand the project architecture.\n2. Research the codebase thoroughly — trace relevant code paths, understand existing patterns, constraints, and conventions.\n3. Use `web_search` if the task involves external libraries, APIs, or patterns you need to look up.\n4. {% if flow.ISSUE_NUMBER %}Use the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand prior brainstorm iterations and user feedback.{% endif %}\n5. Think through multiple possible approaches, evaluating complexity, risk, and alignment with project conventions.\n6. Select up to 3 meaningfully different approaches. If there is truly only one viable path, present just that one — do not pad with weak alternatives.\n7. Write the analysis to `{{step.dir}}/_result.md` with this structure:\n\n   ### Output format\n\n   For each approach:\n   - **Name** — a short descriptive label (e.g. \"Extend existing service\", \"New standalone module\")\n   - **Description** — 2-4 sentences explaining the idea at a strategic level: what changes conceptually, how it fits into the architecture, what the trade-offs are\n   - **Pros / Cons** — brief bullet points\n\n   End with a short comparison noting which approach you'd lean towards and why.\n\n## FORBIDDEN\n\n- Do NOT make any code changes. No branches, no worktrees, no commits.\n- Do NOT include implementation details: no file paths, no function names, no code snippets, no step-by-step instructions.\n- Do NOT write an implementation plan — that is the job of `gh-develop`.\n- Do NOT repeat previous brainstorm output if iterating — build on prior discussion in the issue thread.",
+      "step_type": "code",
+      "connectors": [
+        "github"
+      ]
+    },
+    {
+      "name": "post-to-github",
+      "position": 1,
+      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the proposed approaches as a comment on the GitHub issue so the user can select one or ask for refinement.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the approaches as a comment on issue #{{flow.ISSUE_NUMBER}}.\n   - Format clearly with numbered approaches so the user can reference them by number.\n   - End the comment with:\n     > Pick an approach by number, or reply to refine. When ready:\n     > - **Iterate:** `/llmflows:gh-chat` to discuss further\n     > - **Implement:** `/llmflows:gh-develop` to start building (mention which approach)\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief one-line summary of each proposed approach\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to select an approach, refine with /llmflows:gh-chat, or trigger /llmflows:gh-develop when ready.\"",
+      "gates": [
+        {
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md must exist and not be empty."
+        }
+      ],
+      "connectors": [
+        "github"
+      ]
+    }
+  ],
+  "variables": {
+    "TASK_DESCRIPTION": {
+      "value": "",
+      "is_env": false
+    }
+  }
+}

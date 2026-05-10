@@ -350,6 +350,41 @@ class TestEyesReactionOrdering:
                     mock_eyes.assert_called_once_with("org/repo", "issue_comment", 888)
 
 
+class TestIssueComments:
+    """Tests for _add_issue_comments — fetching the full issue thread."""
+
+    def test_issue_comments_fetched(self, gh_channel):
+        """Issue comments should be fetched and joined into ISSUE_COMMENTS."""
+        comments_response = [
+            {"user": {"login": "alice"}, "body": "I think this relates to the timeout bug"},
+            {"user": {"login": "bob"}, "body": "Confirmed, I can reproduce on main"},
+        ]
+        run_vars = {}
+        with patch("llmflows.services.gateway.github._gh_api", return_value=comments_response):
+            gh_channel._add_issue_comments(run_vars, "org/repo", 42)
+
+        assert "ISSUE_COMMENTS" in run_vars
+        assert "**alice**: I think this relates to the timeout bug" in run_vars["ISSUE_COMMENTS"]
+        assert "**bob**: Confirmed, I can reproduce on main" in run_vars["ISSUE_COMMENTS"]
+        assert "---" in run_vars["ISSUE_COMMENTS"]
+
+    def test_issue_comments_empty(self, gh_channel):
+        """Empty comment list should not set ISSUE_COMMENTS."""
+        run_vars = {}
+        with patch("llmflows.services.gateway.github._gh_api", return_value=[]):
+            gh_channel._add_issue_comments(run_vars, "org/repo", 42)
+
+        assert "ISSUE_COMMENTS" not in run_vars
+
+    def test_issue_comments_api_failure(self, gh_channel):
+        """API failure should not set ISSUE_COMMENTS."""
+        run_vars = {}
+        with patch("llmflows.services.gateway.github._gh_api", return_value=None):
+            gh_channel._add_issue_comments(run_vars, "org/repo", 42)
+
+        assert "ISSUE_COMMENTS" not in run_vars
+
+
 class TestPostRunComment:
     """Tests for _post_run_comment — the outbound comment on run completion."""
 
