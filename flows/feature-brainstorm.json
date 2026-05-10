@@ -1,6 +1,6 @@
 {
   "name": "feature-brainstorm",
-  "version": 6,
+  "version": 7,
   "description": "Deep-research a feature from a GitHub issue: analyze the codebase, propose up to 3 high-level approaches, and post them to the issue for the user to select or refine.",
   "steps": [
     {
@@ -15,7 +15,7 @@
     {
       "name": "post-to-github",
       "position": 1,
-      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the proposed approaches as a comment on the GitHub issue so the user can select one or ask for refinement.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the approaches as a comment on issue #{{flow.ISSUE_NUMBER}}.\n   - Format clearly with numbered approaches so the user can reference them by number.\n   - End the comment with:\n     > Pick an approach by number, or reply to refine. When ready:\n     > - **Iterate:** `@llmflows:feature-chat` to discuss further\n     > - **Implement:** `@llmflows:feature-develop` to start building (mention which approach)\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief one-line summary of each proposed approach\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to select an approach, refine with @llmflows:feature-chat, or trigger @llmflows:feature-develop when ready.\"",
+      "content": "# POST TO GITHUB\n\n## PURPOSE\n\nPost the proposed approaches as a comment on the GitHub issue so the user can select one or ask for refinement.\n\n## WORKFLOW\n\n1. Read the brainstorm analysis from `{{run.dir}}/artifacts/00-brainstorm/_result.md`.\n2. Use the GitHub connector to post the approaches as a comment on issue #{{flow.ISSUE_NUMBER}}.\n   - Format clearly with numbered approaches so the user can reference them by number.\n   - End the comment with:\n     > Pick an approach by number, or reply to refine. When ready:\n     > - **Iterate:** `/llmflows:feature-chat` to discuss further\n     > - **Implement:** `/llmflows:feature-develop` to start building (mention which approach)\n3. Write confirmation to `{{step.dir}}/_result.md` including the issue URL.\n4. Write to `{{run.dir}}/inbox.md`:\n   - Brief one-line summary of each proposed approach\n   - Issue URL for quick access\n   - Note: \"Reply on the issue to select an approach, refine with /llmflows:feature-chat, or trigger /llmflows:feature-develop when ready.\"",
       "gates": [
         {
           "command": "test -s {{run.dir}}/inbox.md",
