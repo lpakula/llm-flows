@@ -553,72 +553,20 @@ class TelegramBot:
             return
         self._active_chats.add(chat_id)
 
-        from ..audit import FlowAuditService, SecurityAuditService
-        from ..skill import SkillService
-
         session = self.session_factory()
         try:
             spaces = SpaceService(session).list_all()
             if not spaces:
                 await update.message.reply_text("No spaces registered.")
                 return
-
-            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
-            parts: list[str] = []
-
-            for space in spaces:
-                lines: list[str] = [f"<b>{space.name}</b>"]
-                flows = FlowService(session).list_by_space(space.id)
-                for f in flows:
-                    audit = FlowAuditService.get_audit(space.path, f.name)
-                    if audit is None:
-                        icon, status = "❓", "not audited"
-                        counts["unaudited"] += 1
-                    elif audit.status == "safe":
-                        icon, status = "✅", "safe"
-                        counts["safe"] += 1
-                    elif audit.status == "unsafe":
-                        icon, status = "⚠️", "unsafe"
-                        counts["unsafe"] += 1
-                    else:
-                        icon, status = "⏳", audit.status
-                        counts["error"] += 1
-                    lines.append(f"  {icon} {f.name} — {status}")
-
-                for skill_info in SkillService.discover(space.path):
-                    audit = SecurityAuditService.get_audit(space.path, skill_info.name)
-                    if audit is None:
-                        icon, status = "❓", "not audited"
-                        counts["unaudited"] += 1
-                    elif audit.status == "safe":
-                        icon, status = "✅", "safe"
-                        counts["safe"] += 1
-                    elif audit.status == "unsafe":
-                        icon, status = "⚠️", "unsafe"
-                        counts["unsafe"] += 1
-                    else:
-                        icon, status = "⏳", audit.status
-                        counts["error"] += 1
-                    lines.append(f"  {icon} 📄 {skill_info.name} — {status}")
-
-                parts.append("\n".join(lines))
-
-            summary = " · ".join(
-                f"{v} {k}" for k, v in counts.items() if v > 0
+            buttons = [
+                [InlineKeyboardButton(s.name, callback_data=f"audit_space:{s.id}")]
+                for s in spaces
+            ]
+            await update.message.reply_text(
+                "Select a space:",
+                reply_markup=InlineKeyboardMarkup(buttons),
             )
-            text = "\n\n".join(parts) + f"\n\n{summary}"
-
-            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
-            markup = None
-            if needs_audit > 0:
-                markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(
-                        f"Run Bulk Audit ({needs_audit})",
-                        callback_data="audit_bulk:all",
-                    ),
-                ]])
-
-            await self._send_message_safe(chat_id, text, markup)
         finally:
             session.close()
 
@@ -744,8 +692,12 @@ class TelegramBot:
             await self._cb_cancel_run(query, data[len("cancelrun:"):])
             return
 
+        if data.startswith("audit_space:"):
+            await self._cb_audit_space(query, chat_id, data[len("audit_space:"):])
+            return
+
         if data.startswith("audit_bulk:"):
-            await self._cb_audit_bulk(query, chat_id)
+            await self._cb_audit_bulk(query, chat_id, data[len("audit_bulk:"):])
             return
 
         if data.startswith("accept_improvement:"):
@@ -837,9 +789,77 @@ class TelegramBot:
         finally:
             session.close()
 
+    # ── Audit space callback ─────────────────────────────────────────────
+
+    async def _cb_audit_space(self, query, chat_id: int, space_id: str) -> None:
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                await query.edit_message_text("Space not found.")
+                return
+
+            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
+            lines: list[str] = [f"<b>{space.name}</b>"]
+
+            flows = FlowService(session).list_by_space(space.id)
+            for f in flows:
+                audit = FlowAuditService.get_audit(space.path, f.name)
+                if audit is None:
+                    icon, status = "❓", "not audited"
+                    counts["unaudited"] += 1
+                elif audit.status == "safe":
+                    icon, status = "✅", "safe"
+                    counts["safe"] += 1
+                elif audit.status == "unsafe":
+                    icon, status = "⚠️", "unsafe"
+                    counts["unsafe"] += 1
+                else:
+                    icon, status = "⏳", audit.status
+                    counts["error"] += 1
+                lines.append(f"  {icon} {f.name} — {status}")
+
+            for skill_info in SkillService.discover(space.path):
+                audit = SecurityAuditService.get_audit(space.path, skill_info.name)
+                if audit is None:
+                    icon, status = "❓", "not audited"
+                    counts["unaudited"] += 1
+                elif audit.status == "safe":
+                    icon, status = "✅", "safe"
+                    counts["safe"] += 1
+                elif audit.status == "unsafe":
+                    icon, status = "⚠️", "unsafe"
+                    counts["unsafe"] += 1
+                else:
+                    icon, status = "⏳", audit.status
+                    counts["error"] += 1
+                lines.append(f"  {icon} 📄 {skill_info.name} — {status}")
+
+            summary = " · ".join(
+                f"{v} {k}" for k, v in counts.items() if v > 0
+            )
+            text = "\n".join(lines) + f"\n\n{summary}"
+
+            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
+            markup = None
+            if needs_audit > 0:
+                markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        f"Run Bulk Audit ({needs_audit})",
+                        callback_data=f"audit_bulk:{space_id}",
+                    ),
+                ]])
+
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        finally:
+            session.close()
+
     # ── Bulk audit callback ────────────────────────────────────────────────
 
-    async def _cb_audit_bulk(self, query, chat_id: int) -> None:
+    async def _cb_audit_bulk(self, query, chat_id: int, space_id: str) -> None:
         await query.edit_message_reply_markup(reply_markup=None)
         await self._send_message_safe(chat_id, "Running security audit…")
 
@@ -852,30 +872,31 @@ class TelegramBot:
             results = {"audited": 0, "safe": 0, "unsafe": 0, "error": 0}
             session = self.session_factory()
             try:
-                spaces = SpaceService(session).list_all()
-                for space in spaces:
-                    flows = FlowService(session).list_by_space(space.id)
-                    for f in flows:
-                        existing = FlowAuditService.get_audit(space.path, f.name)
-                        if existing is None or existing.status in ("unsafe", "error"):
-                            try:
-                                r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
-                                results["audited"] += 1
-                                results[r.status] = results.get(r.status, 0) + 1
-                            except Exception:
-                                results["error"] += 1
-                                logger.warning("Audit failed for flow %s", f.name, exc_info=True)
+                space = SpaceService(session).get(space_id)
+                if not space:
+                    return results
+                flows = FlowService(session).list_by_space(space.id)
+                for f in flows:
+                    existing = FlowAuditService.get_audit(space.path, f.name)
+                    if existing is None or existing.status in ("unsafe", "error"):
+                        try:
+                            r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
+                            results["audited"] += 1
+                            results[r.status] = results.get(r.status, 0) + 1
+                        except Exception:
+                            results["error"] += 1
+                            logger.warning("Audit failed for flow %s", f.name, exc_info=True)
 
-                    for skill_info in SkillService.discover(space.path):
-                        existing = SecurityAuditService.get_audit(space.path, skill_info.name)
-                        if existing is None or existing.status in ("unsafe", "error"):
-                            try:
-                                r = SecurityAuditService.run_audit(space.path, skill_info.name)
-                                results["audited"] += 1
-                                results[r.status] = results.get(r.status, 0) + 1
-                            except Exception:
-                                results["error"] += 1
-                                logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
+                for skill_info in SkillService.discover(space.path):
+                    existing = SecurityAuditService.get_audit(space.path, skill_info.name)
+                    if existing is None or existing.status in ("unsafe", "error"):
+                        try:
+                            r = SecurityAuditService.run_audit(space.path, skill_info.name)
+                            results["audited"] += 1
+                            results[r.status] = results.get(r.status, 0) + 1
+                        except Exception:
+                            results["error"] += 1
+                            logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
             finally:
                 session.close()
             return results

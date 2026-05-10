@@ -215,7 +215,7 @@ class SlackChannel:
 
         @app.action(re.compile(
             r"^(space|run|respond|complete|dismiss|chatspace|chatflow"
-            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement|discard_improvement|audit_bulk):"
+            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement|discard_improvement|audit_space|audit_bulk):"
         ))
         def handle_action(ack, body, say):
             ack()
@@ -416,8 +416,11 @@ class SlackChannel:
         elif action_id.startswith("discard_improvement:"):
             self._cb_discard_improvement(channel, value, say, message_ts)
 
+        elif action_id.startswith("audit_space:"):
+            self._cb_audit_space(channel, value, say, message_ts)
+
         elif action_id.startswith("audit_bulk:"):
-            self._cb_audit_bulk(channel, say, message_ts)
+            self._cb_audit_bulk(channel, say, message_ts, value)
 
     # ── Helper: update or post message ───────────────────────────────────
 
@@ -465,78 +468,28 @@ class SlackChannel:
             say(text=":bell: Notifications unmuted.", channel=channel)
 
     def _cmd_audit(self, channel: str, say) -> None:
-        from ..audit import FlowAuditService, SecurityAuditService
-        from ..skill import SkillService
-
         session = self.session_factory()
         try:
             spaces = SpaceService(session).list_all()
             if not spaces:
                 say(text="No spaces registered.", channel=channel)
                 return
-
-            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
-            sections: list[dict] = []
-
-            for space in spaces:
-                lines: list[str] = [f"*{space.name}*"]
-                flows = FlowService(session).list_by_space(space.id)
-                for f in flows:
-                    audit = FlowAuditService.get_audit(space.path, f.name)
-                    if audit is None:
-                        icon, status = ":grey_question:", "not audited"
-                        counts["unaudited"] += 1
-                    elif audit.status == "safe":
-                        icon, status = ":white_check_mark:", "safe"
-                        counts["safe"] += 1
-                    elif audit.status == "unsafe":
-                        icon, status = ":warning:", "unsafe"
-                        counts["unsafe"] += 1
-                    else:
-                        icon, status = ":hourglass:", audit.status
-                        counts["error"] += 1
-                    lines.append(f"  {icon} {f.name} — {status}")
-
-                for skill_info in SkillService.discover(space.path):
-                    audit = SecurityAuditService.get_audit(space.path, skill_info.name)
-                    if audit is None:
-                        icon, status = ":grey_question:", "not audited"
-                        counts["unaudited"] += 1
-                    elif audit.status == "safe":
-                        icon, status = ":white_check_mark:", "safe"
-                        counts["safe"] += 1
-                    elif audit.status == "unsafe":
-                        icon, status = ":warning:", "unsafe"
-                        counts["unsafe"] += 1
-                    else:
-                        icon, status = ":hourglass:", audit.status
-                        counts["error"] += 1
-                    lines.append(f"  {icon} :page_facing_up: {skill_info.name} — {status}")
-
-                sections.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "\n".join(lines)},
-                })
-
-            summary = " · ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
-            sections.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": summary},
-            })
-
-            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
-            if needs_audit > 0:
-                sections.append({
+            blocks = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*Select a space:*"}},
+                {
                     "type": "actions",
-                    "elements": [{
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": f"Run Bulk Audit ({needs_audit})"},
-                        "action_id": "audit_bulk:all",
-                        "value": "all",
-                    }],
-                })
-
-            say(blocks=sections, text=f"Security audit: {summary}", channel=channel)
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": s.name},
+                            "action_id": f"audit_space:{s.id}",
+                            "value": s.id,
+                        }
+                        for s in spaces
+                    ],
+                },
+            ]
+            say(blocks=blocks, text="Select a space:", channel=channel)
         finally:
             session.close()
 
@@ -810,9 +763,81 @@ class SlackChannel:
 
         trigger_daemon_reexec()
 
+    # ── Audit space callback ─────────────────────────────────────────────
+
+    def _cb_audit_space(self, channel: str, space_id: str, say, message_ts: str) -> None:
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        session = self.session_factory()
+        try:
+            space = SpaceService(session).get(space_id)
+            if not space:
+                self._update_message(channel, message_ts, "Space not found.")
+                return
+
+            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
+            lines: list[str] = [f"*{space.name}*"]
+
+            flows = FlowService(session).list_by_space(space.id)
+            for f in flows:
+                audit = FlowAuditService.get_audit(space.path, f.name)
+                if audit is None:
+                    icon, status = ":grey_question:", "not audited"
+                    counts["unaudited"] += 1
+                elif audit.status == "safe":
+                    icon, status = ":white_check_mark:", "safe"
+                    counts["safe"] += 1
+                elif audit.status == "unsafe":
+                    icon, status = ":warning:", "unsafe"
+                    counts["unsafe"] += 1
+                else:
+                    icon, status = ":hourglass:", audit.status
+                    counts["error"] += 1
+                lines.append(f"  {icon} {f.name} — {status}")
+
+            for skill_info in SkillService.discover(space.path):
+                audit = SecurityAuditService.get_audit(space.path, skill_info.name)
+                if audit is None:
+                    icon, status = ":grey_question:", "not audited"
+                    counts["unaudited"] += 1
+                elif audit.status == "safe":
+                    icon, status = ":white_check_mark:", "safe"
+                    counts["safe"] += 1
+                elif audit.status == "unsafe":
+                    icon, status = ":warning:", "unsafe"
+                    counts["unsafe"] += 1
+                else:
+                    icon, status = ":hourglass:", audit.status
+                    counts["error"] += 1
+                lines.append(f"  {icon} :page_facing_up: {skill_info.name} — {status}")
+
+            summary = " · ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
+
+            sections: list[dict] = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
+            ]
+
+            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
+            if needs_audit > 0:
+                sections.append({
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": f"Run Bulk Audit ({needs_audit})"},
+                        "action_id": f"audit_bulk:{space_id}",
+                        "value": space_id,
+                    }],
+                })
+
+            self._update_message(channel, message_ts, f"Security audit: {summary}", sections)
+        finally:
+            session.close()
+
     # ── Bulk audit callback ────────────────────────────────────────────────
 
-    def _cb_audit_bulk(self, channel: str, say, message_ts: str) -> None:
+    def _cb_audit_bulk(self, channel: str, say, message_ts: str, space_id: str) -> None:
         self._update_message(channel, message_ts, "Running security audit…")
 
         from ..audit import FlowAuditService, SecurityAuditService
@@ -822,30 +847,31 @@ class SlackChannel:
             results = {"audited": 0, "safe": 0, "unsafe": 0, "error": 0}
             session = self.session_factory()
             try:
-                spaces = SpaceService(session).list_all()
-                for space in spaces:
-                    flows = FlowService(session).list_by_space(space.id)
-                    for f in flows:
-                        existing = FlowAuditService.get_audit(space.path, f.name)
-                        if existing is None or existing.status in ("unsafe", "error"):
-                            try:
-                                r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
-                                results["audited"] += 1
-                                results[r.status] = results.get(r.status, 0) + 1
-                            except Exception:
-                                results["error"] += 1
-                                logger.warning("Audit failed for flow %s", f.name, exc_info=True)
+                space = SpaceService(session).get(space_id)
+                if not space:
+                    return results
+                flows = FlowService(session).list_by_space(space.id)
+                for f in flows:
+                    existing = FlowAuditService.get_audit(space.path, f.name)
+                    if existing is None or existing.status in ("unsafe", "error"):
+                        try:
+                            r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
+                            results["audited"] += 1
+                            results[r.status] = results.get(r.status, 0) + 1
+                        except Exception:
+                            results["error"] += 1
+                            logger.warning("Audit failed for flow %s", f.name, exc_info=True)
 
-                    for skill_info in SkillService.discover(space.path):
-                        existing = SecurityAuditService.get_audit(space.path, skill_info.name)
-                        if existing is None or existing.status in ("unsafe", "error"):
-                            try:
-                                r = SecurityAuditService.run_audit(space.path, skill_info.name)
-                                results["audited"] += 1
-                                results[r.status] = results.get(r.status, 0) + 1
-                            except Exception:
-                                results["error"] += 1
-                                logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
+                for skill_info in SkillService.discover(space.path):
+                    existing = SecurityAuditService.get_audit(space.path, skill_info.name)
+                    if existing is None or existing.status in ("unsafe", "error"):
+                        try:
+                            r = SecurityAuditService.run_audit(space.path, skill_info.name)
+                            results["audited"] += 1
+                            results[r.status] = results.get(r.status, 0) + 1
+                        except Exception:
+                            results["error"] += 1
+                            logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
             finally:
                 session.close()
             return results
