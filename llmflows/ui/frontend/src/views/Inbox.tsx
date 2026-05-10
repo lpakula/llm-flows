@@ -141,10 +141,12 @@ function FlowImprovementCard({
   item,
   onApprove,
   onReject,
+  onDiscard,
 }: {
   item: FlowImprovementItem;
   onApprove: (inboxId: string) => Promise<void>;
   onReject: (inboxId: string, reason: string) => Promise<void>;
+  onDiscard: (inboxId: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -261,6 +263,13 @@ function FlowImprovementCard({
                 className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
               >
                 Reject
+              </button>
+              <button
+                onClick={async () => { setActing(true); try { await onDiscard(item.inbox_id); } finally { setActing(false); } }}
+                disabled={acting}
+                className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+              >
+                Discard
               </button>
               <span className="flex-1" />
               <button
@@ -433,6 +442,7 @@ export function InboxView() {
                   item={item}
                   onApprove={handleApproveImprovement}
                   onReject={handleRejectImprovement}
+                  onDiscard={handleArchive}
                 />
               ) : (
                 <InboxCard key={item.step_run_id} item={item} onRespond={handleRespond} />

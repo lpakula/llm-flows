@@ -623,6 +623,10 @@ class TelegramBot:
             await self._cb_decline_improvement(query, data[len("decline_improvement:"):])
             return
 
+        if data.startswith("discard_improvement:"):
+            await self._cb_discard_improvement(query, data[len("discard_improvement:"):])
+            return
+
         if data.startswith("respond:"):
             step_run_id = data[len("respond:"):]
             self._awaiting_response[chat_id] = step_run_id
@@ -784,6 +788,30 @@ class TelegramBot:
         except Exception:
             try:
                 await query.edit_message_text("Declined.")
+            except Exception:
+                pass
+        for cid, message_id in tracked:
+            if message_id == query.message.message_id:
+                continue
+            try:
+                await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
+            except Exception:
+                logger.debug("Failed to delete message %s", message_id)
+
+    async def _cb_discard_improvement(self, query, inbox_id: str) -> None:
+        session = self.session_factory()
+        try:
+            RunService(session).archive_inbox_item(inbox_id)
+        finally:
+            session.close()
+
+        tracked = self._notification_photos.pop(inbox_id, [])
+        chat_id = query.message.chat_id
+        try:
+            await self._app.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+        except Exception:
+            try:
+                await query.edit_message_text("Discarded.")
             except Exception:
                 pass
         for cid, message_id in tracked:
@@ -982,6 +1010,7 @@ class TelegramBot:
                     [
                         InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"),
                         InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"),
+                        InlineKeyboardButton("Discard", callback_data=f"discard_improvement:{inbox_id}"),
                     ],
                 ])
                 sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
@@ -1060,6 +1089,7 @@ class TelegramBot:
         if event == "flow.improvement" and inbox_id:
             buttons.append(InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"))
             buttons.append(InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"))
+            buttons.append(InlineKeyboardButton("Discard", callback_data=f"discard_improvement:{inbox_id}"))
         elif inbox_id:
             buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
         if buttons:

@@ -189,7 +189,7 @@ class SlackChannel:
 
         @app.action(re.compile(
             r"^(space|run|respond|complete|dismiss|chatspace|chatflow"
-            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement):"
+            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement|discard_improvement):"
         ))
         def handle_action(ack, body, say):
             ack()
@@ -378,6 +378,9 @@ class SlackChannel:
 
         elif action_id.startswith("decline_improvement:"):
             self._cb_decline_improvement(channel, value, say, message_ts)
+
+        elif action_id.startswith("discard_improvement:"):
+            self._cb_discard_improvement(channel, value, say, message_ts)
 
     # ── Helper: update or post message ───────────────────────────────────
 
@@ -634,6 +637,12 @@ class SlackChannel:
                                     "action_id": f"decline_improvement:{item.id}",
                                     "value": item.id,
                                     "style": "danger",
+                                },
+                                {
+                                    "type": "button",
+                                    "text": {"type": "plain_text", "text": "Discard"},
+                                    "action_id": f"discard_improvement:{item.id}",
+                                    "value": item.id,
                                 },
                             ],
                         },
@@ -1113,6 +1122,12 @@ class SlackChannel:
                                 "value": inbox_id,
                                 "style": "danger",
                             },
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "Discard"},
+                                "action_id": f"discard_improvement:{inbox_id}",
+                                "value": inbox_id,
+                            },
                         ],
                     },
                 ]
@@ -1236,6 +1251,26 @@ class SlackChannel:
             except Exception:
                 logger.debug("Failed to delete message %s", ts)
 
+    def _cb_discard_improvement(self, channel: str, inbox_id: str, say, message_ts: str) -> None:
+        session = self.session_factory()
+        try:
+            RunService(session).archive_inbox_item(inbox_id)
+        finally:
+            session.close()
+
+        tracked = self._notification_messages.pop(inbox_id, [])
+        try:
+            self._app.client.chat_delete(channel=channel, ts=message_ts)
+        except Exception:
+            self._update_message(channel, message_ts, "Discarded.")
+        for ch, ts in tracked:
+            if ts == message_ts:
+                continue
+            try:
+                self._app.client.chat_delete(channel=ch, ts=ts)
+            except Exception:
+                logger.debug("Failed to delete message %s", ts)
+
     # ── Channel interface: outbound notifications ────────────────────────
 
     def send(self, event: str, payload: dict[str, Any]) -> None:
@@ -1319,6 +1354,12 @@ class SlackChannel:
                 "action_id": f"decline_improvement:{inbox_id}",
                 "value": inbox_id,
                 "style": "danger",
+            })
+            buttons.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Discard"},
+                "action_id": f"discard_improvement:{inbox_id}",
+                "value": inbox_id,
             })
         elif inbox_id:
             buttons.append({
