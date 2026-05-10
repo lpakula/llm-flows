@@ -1964,23 +1964,18 @@ async def approve_flow_improvement(item_id: str):
         flow_obj = flow_svc.get(run.flow_id)
         flow_name = flow_obj.name if flow_obj else run.flow_name or ""
 
-        audit_result = None
-        if space.audit_flows_on_import:
-            audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
-            if audit_result.status == "unsafe":
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Security audit failed: {audit_result.summary}",
-                )
+        audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
+        if audit_result.status == "unsafe":
+            raise HTTPException(
+                status_code=422,
+                detail=f"Security audit failed: {audit_result.summary}",
+            )
 
         flow = flow_svc.apply_flow_proposal(run.flow_id, flow_json)
         if not flow:
             raise HTTPException(status_code=500, detail="Failed to apply proposal")
 
-        if audit_result:
-            FlowAuditService.save_audit(space.path, flow.name, audit_result)
-        else:
-            FlowAuditService.clear_audit(space.path, flow.name)
+        FlowAuditService.save_audit(space.path, flow.name, audit_result)
 
         run_svc = RunService(session)
         run_svc.archive_inbox_item(item_id)

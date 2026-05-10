@@ -727,13 +727,24 @@ class TelegramBot:
                 await query.edit_message_text("No valid flow proposal found.")
                 return
 
+            from ..audit import FlowAuditService
+
+            flow_name = run.flow_name or "?"
+            audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
+            if audit_result.status == "unsafe":
+                await query.edit_message_text(
+                    f"❌ Security audit failed for <b>{flow_name}</b>: {audit_result.summary}",
+                    parse_mode="HTML",
+                )
+                return
+
             flow = FlowService(session).apply_flow_proposal(run.flow_id, flow_json)
             if not flow:
                 await query.edit_message_text("Failed to apply proposal.")
                 return
 
+            FlowAuditService.save_audit(space.path, flow.name, audit_result)
             RunService(session).archive_inbox_item(inbox_id)
-            flow_name = run.flow_name or "?"
             await query.edit_message_text(
                 f"✅ Accepted improvement for <b>{flow_name}</b> (v{flow.version})",
                 parse_mode="HTML",

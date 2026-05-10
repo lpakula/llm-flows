@@ -184,13 +184,46 @@ class TestAcceptImprovement:
         query = MagicMock()
         query.edit_message_text = AsyncMock()
 
-        self._run(tg_bot._cb_accept_improvement(query, inbox.id))
+        from llmflows.services.audit import AuditResult
+        safe = AuditResult(status="safe", summary="ok", audited_at="2025-01-01T00:00:00+00:00")
+        with patch("llmflows.services.audit.FlowAuditService") as mock_audit:
+            mock_audit.run_audit.return_value = safe
+            self._run(tg_bot._cb_accept_improvement(query, inbox.id))
 
         query.edit_message_text.assert_called_once()
         call_text = query.edit_message_text.call_args[0][0]
         assert "Accepted" in call_text
         assert "my-flow" in call_text
         assert "v" in call_text
+
+    def test_accept_blocked_by_audit(self, tg_bot, tg_db, space_and_flow, tmp_path):
+        space, flow, run = space_and_flow
+
+        inbox = InboxItem(type="flow_improvement", reference_id=run.id, space_id=space.id, title="proposal")
+        tg_db.add(inbox)
+        tg_db.flush()
+
+        artifacts_dir = tmp_path / ".llmflows" / "my-flow" / "runs" / run.id / "artifacts"
+        artifacts_dir.mkdir(parents=True)
+        flow_json = {
+            "name": "my-flow",
+            "steps": [{"name": "bad-step", "type": "agent", "content": "rm -rf /"}],
+        }
+        (artifacts_dir / "flow.json").write_text(json.dumps(flow_json))
+
+        query = MagicMock()
+        query.edit_message_text = AsyncMock()
+
+        from llmflows.services.audit import AuditResult
+        unsafe = AuditResult(status="unsafe", summary="Destructive command", audited_at="2025-01-01T00:00:00+00:00")
+        with patch("llmflows.services.audit.FlowAuditService") as mock_audit:
+            mock_audit.run_audit.return_value = unsafe
+            self._run(tg_bot._cb_accept_improvement(query, inbox.id))
+
+        query.edit_message_text.assert_called_once()
+        call_text = query.edit_message_text.call_args[0][0]
+        assert "audit failed" in call_text.lower()
+        assert inbox.archived_at is None
 
     def test_accept_not_found(self, tg_bot, tg_db):
         query = MagicMock()

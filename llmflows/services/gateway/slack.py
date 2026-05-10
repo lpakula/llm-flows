@@ -1173,13 +1173,24 @@ class SlackChannel:
                 self._update_message(channel, message_ts, "No valid flow proposal found.")
                 return
 
+            from ..audit import FlowAuditService
+
+            flow_name = run.flow_name or "?"
+            audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
+            if audit_result.status == "unsafe":
+                self._update_message(
+                    channel, message_ts,
+                    f":x: Security audit failed for *{flow_name}*: {audit_result.summary}",
+                )
+                return
+
             flow = FlowService(session).apply_flow_proposal(run.flow_id, flow_json)
             if not flow:
                 self._update_message(channel, message_ts, "Failed to apply proposal.")
                 return
 
+            FlowAuditService.save_audit(space.path, flow.name, audit_result)
             RunService(session).archive_inbox_item(inbox_id)
-            flow_name = run.flow_name or "?"
             self._update_message(
                 channel, message_ts,
                 f":white_check_mark: Accepted improvement for *{flow_name}* (v{flow.version})",
