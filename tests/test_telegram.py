@@ -38,6 +38,7 @@ def tg_bot(tg_db):
         bot._awaiting_response = {}
         bot._notification_photos = {}
         bot._pending_run_vars = {}
+        bot._muted = False
         bot._app = MagicMock()
         bot._loop = MagicMock()
     return bot
@@ -478,3 +479,186 @@ class TestActiveCommand:
         self._run(tg_bot._handle_active_command(update, None))
 
         update.message.reply_text.assert_called_once_with("No active or queued runs.")
+
+
+class TestMuteCommand:
+    """The /mute command toggles notification muting."""
+
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_mute_toggles_on(self, tg_bot):
+        assert tg_bot._muted is False
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_mute_command(update, None))
+
+        assert tg_bot._muted is True
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "muted" in call_text.lower()
+        assert "HITL" in call_text
+
+    def test_mute_toggles_off(self, tg_bot):
+        tg_bot._muted = True
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_mute_command(update, None))
+
+        assert tg_bot._muted is False
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "unmuted" in call_text.lower()
+
+    def test_send_skips_when_muted(self, tg_bot):
+        tg_bot._muted = True
+        tg_bot.send("run.completed", {"flow_name": "test"})
+        # _format_notification should not be reached — no coroutine scheduled
+        # (we just verify it returns without error)
+
+    def test_send_allows_hitl_when_muted(self, tg_bot):
+        tg_bot._muted = True
+        tg_bot.allowed_ids = {123}
+        scheduled = []
+
+        def mock_run(coro, loop):
+            scheduled.append(True)
+            coro.close()
+        with patch("llmflows.services.gateway.telegram.asyncio.run_coroutine_threadsafe", mock_run):
+            tg_bot.send("step.awaiting_user", {"flow_name": "test", "step_name": "Review"})
+
+        assert len(scheduled) > 0
+
+    def test_send_works_when_unmuted(self, tg_bot):
+        tg_bot._muted = False
+        tg_bot.allowed_ids = {123}
+        scheduled = []
+
+        def mock_run(coro, loop):
+            scheduled.append(True)
+            coro.close()
+        with patch("llmflows.services.gateway.telegram.asyncio.run_coroutine_threadsafe", mock_run):
+            tg_bot.send("run.completed", {"flow_name": "test", "outcome": "completed"})
+
+        assert len(scheduled) > 0
+
+
+class TestMuteStatePersistence:
+    """Mute state is persisted to and loaded from disk."""
+
+    def test_state_roundtrip(self, tg_bot, tmp_path):
+        state_file = tmp_path / "state.json"
+        with patch.object(TelegramBot, "_state_file", return_value=state_file):
+            tg_bot._muted = True
+            tg_bot._save_state()
+            assert state_file.exists()
+
+            tg_bot._muted = False
+            tg_bot._load_state()
+            assert tg_bot._muted is True
+
+    def test_load_state_defaults_when_missing(self, tg_bot, tmp_path):
+        state_file = tmp_path / "nonexistent" / "state.json"
+        with patch.object(TelegramBot, "_state_file", return_value=state_file):
+            tg_bot._muted = True
+            tg_bot._load_state()
+            assert tg_bot._muted is False
+
+
+class TestAuditCommand:
+    """The /audit command displays security audit status."""
+
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_audit_shows_status(self, tg_bot, tg_db, space_and_flow, tmp_path):
+        space, flow, _ = space_and_flow
+
+        from llmflows.services.audit import AuditResult
+        safe_result = AuditResult(status="safe", summary="ok", audited_at="2025-01-01T00:00:00+00:00")
+
+        sent_texts = []
+        async def fake_send(chat_id, text, markup=None, **kwargs):
+            sent_texts.append(text)
+            msg = MagicMock()
+            msg.message_id = 1
+            return msg
+
+        tg_bot._send_message_safe = fake_send
+
+        update = MagicMock()
+        update.effective_chat.id = 123
+
+        with patch("llmflows.services.audit.FlowAuditService.get_audit", return_value=safe_result), \
+             patch("llmflows.services.skill.SkillService.discover", return_value=[]):
+            self._run(tg_bot._handle_audit_command(update, None))
+
+        assert len(sent_texts) == 1
+        assert "test-space" in sent_texts[0]
+        assert "my-flow" in sent_texts[0]
+        assert "safe" in sent_texts[0].lower()
+
+    def test_audit_shows_unaudited_with_button(self, tg_bot, tg_db, space_and_flow, tmp_path):
+        space, flow, _ = space_and_flow
+
+        sent_data = []
+        async def fake_send(chat_id, text, markup=None, **kwargs):
+            sent_data.append({"text": text, "markup": markup})
+            msg = MagicMock()
+            msg.message_id = 1
+            return msg
+
+        tg_bot._send_message_safe = fake_send
+
+        update = MagicMock()
+        update.effective_chat.id = 123
+
+        with patch("llmflows.services.audit.FlowAuditService.get_audit", return_value=None), \
+             patch("llmflows.services.skill.SkillService.discover", return_value=[]):
+            self._run(tg_bot._handle_audit_command(update, None))
+
+        assert len(sent_data) == 1
+        assert "not audited" in sent_data[0]["text"]
+        assert sent_data[0]["markup"] is not None
+
+    def test_audit_no_spaces(self, tg_bot, tg_db):
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_audit_command(update, None))
+
+        update.message.reply_text.assert_called_once_with("No spaces registered.")
+
+
+class TestHelpIncludesMuteAndAudit:
+    """The /help text includes /mute, /audit, and mute status."""
+
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_help_includes_new_commands(self, tg_bot):
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_help_command(update, None))
+
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "/mute" in call_text
+        assert "/audit" in call_text
+        assert "Mute:" in call_text

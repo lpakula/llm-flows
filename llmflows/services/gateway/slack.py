@@ -104,11 +104,13 @@ class SlackChannel:
         self._chat_pending_space: dict[str, str] = {}  # message_ts -> space_id
         self._notification_messages: dict[str, list[tuple[str, str]]] = {}  # inbox_id -> [(channel, ts)]
         self._pending_run_vars: dict[str, dict] = {}  # channel_id -> {space_id, flow_id, flow_name, vars, overrides, pending_idx}
+        self._muted: bool = False
         self._chat_service = ChatService(session_factory)
         self._app = None
         self._handler = None
         self._thread: threading.Thread | None = None
         self._load_pending_run_vars()
+        self._load_state()
 
     # ── Pending variable state persistence ────────────────────────────────
 
@@ -134,6 +136,30 @@ class SlackChannel:
             f.write_text(json.dumps(self._pending_run_vars))
         except OSError:
             logger.exception("Failed to persist slack pending state")
+
+    @staticmethod
+    def _state_file() -> Path:
+        from ...config import ensure_system_dir
+        d = ensure_system_dir() / "slack"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "state.json"
+
+    def _load_state(self) -> None:
+        self._muted = False
+        try:
+            f = self._state_file()
+            if f.exists():
+                data = json.loads(f.read_text())
+                self._muted = bool(data.get("muted", False))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _save_state(self) -> None:
+        try:
+            f = self._state_file()
+            f.write_text(json.dumps({"muted": self._muted}))
+        except OSError:
+            logger.exception("Failed to persist slack state")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -189,7 +215,7 @@ class SlackChannel:
 
         @app.action(re.compile(
             r"^(space|run|respond|complete|dismiss|chatspace|chatflow"
-            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement|discard_improvement):"
+            r"|cancelrun|inbox_detail|accept_improvement|decline_improvement|discard_improvement|audit_bulk):"
         ))
         def handle_action(ack, body, say):
             ack()
@@ -211,6 +237,10 @@ class SlackChannel:
             self._cmd_active(channel, say)
         elif text.startswith("inbox"):
             self._cmd_inbox(channel, say)
+        elif text.startswith("mute"):
+            self._cmd_mute(channel, say)
+        elif text.startswith("audit"):
+            self._cmd_audit(channel, say)
         elif text.startswith("upgrade"):
             self._cmd_upgrade(channel, say)
         elif text.startswith("chatend"):
@@ -291,6 +321,10 @@ class SlackChannel:
             self._cmd_active(channel, say)
         elif text_lower.startswith("inbox"):
             self._cmd_inbox(channel, say)
+        elif text_lower.startswith("mute"):
+            self._cmd_mute(channel, say)
+        elif text_lower.startswith("audit"):
+            self._cmd_audit(channel, say)
         elif text_lower.startswith("upgrade"):
             self._cmd_upgrade(channel, say)
         elif text_lower.startswith("chatend"):
@@ -301,7 +335,7 @@ class SlackChannel:
             self._cmd_help(channel, say)
         else:
             say(
-                text="Use `run`, `active`, `inbox`, `chat`, `chatend`, `upgrade`, or `help`.",
+                text="Use `run`, `active`, `inbox`, `mute`, `audit`, `chat`, `chatend`, `upgrade`, or `help`.",
                 channel=channel,
             )
 
@@ -382,6 +416,9 @@ class SlackChannel:
         elif action_id.startswith("discard_improvement:"):
             self._cb_discard_improvement(channel, value, say, message_ts)
 
+        elif action_id.startswith("audit_bulk:"):
+            self._cb_audit_bulk(channel, say, message_ts)
+
     # ── Helper: update or post message ───────────────────────────────────
 
     def _update_message(self, channel: str, ts: str, text: str, blocks: list | None = None) -> None:
@@ -399,14 +436,18 @@ class SlackChannel:
 
     def _cmd_help(self, channel: str, say) -> None:
         from ... import __version__
+        mute_status = "on" if self._muted else "off"
         say(
             text=(
                 f"*llmflows bot* v{__version__}\n\n"
-                f"Channel: `{channel}`\n\n"
+                f"Channel: `{channel}`\n"
+                f"Mute: {mute_status}\n\n"
                 f"*Commands:*\n"
                 f"`run` — Start a flow\n"
                 f"`active` — List active & queued runs\n"
                 f"`inbox` — Show inbox items\n"
+                f"`mute` — Toggle notification mute\n"
+                f"`audit` — Security audit status\n"
                 f"`chat` — Start a chat session\n"
                 f"`chatend` — End a chat session\n"
                 f"`upgrade` — Upgrade & restart\n"
@@ -414,6 +455,90 @@ class SlackChannel:
             ),
             channel=channel,
         )
+
+    def _cmd_mute(self, channel: str, say) -> None:
+        self._muted = not self._muted
+        self._save_state()
+        if self._muted:
+            say(text=":mute: Notifications muted. HITL steps still notify.", channel=channel)
+        else:
+            say(text=":bell: Notifications unmuted.", channel=channel)
+
+    def _cmd_audit(self, channel: str, say) -> None:
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            if not spaces:
+                say(text="No spaces registered.", channel=channel)
+                return
+
+            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
+            sections: list[dict] = []
+
+            for space in spaces:
+                lines: list[str] = [f"*{space.name}*"]
+                flows = FlowService(session).list_by_space(space.id)
+                for f in flows:
+                    audit = FlowAuditService.get_audit(space.path, f.name)
+                    if audit is None:
+                        icon, status = ":grey_question:", "not audited"
+                        counts["unaudited"] += 1
+                    elif audit.status == "safe":
+                        icon, status = ":white_check_mark:", "safe"
+                        counts["safe"] += 1
+                    elif audit.status == "unsafe":
+                        icon, status = ":warning:", "unsafe"
+                        counts["unsafe"] += 1
+                    else:
+                        icon, status = ":hourglass:", audit.status
+                        counts["error"] += 1
+                    lines.append(f"  {icon} {f.name} — {status}")
+
+                for skill_info in SkillService.discover(space.path):
+                    audit = SecurityAuditService.get_audit(space.path, skill_info.name)
+                    if audit is None:
+                        icon, status = ":grey_question:", "not audited"
+                        counts["unaudited"] += 1
+                    elif audit.status == "safe":
+                        icon, status = ":white_check_mark:", "safe"
+                        counts["safe"] += 1
+                    elif audit.status == "unsafe":
+                        icon, status = ":warning:", "unsafe"
+                        counts["unsafe"] += 1
+                    else:
+                        icon, status = ":hourglass:", audit.status
+                        counts["error"] += 1
+                    lines.append(f"  {icon} :page_facing_up: {skill_info.name} — {status}")
+
+                sections.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+                })
+
+            summary = " · ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
+            sections.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": summary},
+            })
+
+            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
+            if needs_audit > 0:
+                sections.append({
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": f"Run Bulk Audit ({needs_audit})"},
+                        "action_id": "audit_bulk:all",
+                        "value": "all",
+                    }],
+                })
+
+            say(blocks=sections, text=f"Security audit: {summary}", channel=channel)
+        finally:
+            session.close()
 
     def _cmd_run(self, channel: str, say) -> None:
         session = self.session_factory()
@@ -684,6 +809,59 @@ class SlackChannel:
         say(text="\n".join(parts), channel=channel)
 
         trigger_daemon_reexec()
+
+    # ── Bulk audit callback ────────────────────────────────────────────────
+
+    def _cb_audit_bulk(self, channel: str, say, message_ts: str) -> None:
+        self._update_message(channel, message_ts, "Running security audit…")
+
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        def _do_bulk():
+            results = {"audited": 0, "safe": 0, "unsafe": 0, "error": 0}
+            session = self.session_factory()
+            try:
+                spaces = SpaceService(session).list_all()
+                for space in spaces:
+                    flows = FlowService(session).list_by_space(space.id)
+                    for f in flows:
+                        existing = FlowAuditService.get_audit(space.path, f.name)
+                        if existing is None or existing.status in ("unsafe", "error"):
+                            try:
+                                r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
+                                results["audited"] += 1
+                                results[r.status] = results.get(r.status, 0) + 1
+                            except Exception:
+                                results["error"] += 1
+                                logger.warning("Audit failed for flow %s", f.name, exc_info=True)
+
+                    for skill_info in SkillService.discover(space.path):
+                        existing = SecurityAuditService.get_audit(space.path, skill_info.name)
+                        if existing is None or existing.status in ("unsafe", "error"):
+                            try:
+                                r = SecurityAuditService.run_audit(space.path, skill_info.name)
+                                results["audited"] += 1
+                                results[r.status] = results.get(r.status, 0) + 1
+                            except Exception:
+                                results["error"] += 1
+                                logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
+            finally:
+                session.close()
+            return results
+
+        def _run_and_report():
+            results = _do_bulk()
+            summary_parts = [f"Audited {results['audited']} items"]
+            if results["safe"]:
+                summary_parts.append(f":white_check_mark: {results['safe']} safe")
+            if results["unsafe"]:
+                summary_parts.append(f":warning: {results['unsafe']} unsafe")
+            if results["error"]:
+                summary_parts.append(f":hourglass: {results['error']} errors")
+            say(text=" · ".join(summary_parts), channel=channel)
+
+        _chat_executor.submit(_run_and_report)
 
     # ── Chat commands ────────────────────────────────────────────────────
 
@@ -1275,6 +1453,9 @@ class SlackChannel:
 
     def send(self, event: str, payload: dict[str, Any]) -> None:
         if not self._app:
+            return
+
+        if self._muted and event != "step.awaiting_user":
             return
 
         text = self._format_notification(event, payload)
