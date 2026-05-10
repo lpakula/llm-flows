@@ -360,3 +360,46 @@ class TestContextService:
             "gate_failures": None,
         })
         assert "Flow Memory" not in result
+
+
+class TestParseInboxMessage:
+    def test_empty_string(self):
+        title, body = ContextService.parse_inbox_message("")
+        assert title == ""
+        assert body == ""
+
+    def test_heading_with_body(self):
+        text = "# Deploy complete\n\nAll services updated to v2.1.0."
+        title, body = ContextService.parse_inbox_message(text)
+        assert title == "Deploy complete"
+        assert body == "All services updated to v2.1.0."
+
+    def test_heading_only(self):
+        title, body = ContextService.parse_inbox_message("# Success")
+        assert title == "Success"
+        assert body == ""
+
+    def test_plain_text_first_line(self):
+        text = "Feature implemented successfully\nChanged 3 files."
+        title, body = ContextService.parse_inbox_message(text)
+        assert title == "Feature implemented successfully"
+        assert body == "Changed 3 files."
+
+    def test_multi_level_heading(self):
+        text = "## PR Merged\n\nMerged #42 into main."
+        title, body = ContextService.parse_inbox_message(text)
+        assert title == "PR Merged"
+        assert body == "Merged #42 into main."
+
+    def test_leading_blank_lines(self):
+        text = "\n\n# Title after blanks\nBody here."
+        title, body = ContextService.parse_inbox_message(text)
+        assert title == "Title after blanks"
+        assert body == "Body here."
+
+    def test_multiline_body(self):
+        text = "# Summary\n\nLine one.\nLine two.\nLine three."
+        title, body = ContextService.parse_inbox_message(text)
+        assert title == "Summary"
+        assert "Line one." in body
+        assert "Line three." in body

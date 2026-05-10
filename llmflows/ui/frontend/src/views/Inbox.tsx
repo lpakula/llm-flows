@@ -50,6 +50,8 @@ function InboxCard({
     }
   };
 
+  const title = item.inbox_title || item.step_name.replace(/-/g, " ") || item.flow_name || "Run";
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
       <button
@@ -60,13 +62,14 @@ function InboxCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-200 truncate">
-              {item.flow_name || "Run"}
+              {title}
             </span>
             <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 bg-amber-500/15 text-amber-400">
               HITL
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1">
+          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1.5">
+            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
             <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
             <span><span className="text-gray-600">Step:</span> {item.step_name.replace(/-/g, " ")}</span>
             <span className="font-mono">{item.run_id}</span>
@@ -289,6 +292,9 @@ function FlowImprovementCard({
 function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchive: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
+  const title = item.inbox_title || item.flow_name || "Run";
+  const preview = item.inbox_body || "";
+  const truncatedPreview = preview.length > 140 ? preview.slice(0, 140) + "…" : preview;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
@@ -299,13 +305,17 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-200 truncate">
-              {item.flow_name || "Run"}
+              {title}
             </span>
             <span className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${outcomePillClass(item.outcome)}`}>
               {item.outcome || "completed"}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1">
+          {truncatedPreview && (
+            <p className="text-xs text-gray-400 mt-1 line-clamp-2">{truncatedPreview}</p>
+          )}
+          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1.5">
+            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
             <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
             {item.duration_seconds != null && (
               <span><span className="text-gray-600">Time:</span> {formatSeconds(item.duration_seconds)}</span>

@@ -1844,6 +1844,8 @@ async def get_inbox():
                 except (PermissionError, OSError):
                     pass
 
+                hitl_title, _ = ContextService.parse_inbox_message(user_message)
+
                 awaiting.append({
                     "inbox_id": item.id,
                     "step_run_id": sr.id,
@@ -1857,6 +1859,7 @@ async def get_inbox():
                     "flow_name": run.flow_name or "",
                     "prompt": sr.prompt or "",
                     "user_message": user_message,
+                    "inbox_title": hitl_title,
                     "log_path": sr.log_path or "",
                     "awaiting_since": (sr.awaiting_user_at.isoformat() + "Z") if sr.awaiting_user_at else None,
                 })
@@ -1884,6 +1887,8 @@ async def get_inbox():
                     run_svc.archive_inbox_item(item.id)
                     continue
 
+                inbox_title, inbox_body = ContextService.parse_inbox_message(inbox_message)
+
                 completed.append({
                     "inbox_id": item.id,
                     "run_id": run.id,
@@ -1893,6 +1898,8 @@ async def get_inbox():
                     "flow_name": run.flow_name or "",
                     "outcome": run.outcome or "",
                     "summary": inbox_message,
+                    "inbox_title": inbox_title,
+                    "inbox_body": inbox_body,
                     "duration_seconds": run.duration_seconds,
                     "cost_usd": run.cost_usd,
                     "completed_at": (run.completed_at.isoformat() + "Z") if run.completed_at else None,

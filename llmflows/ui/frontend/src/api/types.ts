@@ -239,6 +239,7 @@ export interface InboxItem {
   flow_name: string;
   prompt: string;
   user_message: string;
+  inbox_title: string;
   log_path: string;
   awaiting_since: string;
 }
@@ -264,6 +265,8 @@ export interface CompletedRunItem {
   flow_name: string;
   outcome: string;
   summary: string;
+  inbox_title: string;
+  inbox_body: string;
   duration_seconds: number | null;
   cost_usd: number | null;
   completed_at: string;

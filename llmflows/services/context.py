@@ -160,6 +160,33 @@ class ContextService:
             return ""
 
     @staticmethod
+    def parse_inbox_message(text: str) -> tuple[str, str]:
+        """Parse inbox.md text into (title, body).
+
+        If the first non-empty line is a markdown heading (# ...), use it as
+        title with the remainder as body.  Otherwise use the first line as
+        title and the rest as body.
+        """
+        if not text:
+            return ("", "")
+        lines = text.split("\n")
+        first_line = ""
+        first_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip():
+                first_line = line.strip()
+                first_idx = i
+                break
+        if not first_line:
+            return ("", "")
+        if first_line.startswith("#"):
+            title = first_line.lstrip("#").strip()
+        else:
+            title = first_line
+        body = "\n".join(lines[first_idx + 1:]).strip()
+        return (title, body)
+
+    @staticmethod
     def read_last_step_result(artifacts_dir: Path) -> str:
         """Read _result.md from the last (highest-numbered) step directory."""
         if not artifacts_dir.exists():
