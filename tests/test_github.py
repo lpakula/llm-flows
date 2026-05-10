@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from llmflows.db.models import Base, Flow, FlowRun, FlowStep, Space
 from llmflows.services.gateway.github import (
+    BOT_MARKER,
     GitHubChannel,
     MENTION_RE,
     parse_mention,
@@ -22,22 +23,22 @@ from llmflows.services.gateway.github import (
 
 class TestParseMention:
     def test_basic_mention(self):
-        flow, text = parse_mention("@llmflows:feature-develop Add timeout handling")
+        flow, text = parse_mention("/llmflows:feature-develop Add timeout handling")
         assert flow == "feature-develop"
         assert text == "Add timeout handling"
 
     def test_mention_at_end(self):
-        flow, text = parse_mention("Fix the login page timeout.\n\n@llmflows:bugfix")
+        flow, text = parse_mention("Fix the login page timeout.\n\n/llmflows:bugfix")
         assert flow == "bugfix"
         assert text == "Fix the login page timeout."
 
     def test_mention_inline(self):
-        flow, text = parse_mention("Please @llmflows:pr-followup fix the tests")
+        flow, text = parse_mention("Please /llmflows:pr-followup fix the tests")
         assert flow == "pr-followup"
         assert text == "Please fix the tests"
 
     def test_mention_with_hyphens(self):
-        flow, text = parse_mention("@llmflows:feature-from-issue do the thing")
+        flow, text = parse_mention("/llmflows:feature-from-issue do the thing")
         assert flow == "feature-from-issue"
         assert text == "do the thing"
 
@@ -47,7 +48,7 @@ class TestParseMention:
         assert text == ""
 
     def test_bare_mention_no_flow(self):
-        flow, text = parse_mention("@llmflows do something")
+        flow, text = parse_mention("/llmflows do something")
         assert flow is None
         assert text == ""
 
@@ -62,19 +63,30 @@ class TestParseMention:
         assert text == ""
 
     def test_mention_only(self):
-        flow, text = parse_mention("@llmflows:my-flow")
+        flow, text = parse_mention("/llmflows:my-flow")
         assert flow == "my-flow"
         assert text == ""
 
     def test_multiple_mentions_picks_first(self):
-        flow, text = parse_mention("@llmflows:first then @llmflows:second")
+        flow, text = parse_mention("/llmflows:first then /llmflows:second")
         assert flow == "first"
 
     def test_mention_regex_pattern(self):
-        assert MENTION_RE.search("@llmflows:test")
-        assert MENTION_RE.search("text @llmflows:my-flow more")
-        assert not MENTION_RE.search("@llmflows without colon")
-        assert not MENTION_RE.search("@llmflows: space-after-colon")
+        assert MENTION_RE.search("/llmflows:test")
+        assert MENTION_RE.search("text /llmflows:my-flow more")
+        assert not MENTION_RE.search("/llmflows without colon")
+        assert not MENTION_RE.search("/llmflows: space-after-colon")
+
+    def test_old_at_syntax_ignored(self):
+        flow, text = parse_mention("@llmflows:feature-develop do stuff")
+        assert flow is None
+        assert text == ""
+
+    def test_bot_marker_skipped(self):
+        from llmflows.services.gateway.github import BOT_MARKER
+        flow, text = parse_mention(f"{BOT_MARKER}\n/llmflows:feature-develop do stuff")
+        assert flow is None
+        assert text == ""
 
 
 # ── Remote URL parsing ───────────────────────────────────────────────────────
@@ -287,7 +299,7 @@ class TestEyesReactionOrdering:
 
         comment = {
             "id": 999,
-            "body": "@llmflows:feature-develop improve error handling",
+            "body": "/llmflows:feature-develop improve error handling",
             "user": {"login": "alice"},
             "issue_url": "https://api.github.com/repos/org/repo/issues/5",
         }
@@ -318,7 +330,7 @@ class TestEyesReactionOrdering:
 
         comment = {
             "id": 888,
-            "body": "@llmflows:feature-develop add caching",
+            "body": "/llmflows:feature-develop add caching",
             "user": {"login": "bob"},
             "issue_url": "https://api.github.com/repos/org/repo/issues/7",
         }

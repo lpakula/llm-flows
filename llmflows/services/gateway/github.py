@@ -1,7 +1,7 @@
-"""GitHub channel for llm-flows — polls for @llmflows:flow-name mentions.
+"""GitHub channel for llm-flows — polls for /llmflows:flow-name mentions.
 
 Scans issue bodies, issue comments, PR comments, and PR review comments
-for ``@llmflows:flow-name`` mentions.  The surrounding text becomes
+for ``/llmflows:flow-name`` mentions.  The surrounding text becomes
 ``TASK_DESCRIPTION``; additional GitHub context (issue body, PR branch,
 review comments, etc.) is passed as run variables.
 
@@ -23,7 +23,9 @@ from ..space import SpaceService
 
 logger = logging.getLogger("llmflows.github")
 
-MENTION_RE = re.compile(r"@llmflows:([\w][\w-]*)")
+MENTION_RE = re.compile(r"/llmflows:([\w][\w-]*)")
+
+BOT_MARKER = "<!-- llmflows-bot -->"
 
 _MAX_COMMENT_BODY = 60_000
 
@@ -86,6 +88,8 @@ def parse_mention(body: str) -> tuple[Optional[str], str]:
     """Extract ``(flow_name, task_description)`` from a comment body."""
     if not body:
         return None, ""
+    if BOT_MARKER in body:
+        return None, ""
     match = MENTION_RE.search(body)
     if not match:
         return None, ""
@@ -106,7 +110,7 @@ def _truncate(text: str, limit: int = _MAX_COMMENT_BODY) -> str:
 # ---------------------------------------------------------------------------
 
 class GitHubChannel:
-    """GitHub polling channel — triggers flows from ``@llmflows:flow-name`` mentions."""
+    """GitHub polling channel — triggers flows from ``/llmflows:flow-name`` mentions."""
 
     name = "github"
     subscribed_events = ["run.completed"]
@@ -549,6 +553,7 @@ class GitHubChannel:
             lines[0] += f"  ({' · '.join(meta)})"
 
         body = MENTION_RE.sub(r"llmflows:\1", "\n".join(lines))
+        body = f"{BOT_MARKER}\n{body}"
         issue_number = ref_num
 
         _gh_api(
@@ -562,7 +567,7 @@ class GitHubChannel:
         ref_type, _, ref_num = github_ref.partition(":")
         if not ref_num:
             return
-        body = f"**llm-flows** error: {message}"
+        body = f"{BOT_MARKER}\n**llm-flows** error: {message}"
         _gh_api(
             f"/repos/{repo}/issues/{ref_num}/comments",
             self.token, method="POST", body={"body": body},

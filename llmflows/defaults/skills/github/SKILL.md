@@ -1,15 +1,15 @@
 ---
 name: github-channel
-description: Build flows that integrate with the GitHub channel. Use when the user wants to create a flow triggered by GitHub issues or PR comments, wants to understand what variables the GitHub channel provides, or asks about @llmflows mentions and GitHub integration.
+description: Build flows that integrate with the GitHub channel. Use when the user wants to create a flow triggered by GitHub issues or PR comments, wants to understand what variables the GitHub channel provides, or asks about /llmflows: mentions and GitHub integration.
 ---
 
 # GitHub Channel Integration
 
-The GitHub channel lets users trigger flows by writing `@llmflows:flow-name` in GitHub issues and PR comments. The channel is pure plumbing — it provides context variables and the flow decides what to do with them.
+The GitHub channel lets users trigger flows by writing `/llmflows:flow-name` in GitHub issues and PR comments. The channel is pure plumbing — it provides context variables and the flow decides what to do with them.
 
 ## How it works
 
-1. User writes `@llmflows:feature-develop Add timeout handling` on a GitHub issue or PR
+1. User writes `/llmflows:feature-develop Add timeout handling` on a GitHub issue or PR
 2. The channel polls GitHub, finds the mention, resolves `feature-develop` to a flow in the matching space
 3. The text around the mention becomes `TASK_DESCRIPTION`; full issue/PR context is collected
 4. A run is enqueued with all context as flow variables
@@ -23,7 +23,7 @@ The channel passes these variables to every run. Declare the ones your flow need
 
 | Variable | Example | Description |
 |---|---|---|
-| `TASK_DESCRIPTION` | `Add timeout handling` | Text from the comment minus the `@llmflows:flow-name` mention |
+| `TASK_DESCRIPTION` | `Add timeout handling` | Text from the comment minus the `/llmflows flow-name` mention |
 | `GITHUB_REF` | `issue:42` or `pr:15` | Reference to the source issue or PR |
 | `GITHUB_EVENT` | `issue`, `issue_comment`, `pr_comment`, `pr_review` | What triggered the run |
 
@@ -52,7 +52,7 @@ The channel passes these variables to every run. Declare the ones your flow need
 
 ### Issue → worktree → PR (new feature from an issue)
 
-A flow triggered by `@llmflows:feature-develop` on an issue:
+A flow triggered by `/llmflows:feature-develop` on an issue:
 
 **Step 1 — Implement** (code step):
 - Derive branch name from issue: `issue-{{flow.ISSUE_NUMBER}}`
@@ -70,7 +70,7 @@ Variables to declare: `TASK_DESCRIPTION`, `ISSUE_NUMBER`, `ISSUE_TITLE`, `ISSUE_
 
 ### PR follow-up (address review feedback)
 
-A flow triggered by `@llmflows:pr-followup` on a PR comment:
+A flow triggered by `/llmflows:pr-followup` on a PR comment:
 
 **Step 1 — Address Feedback** (code step):
 - Check out the existing branch `{{flow.PR_BRANCH}}` (find or create worktree)
@@ -83,7 +83,7 @@ Variables to declare: `TASK_DESCRIPTION`, `PR_NUMBER`, `PR_TITLE`, `PR_BODY`, `P
 
 ### Code review (automated review on new PRs)
 
-A flow triggered by `@llmflows:review` on a PR:
+A flow triggered by `/llmflows:review` on a PR:
 
 **Step 1 — Review** (code step):
 - Check out `{{flow.PR_BRANCH}}`
@@ -94,7 +94,7 @@ A flow triggered by `@llmflows:review` on a PR:
 
 ### Bug investigation (triage from an issue)
 
-A flow triggered by `@llmflows:investigate` on an issue:
+A flow triggered by `/llmflows:investigate` on an issue:
 
 **Step 1 — Investigate** (code step):
 - Read `{{flow.ISSUE_BODY}}` for reproduction steps
@@ -136,4 +136,4 @@ This link is clickable in Telegram, Slack, and the web UI.
 2. Enable the channel
 3. Restart gateway (or daemon)
 4. Create flows that declare the GitHub variables they need
-5. Write `@llmflows:flow-name` on a GitHub issue or PR in any repo that maps to a registered space
+5. Write `/llmflows:flow-name` on a GitHub issue or PR in any repo that maps to a registered space

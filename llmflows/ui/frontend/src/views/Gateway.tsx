@@ -45,14 +45,14 @@ const CHANNELS: ChannelDef[] = [
   {
     id: "github",
     name: "GitHub",
-    description: "Trigger flows from @llmflows:flow-name mentions on issues and PRs. Repos auto-detected from spaces.",
+    description: "Trigger flows from /llmflows:flow-name mentions on issues and PRs. Repos auto-detected from spaces.",
     enabledKey: "github_enabled",
     fields: [
       { key: "github_token", label: "Personal access token", type: "secret", placeholder: "ghp_... or github_pat_...", description: "Classic token with repo scope, or fine-grained with permissions below" },
       { key: "github_allowed_users", label: "Allowed users", type: "tags-string", placeholder: "username", description: "GitHub usernames allowed to trigger flows (required)" },
     ],
     help: [
-      "Post `@llmflows:flow-name` as a comment on any issue or PR to trigger a flow.",
+      "Post `/llmflows:flow-name` as a comment on any issue or PR to trigger a flow.",
       "**Classic token** — select the `repo` scope.",
       "**Fine-grained token** — select repository permissions: Issues (read & write), Pull requests (read & write), Contents (read-only).",
     ],
