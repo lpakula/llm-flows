@@ -1,11 +1,24 @@
 {
-  "id": "q02ims",
   "name": "gh-chat",
-  "version": 3,
-  "description": "Lightweight conversational refinement (gh-chat). Responds to follow-up comments on issues or PRs without making code changes — useful for iterating on a plan between brainstorm and develop.",
-  "requirements": {
-    "connectors": []
-  },
+  "version": 4,
+  "description": "Lightweight conversational refinement on GitHub issues — no code changes, just discussion to iterate on a plan between brainstorm and develop.",
+  "steps": [
+    {
+      "name": "Respond",
+      "position": 0,
+      "content": "# RESPOND\n\n## PURPOSE\n\nProvide a thoughtful conversational response to the user's follow-up comment on a GitHub issue and explicitly write out the refined or selected implementation plan.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}- **User's message:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n### 1. Read the full thread\n\nUse the GitHub connector to read issue #{{flow.ISSUE_NUMBER}} including all comments to understand the full context and prior discussion.\n\n### 2. Post response as a GitHub comment\n\nBased on the thread context and the user's latest message, formulate a response. Use the GitHub connector to post a comment on the issue. The comment MUST include:\n- Your conversational response answering any questions or clarifying scope/trade-offs.\n- The **complete, updated implementation plan** based on the user's choices or feedback.\n- Suggested next steps (e.g., \"Reply with `/llmflows:gh-develop` to proceed with implementation\").\n\n### 3. Write outputs\n\nWrite a quick summary of what was decided to `{{run.dir}}/inbox.md`. This summary is for notification purposes (e.g., Slack/Telegram) and should be brief.\n\nAlso write the full response to `{{step.dir}}/_result.md` for future reference.\n\n## FORBIDDEN\n\n- Do NOT make any code changes, create branches, or create worktrees.\n- Do NOT create PRs or commits.",
+      "gates": [
+        {
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md must exist and not be empty."
+        }
+      ],
+      "step_type": "code",
+      "connectors": [
+        "github"
+      ]
+    }
+  ],
   "variables": {
     "TASK_DESCRIPTION": {
       "value": "",
@@ -27,27 +40,5 @@
       "value": "",
       "is_env": false
     }
-  },
-  "steps": [
-    {
-      "name": "Respond",
-      "position": 0,
-      "content": "# RESPOND\n\n## PURPOSE\n\nProvide a thoughtful conversational response to the user's follow-up comment on a GitHub issue or PR and explicitly write out the refined or selected implementation plan.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}{% if flow.PR_NUMBER %}- **PR:** #{{flow.PR_NUMBER}} — {{flow.PR_URL}}\n{% endif %}- **User's message:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n### 1. Read the full thread\n\nUse the GitHub connector to read {% if flow.PR_NUMBER %}PR #{{flow.PR_NUMBER}}{% elif flow.ISSUE_NUMBER %}issue #{{flow.ISSUE_NUMBER}}{% endif %} including all comments to understand the full context and prior discussion.\n\n### 2. Post response as a GitHub comment\n\nBased on the thread context and the user's latest message, formulate a response. Use the GitHub connector to post a comment on the issue/PR. The comment MUST include:\n- Your conversational response answering any questions or clarifying scope/trade-offs.\n- The **complete, updated implementation plan** based on the user's choices or feedback.\n- Suggested next steps (e.g., \"Reply with `/llmflows:gh-develop` to proceed with implementation\").\n\n### 3. Write outputs\n\nWrite a quick summary of what was decided to `{{run.dir}}/inbox.md`. This summary is for notification purposes (e.g., Slack/Telegram) and should be brief.\n\nAlso write the full response to `{{step.dir}}/_result.md` for future reference.\n\n## FORBIDDEN\n\n- Do NOT make any code changes, create branches, or create worktrees.\n- Do NOT create PRs or commits.",
-      "gates": [
-        {
-          "command": "test -s {{run.dir}}/inbox.md",
-          "message": "inbox.md must exist and not be empty."
-        }
-      ],
-      "ifs": [],
-      "agent_alias": "normal",
-      "step_type": "code",
-      "allow_max": false,
-      "max_gate_retries": 5,
-      "skills": [],
-      "connectors": [
-        "github"
-      ]
-    }
-  ]
+  }
 }

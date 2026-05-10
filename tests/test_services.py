@@ -397,6 +397,62 @@ class TestGateEvaluation:
         assert len(failures) == 1
 
 
+class TestRenderStepContent:
+    """Tests for Jinja2-based step content rendering."""
+
+    def test_simple_variable_substitution(self):
+        from llmflows.services.gate import render_step_content
+        text = "Issue #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}"
+        variables = {"flow.ISSUE_NUMBER": "27", "flow.ISSUE_TITLE": "Add auth"}
+        result = render_step_content(text, variables)
+        assert result == "Issue #27 — Add auth"
+
+    def test_if_block_renders_when_truthy(self):
+        from llmflows.services.gate import render_step_content
+        text = "{% if flow.PR_NUMBER %}PR: #{{flow.PR_NUMBER}}{% endif %}"
+        variables = {"flow.PR_NUMBER": "42"}
+        result = render_step_content(text, variables)
+        assert result == "PR: #42"
+
+    def test_if_block_omitted_when_empty(self):
+        from llmflows.services.gate import render_step_content
+        text = "Start{% if flow.PR_NUMBER %} PR: #{{flow.PR_NUMBER}}{% endif %} End"
+        variables = {"flow.PR_NUMBER": ""}
+        result = render_step_content(text, variables)
+        assert result == "Start End"
+
+    def test_if_block_omitted_when_undefined(self):
+        from llmflows.services.gate import render_step_content
+        text = "Start{% if flow.PR_NUMBER %} PR: #{{flow.PR_NUMBER}}{% endif %} End"
+        variables = {"flow.ISSUE_NUMBER": "27"}
+        result = render_step_content(text, variables)
+        assert result == "Start End"
+
+    def test_undefined_variable_renders_empty(self):
+        from llmflows.services.gate import render_step_content
+        text = "Value: {{flow.MISSING}}"
+        variables = {"flow.ISSUE_NUMBER": "27"}
+        result = render_step_content(text, variables)
+        assert result == "Value: "
+
+    def test_nested_dotted_keys(self):
+        from llmflows.services.gate import render_step_content
+        text = "Run {{run.id}} in {{step.dir}}"
+        variables = {"run.id": "abc", "step.dir": "/tmp/step"}
+        result = render_step_content(text, variables)
+        assert result == "Run abc in /tmp/step"
+
+    def test_if_elif_else(self):
+        from llmflows.services.gate import render_step_content
+        text = "{% if flow.PR_NUMBER %}PR{% elif flow.ISSUE_NUMBER %}Issue{% else %}None{% endif %}"
+        result1 = render_step_content(text, {"flow.PR_NUMBER": "5"})
+        assert result1 == "PR"
+        result2 = render_step_content(text, {"flow.ISSUE_NUMBER": "10"})
+        assert result2 == "Issue"
+        result3 = render_step_content(text, {})
+        assert result3 == "None"
+
+
 class TestRunService:
     def test_enqueue(self, test_db, test_space):
         run_svc = RunService(test_db)

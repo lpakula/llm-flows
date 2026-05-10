@@ -1137,8 +1137,8 @@ class Daemon:
         }, space, flow_snapshot=self._get_snapshot(run))
         _register_user_responses(step_vars, run_svc.list_step_runs(run.id))
         if step_content:
-            from .gate import _interpolate
-            step_content = _interpolate(step_content, step_vars)
+            from .gate import render_step_content
+            step_content = render_step_content(step_content, step_vars)
 
         step_type = _normalize_step_type(
             (snap_step or {}).get("step_type")

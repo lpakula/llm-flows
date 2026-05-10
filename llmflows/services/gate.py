@@ -1,19 +1,60 @@
 """Gate & IF evaluation — run shell commands to enforce step completion / conditional inclusion."""
 
+import logging
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _interpolate(text: str, variables: dict) -> str:
     """Replace {{key}} placeholders with values from variables dict.
 
     Supports dotted keys like {{run.id}}, {{flow.name}}, {{hitl.response.0}}.
+    Used for gate/IF commands where full Jinja2 is unnecessary.
     """
     def replacer(match):
         key = match.group(1).strip()
         return variables.get(key, match.group(0))
     return re.sub(r"\{\{([^}]+)\}\}", replacer, text)
+
+
+def _to_nested(flat: dict) -> dict:
+    """Convert flat dotted-key dict to nested dict for Jinja2.
+
+    ``{"flow.ISSUE_NUMBER": "27", "run.id": "abc"}``
+    → ``{"flow": {"ISSUE_NUMBER": "27"}, "run": {"id": "abc"}}``
+    """
+    nested: dict = {}
+    for key, value in flat.items():
+        parts = key.split(".")
+        d = nested
+        for part in parts[:-1]:
+            if part not in d or not isinstance(d[part], dict):
+                d[part] = {}
+            d = d[part]
+        d[parts[-1]] = value
+    return nested
+
+
+def render_step_content(text: str, variables: dict) -> str:
+    """Render step content with Jinja2 (supports ``{% if %}``, ``{{ }}``).
+
+    Variables arrive as a flat dotted-key dict and are converted to nested
+    dicts so ``{% if flow.PR_NUMBER %}`` and ``{{flow.PR_NUMBER}}`` work.
+    Undefined variables evaluate to empty string / falsy.
+    """
+    from jinja2 import ChainableUndefined, Environment
+
+    nested = _to_nested(variables)
+    env = Environment(autoescape=False, undefined=ChainableUndefined)
+    try:
+        template = env.from_string(text)
+        return template.render(nested)
+    except Exception:
+        logger.warning("Jinja2 render failed for step content, falling back to simple interpolation", exc_info=True)
+        return _interpolate(text, variables)
 
 
 def evaluate_gates(
