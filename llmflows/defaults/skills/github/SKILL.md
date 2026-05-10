@@ -126,7 +126,7 @@ This link is clickable in Telegram, Slack, and the web UI.
 ## Channel behaviour
 
 - **Polling-based**: checks GitHub API every 60 seconds (configurable via `poll_interval_seconds`)
-- **Deduplication**: skips comments by the bot's own user, skips refs with active runs
+- **Deduplication**: skips comments by the bot's own user (self-trigger prevention), skips refs with active runs
 - **Auto-mapping**: repos are detected from spaces' `git remote get-url origin` — no per-space config needed
 - **Outbound**: posts a summary comment back to the issue/PR when the run completes (uses `inbox_message` from the notification)
 - **Error reporting**: if the flow name doesn't exist in the space, posts an error comment on the issue/PR

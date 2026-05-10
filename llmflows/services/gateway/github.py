@@ -266,6 +266,12 @@ class GitHubChannel:
         login = comment_or_issue.get("user", {}).get("login", "")
         return login.lower() in self.allowed_users
 
+    def _is_bot_user(self, item: dict) -> bool:
+        """True if the item was authored by the bot's own GitHub user."""
+        if not self._bot_user:
+            return False
+        return item.get("user", {}).get("login") == self._bot_user
+
     def _process_issue_comment(self, repo: str, space_info: dict, comment: dict,
                                triggered: set[tuple[str, str]]) -> None:
         """Handle an issue or PR conversation comment.
@@ -274,6 +280,8 @@ class GitHubChannel:
         (issue_url, flow_name) pairs already have a newer comment being
         processed — older duplicates just get 👀 without enqueuing.
         """
+        if self._is_bot_user(comment):
+            return
         if not self._is_allowed_user(comment):
             return
 
@@ -328,6 +336,8 @@ class GitHubChannel:
 
         Same newest-first dedup as ``_process_issue_comment``.
         """
+        if self._is_bot_user(comment):
+            return
         if not self._is_allowed_user(comment):
             return
 

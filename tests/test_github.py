@@ -233,6 +233,43 @@ class TestGitHubChannel:
         assert gh_channel._is_allowed_user({"user": {"login": "Bob"}})
         assert not gh_channel._is_allowed_user({"user": {"login": "mallory"}})
 
+    def test_bot_comments_skipped(self, gh_channel, gh_db):
+        """Comments authored by the bot user must be ignored to prevent self-triggers."""
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel.allowed_users = {"llmflows-bot", "alice"}
+        gh_channel._active_refs = set()
+
+        comment = {
+            "id": 777,
+            "body": "/llmflows:gh-develop implement the feature",
+            "user": {"login": "llmflows-bot"},
+            "issue_url": "https://api.github.com/repos/org/repo/issues/10",
+        }
+
+        with patch.object(gh_channel, "_react_eyes") as mock_eyes:
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                triggered = set()
+                gh_channel._process_issue_comment("org/repo", {"space_id": "s1", "space_name": "test"}, comment, triggered)
+                mock_eyes.assert_not_called()
+
+    def test_bot_review_comments_skipped(self, gh_channel, gh_db):
+        """Review comments authored by the bot must also be ignored."""
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel.allowed_users = {"llmflows-bot"}
+
+        comment = {
+            "id": 778,
+            "body": "/llmflows:gh-develop fix this",
+            "user": {"login": "llmflows-bot"},
+            "pull_request_url": "https://api.github.com/repos/org/repo/pulls/3",
+        }
+
+        with patch.object(gh_channel, "_react_eyes") as mock_eyes:
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                triggered = set()
+                gh_channel._process_review_comment("org/repo", {"space_id": "s1", "space_name": "test"}, comment, triggered)
+                mock_eyes.assert_not_called()
+
 
 class TestRefreshActiveRefs:
     """Bug fix: _refresh_active_refs must only include in-flight runs."""
