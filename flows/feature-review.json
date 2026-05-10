@@ -1,7 +1,7 @@
 {
   "name": "feature-review",
-  "version": 2,
-  "description": "Evaluate a feature idea from Telegram/Slack: research the codebase, generate a review, and on approval create a GitHub issue that triggers feature-brainstorm.",
+  "version": 3,
+  "description": "Evaluate a feature idea from Telegram/Slack: research the codebase, generate a review, and on approval create a GitHub issue that triggers gh-brainstorm.",
   "steps": [
     {
       "name": "research",
@@ -18,7 +18,7 @@
     {
       "name": "create-github-issue",
       "position": 2,
-      "content": "# CREATE GITHUB ISSUE\n\n## PURPOSE\n\nCreate a GitHub issue with the feature analysis and trigger the feature-brainstorm flow via a comment.\n\n## WORKFLOW\n\n1. Read the analysis from `{{run.dir}}/artifacts/01-review/_result.md`.\n2. Read the user's response from `{{hitl.response.0}}`. If the user provided additional context or adjustments, incorporate them.\n3. Compose the issue title from the core opportunity (concise, under 80 chars).\n4. Compose the issue body with:\n   - The full analysis from the review step\n   - Any user feedback incorporated\n5. Use the GitHub connector to create an issue with the title and body.\n6. Use the GitHub connector to post a comment on the newly created issue:\n   `/llmflows:feature-brainstorm <one-line summary of the feature to brainstorm>`\n7. Write to `{{step.dir}}/_result.md`:\n   - Issue URL\n   - Issue number\n   - Confirmation that brainstorm was triggered\n8. Write to `{{run.dir}}/inbox.md`:\n   - Created issue URL\n   - Brief summary of the feature\n   - Note that feature-brainstorm has been triggered\n\n## FORBIDDEN\n\n- Do not make any code changes.\n- Do not create branches or worktrees.",
+      "content": "# CREATE GITHUB ISSUE\n\n## PURPOSE\n\nCreate a GitHub issue with the feature analysis and trigger the feature-brainstorm flow via a comment.\n\n## WORKFLOW\n\n1. Read the analysis from `{{run.dir}}/artifacts/01-review/_result.md`.\n2. Read the user's response from `{{hitl.response.0}}`. If the user provided additional context or adjustments, incorporate them.\n3. Compose the issue title from the core opportunity (concise, under 80 chars).\n4. Compose the issue body with:\n   - The full analysis from the review step\n   - Any user feedback incorporated\n5. Use the GitHub connector to create an issue with the title and body.\n6. Use the GitHub connector to post a comment on the newly created issue:\n   `/llmflows:gh-brainstorm <one-line summary of the feature to brainstorm>`\n7. Write to `{{step.dir}}/_result.md`:\n   - Issue URL\n   - Issue number\n   - Confirmation that brainstorm was triggered\n8. Write to `{{run.dir}}/inbox.md`:\n   - Created issue URL\n   - Brief summary of the feature\n   - Note that gh-brainstorm has been triggered\n\n## FORBIDDEN\n\n- Do not make any code changes.\n- Do not create branches or worktrees.",
       "gates": [
         {
           "command": "test -s {{run.dir}}/inbox.md",

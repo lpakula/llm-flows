@@ -180,7 +180,8 @@ def flow_export(output, name):
 
 @flow.command("import")
 @click.argument("file", type=click.Path(exists=True))
-def flow_import(file):
+@click.option("--audit", is_flag=True, default=False, help="Force security audit regardless of space settings.")
+def flow_import(file, audit):
     """Import flows from a JSON file."""
     from ..services.audit import FlowAuditService
 
@@ -198,7 +199,7 @@ def flow_import(file):
             )
 
         audit_results: dict = {}
-        if space.audit_flows_on_import:
+        if audit or space.audit_flows_on_import:
             click.echo("Running security audit...")
             unsafe_flows = []
             for flow_data in data["flows"]:

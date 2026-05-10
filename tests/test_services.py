@@ -941,6 +941,61 @@ class TestFlowImportAuditCLI:
         assert result.exit_code == 0
         mock_audit.assert_not_called()
 
+    def test_cli_import_audit_flag_forces_audit_when_disabled(self, test_db, test_space, temp_dir):
+        from click.testing import CliRunner
+        from llmflows.cli.flow import flow_import
+        from llmflows.services.audit import AuditResult, FlowAuditService
+
+        test_space.audit_flows_on_import = False
+        test_db.commit()
+
+        flow_file = temp_dir / "forced.json"
+        flow_file.write_text(json.dumps({
+            "flows": [{"name": "forced-flow", "version": 1, "steps": [{"name": "s1", "position": 0}]}]
+        }))
+
+        safe = AuditResult(status="safe", summary="All clear")
+
+        runner = CliRunner()
+        with (
+            patch("llmflows.cli.flow._get_session", return_value=test_db),
+            patch("llmflows.cli.flow._resolve_space", return_value=test_space),
+            patch.object(FlowAuditService, "run_audit", return_value=safe) as mock_audit,
+            patch.object(FlowAuditService, "save_audit"),
+        ):
+            result = runner.invoke(flow_import, [str(flow_file), "--audit"])
+        assert result.exit_code == 0
+        assert "Running security audit" in result.output
+        mock_audit.assert_called_once()
+
+    def test_cli_import_audit_flag_rejects_unsafe(self, test_db, test_space, temp_dir):
+        from click.testing import CliRunner
+        from llmflows.cli.flow import flow_import
+        from llmflows.services.audit import AuditResult, FlowAuditService
+
+        test_space.audit_flows_on_import = False
+        test_db.commit()
+
+        flow_file = temp_dir / "bad.json"
+        flow_file.write_text(json.dumps({
+            "flows": [{"name": "bad-flow", "version": 1, "steps": [{"name": "s1", "position": 0}]}]
+        }))
+
+        unsafe = AuditResult(status="unsafe", summary="Exfiltration detected", findings=["sends secrets"])
+
+        runner = CliRunner()
+        with (
+            patch("llmflows.cli.flow._get_session", return_value=test_db),
+            patch("llmflows.cli.flow._resolve_space", return_value=test_space),
+            patch.object(FlowAuditService, "run_audit", return_value=unsafe),
+        ):
+            result = runner.invoke(flow_import, [str(flow_file), "--audit"])
+        assert result.exit_code != 0
+        assert "bad-flow" in result.output
+
+        svc = FlowService(test_db)
+        assert svc.get_by_name("bad-flow", test_space.id) is None
+
 
 class TestGateRetryExhaustion:
     """When max gate retries are exhausted, the last step_run should reflect the failure."""

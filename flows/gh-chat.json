@@ -1,0 +1,52 @@
+{
+  "name": "gh-chat",
+  "version": 1,
+  "description": "Lightweight conversational refinement (gh-chat). Responds to follow-up comments on issues or PRs without making code changes — useful for iterating on a plan between brainstorm and develop.",
+  "requirements": {
+    "connectors": []
+  },
+  "variables": {
+    "TASK_DESCRIPTION": {
+      "value": "",
+      "is_env": false
+    },
+    "ISSUE_NUMBER": {
+      "value": "",
+      "is_env": false
+    },
+    "ISSUE_TITLE": {
+      "value": "",
+      "is_env": false
+    },
+    "ISSUE_URL": {
+      "value": "",
+      "is_env": false
+    },
+    "ISSUE_BODY": {
+      "value": "",
+      "is_env": false
+    }
+  },
+  "steps": [
+    {
+      "name": "Respond",
+      "position": 0,
+      "content": "# RESPOND\n\n## PURPOSE\n\nProvide a thoughtful conversational response to the user's follow-up comment on a GitHub issue or PR and explicitly write out the refined or selected implementation plan. This ensures the finalized plan becomes part of the GitHub thread for future steps to read.\n\n## CONTEXT\n\n{% if flow.ISSUE_NUMBER %}- **Issue:** #{{flow.ISSUE_NUMBER}} — {{flow.ISSUE_TITLE}}\n- **Issue URL:** {{flow.ISSUE_URL}}\n{% endif %}{% if flow.PR_NUMBER %}- **PR:** #{{flow.PR_NUMBER}} — {{flow.PR_URL}}\n{% endif %}- **User's message:** {{flow.TASK_DESCRIPTION}}\n\n{% if flow.ISSUE_BODY %}### Issue Details\n\n{{flow.ISSUE_BODY}}\n{% endif %}\n\n## WORKFLOW\n\n### 1. Read the full thread\n\nUse the GitHub connector to read {% if flow.PR_NUMBER %}PR #{{flow.PR_NUMBER}}{% elif flow.ISSUE_NUMBER %}issue #{{flow.ISSUE_NUMBER}}{% endif %} including all comments to understand the full context and prior discussion.\n\n### 2. Check for prior flow artifacts\n\nLook for recent brainstorm or develop artifacts that provide additional context:\n- Check if `.llmflows/gh-brainstorm/runs/` exists and find the most recent `_result.md`\n- Check if `.llmflows/gh-develop/runs/` exists and find the most recent `_result.md`\n\nUse the most recently modified artifact as additional context (sort by modification time). If none exist, proceed with just the GitHub thread.\n\n### 3. Respond and output the Refined Plan\n\nBased on the thread context, prior artifacts, and the user's latest message:\n- Formulate a response that answers any questions or clarifies scope/trade-offs.\n- **Crucially:** Output the **complete, updated implementation plan** based on the user's choices or feedback. Do not just reply conversationally; make sure the entire refined plan is included so that subsequent flows (like gh-develop) can read it directly from the GitHub thread context.\n- Suggest next steps (e.g., \"Reply with `/llmflows:gh-develop` to proceed with implementation\").\n\n### 4. Write outputs\n\nWrite the response to `{{step.dir}}/_result.md`.\n\nAlso write to `{{run.dir}}/inbox.md` so the response is posted back as a GitHub comment. The `inbox.md` MUST include:\n- The conversational response.\n- The **complete, refined implementation plan**.\n- A note suggesting the next action.\n\n## FORBIDDEN\n\n- Do NOT make any code changes, create branches, or create worktrees.\n- Do NOT create PRs or commits.",
+      "gates": [
+        {
+          "command": "test -s {{run.dir}}/inbox.md",
+          "message": "inbox.md must exist and not be empty."
+        }
+      ],
+      "ifs": [],
+      "agent_alias": "normal",
+      "step_type": "code",
+      "allow_max": false,
+      "max_gate_retries": 5,
+      "skills": [],
+      "connectors": [
+        "github"
+      ]
+    }
+  ]
+}
