@@ -240,7 +240,8 @@ class GitHubChannel:
         if comments and isinstance(comments, list):
             triggered: set[tuple[str, str]] = set()  # (issue_url, flow_name)
             for comment in comments:
-                self._process_issue_comment(repo, space_info, comment, triggered)
+                if not self._is_bot_user(comment):
+                    self._process_issue_comment(repo, space_info, comment, triggered)
 
         # Poll inline PR review comments (newest first)
         review_comments = _gh_api(
@@ -250,7 +251,8 @@ class GitHubChannel:
         if review_comments and isinstance(review_comments, list):
             triggered_review: set[tuple[str, str]] = set()
             for comment in review_comments:
-                self._process_review_comment(repo, space_info, comment, triggered_review)
+                if not self._is_bot_user(comment):
+                    self._process_review_comment(repo, space_info, comment, triggered_review)
 
         self._last_checked[repo] = now
 
@@ -280,8 +282,6 @@ class GitHubChannel:
         (issue_url, flow_name) pairs already have a newer comment being
         processed — older duplicates just get 👀 without enqueuing.
         """
-        if self._is_bot_user(comment):
-            return
         if not self._is_allowed_user(comment):
             return
 
@@ -336,8 +336,6 @@ class GitHubChannel:
 
         Same newest-first dedup as ``_process_issue_comment``.
         """
-        if self._is_bot_user(comment):
-            return
         if not self._is_allowed_user(comment):
             return
 
