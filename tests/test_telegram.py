@@ -572,7 +572,7 @@ class TestMuteStatePersistence:
 
 
 class TestAuditCommand:
-    """The /audit command displays security audit status."""
+    """The /audit command asks user to select a space first."""
 
     def _run(self, coro):
         loop = asyncio.new_event_loop()
@@ -581,55 +581,58 @@ class TestAuditCommand:
         finally:
             loop.close()
 
-    def test_audit_shows_status(self, tg_bot, tg_db, space_and_flow, tmp_path):
+    def test_audit_shows_space_selection(self, tg_bot, tg_db, space_and_flow):
+        space, flow, _ = space_and_flow
+
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._handle_audit_command(update, None))
+
+        update.message.reply_text.assert_called_once()
+        call_kwargs = update.message.reply_text.call_args
+        assert "Select a space" in call_kwargs[0][0]
+        markup = call_kwargs[1]["reply_markup"]
+        button = markup.inline_keyboard[0][0]
+        assert button.callback_data == f"audit_space:{space.id}"
+
+    def test_audit_space_shows_status(self, tg_bot, tg_db, space_and_flow, tmp_path):
         space, flow, _ = space_and_flow
 
         from llmflows.services.audit import AuditResult
         safe_result = AuditResult(status="safe", summary="ok", audited_at="2025-01-01T00:00:00+00:00")
 
-        sent_texts = []
-        async def fake_send(chat_id, text, markup=None, **kwargs):
-            sent_texts.append(text)
-            msg = MagicMock()
-            msg.message_id = 1
-            return msg
-
-        tg_bot._send_message_safe = fake_send
-
-        update = MagicMock()
-        update.effective_chat.id = 123
+        query = MagicMock()
+        query.edit_message_text = AsyncMock()
 
         with patch("llmflows.services.audit.FlowAuditService.get_audit", return_value=safe_result), \
              patch("llmflows.services.skill.SkillService.discover", return_value=[]):
-            self._run(tg_bot._handle_audit_command(update, None))
+            self._run(tg_bot._cb_audit_space(query, 123, space.id))
 
-        assert len(sent_texts) == 1
-        assert "test-space" in sent_texts[0]
-        assert "my-flow" in sent_texts[0]
-        assert "safe" in sent_texts[0].lower()
+        query.edit_message_text.assert_called_once()
+        call_text = query.edit_message_text.call_args[0][0]
+        assert "test-space" in call_text
+        assert "my-flow" in call_text
+        assert "safe" in call_text.lower()
 
-    def test_audit_shows_unaudited_with_button(self, tg_bot, tg_db, space_and_flow, tmp_path):
+    def test_audit_space_shows_unaudited_with_button(self, tg_bot, tg_db, space_and_flow, tmp_path):
         space, flow, _ = space_and_flow
 
-        sent_data = []
-        async def fake_send(chat_id, text, markup=None, **kwargs):
-            sent_data.append({"text": text, "markup": markup})
-            msg = MagicMock()
-            msg.message_id = 1
-            return msg
-
-        tg_bot._send_message_safe = fake_send
-
-        update = MagicMock()
-        update.effective_chat.id = 123
+        query = MagicMock()
+        query.edit_message_text = AsyncMock()
 
         with patch("llmflows.services.audit.FlowAuditService.get_audit", return_value=None), \
              patch("llmflows.services.skill.SkillService.discover", return_value=[]):
-            self._run(tg_bot._handle_audit_command(update, None))
+            self._run(tg_bot._cb_audit_space(query, 123, space.id))
 
-        assert len(sent_data) == 1
-        assert "not audited" in sent_data[0]["text"]
-        assert sent_data[0]["markup"] is not None
+        query.edit_message_text.assert_called_once()
+        call_kwargs = query.edit_message_text.call_args
+        assert "not audited" in call_kwargs[0][0]
+        markup = call_kwargs[1].get("reply_markup")
+        assert markup is not None
+        button = markup.inline_keyboard[0][0]
+        assert f"audit_bulk:{space.id}" == button.callback_data
 
     def test_audit_no_spaces(self, tg_bot, tg_db):
         update = MagicMock()
