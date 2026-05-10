@@ -8,6 +8,7 @@ export interface Space {
 export interface SpaceSettings {
   max_concurrent_tasks: number;
   audit_flows_on_import: boolean;
+  block_unsafe_runs: boolean;
 }
 
 export type StepType = "agent" | "code" | "hitl";

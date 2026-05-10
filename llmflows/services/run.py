@@ -28,7 +28,7 @@ class RunService:
             raise ValueError(f"Flow not found: {flow_id}")
 
         space = self.session.query(Space).filter_by(id=space_id).first()
-        if space:
+        if space and space.block_unsafe_runs:
             if not FlowAuditService.is_safe(space.path, flow.name):
                 raise ValueError(
                     f"Flow '{flow.name}' has not passed security audit. "

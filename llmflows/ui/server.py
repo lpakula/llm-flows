@@ -156,6 +156,7 @@ class ConnectorUpdateBody(BaseModel):
 class SpaceSettingsUpdate(BaseModel):
     max_concurrent_tasks: Optional[int] = None
     audit_flows_on_import: Optional[bool] = None
+    block_unsafe_runs: Optional[bool] = None
 
 
 # --- Helpers ---
@@ -944,6 +945,7 @@ async def get_space_settings(space_id: str):
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
             "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
+            "block_unsafe_runs": bool(space.block_unsafe_runs) if space.block_unsafe_runs is not None else True,
         }
     finally:
         session.close()
@@ -962,6 +964,8 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
             updates["max_concurrent_tasks"] = max(1, body.max_concurrent_tasks)
         if body.audit_flows_on_import is not None:
             updates["audit_flows_on_import"] = body.audit_flows_on_import
+        if body.block_unsafe_runs is not None:
+            updates["block_unsafe_runs"] = body.block_unsafe_runs
         if updates:
             space_svc.update(space_id, **updates)
             session.refresh(space)
@@ -969,6 +973,7 @@ async def update_space_settings(space_id: str, body: SpaceSettingsUpdate):
         return {
             "max_concurrent_tasks": space.max_concurrent_tasks if space.max_concurrent_tasks is not None else 1,
             "audit_flows_on_import": bool(space.audit_flows_on_import) if space.audit_flows_on_import is not None else False,
+            "block_unsafe_runs": bool(space.block_unsafe_runs) if space.block_unsafe_runs is not None else True,
         }
     finally:
         session.close()

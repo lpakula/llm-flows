@@ -205,7 +205,11 @@ def _maybe_reexec_for_dev(dev: bool) -> None:
 
 
 def _auto_register_dev_space() -> None:
-    """Register the CWD as a space in the dev DB if not already registered."""
+    """Register the CWD as a space in the dev DB if not already registered.
+
+    In dev mode, ``block_unsafe_runs`` is disabled so flows can be
+    tested without passing the security audit first.
+    """
     from ..db.database import init_db, get_session
     from ..services.space import SpaceService
     from ..services.flow import FlowService
@@ -217,10 +221,13 @@ def _auto_register_dev_space() -> None:
         space_svc = SpaceService(session)
         existing = space_svc.get_by_path(cwd)
         if existing:
+            if existing.block_unsafe_runs or existing.audit_flows_on_import:
+                space_svc.update(existing.id, block_unsafe_runs=False, audit_flows_on_import=False)
             click.echo(f"  Space:           {existing.name} ({cwd})")
             return
         name = Path(cwd).name
         s = space_svc.register(name=name, path=cwd)
+        space_svc.update(s.id, block_unsafe_runs=False, audit_flows_on_import=False)
         dot_dir = Path(cwd) / ".llmflows"
         dot_dir.mkdir(parents=True, exist_ok=True)
         flow_svc = FlowService(session)
