@@ -135,10 +135,12 @@ class TelegramBot:
         self._awaiting_response: dict[int, str] = {}  # chat_id -> step_run_id
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
         self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
+        self._muted: bool = False
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._load_pending_run_vars()
+        self._load_state()
 
     @staticmethod
     def _pending_state_file() -> Path:
@@ -163,6 +165,30 @@ class TelegramBot:
             f.write_text(json.dumps({str(k): v for k, v in self._pending_run_vars.items()}))
         except OSError:
             logger.exception("Failed to persist telegram pending state")
+
+    @staticmethod
+    def _state_file() -> Path:
+        from ...config import ensure_system_dir
+        d = ensure_system_dir() / "telegram"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "state.json"
+
+    def _load_state(self) -> None:
+        self._muted = False
+        try:
+            f = self._state_file()
+            if f.exists():
+                data = json.loads(f.read_text())
+                self._muted = bool(data.get("muted", False))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _save_state(self) -> None:
+        try:
+            f = self._state_file()
+            f.write_text(json.dumps({"muted": self._muted}))
+        except OSError:
+            logger.exception("Failed to persist telegram state")
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="telegram-bot")
@@ -220,6 +246,8 @@ class TelegramBot:
         app.add_handler(CommandHandler("run", self._handle_run_command))
         app.add_handler(CommandHandler("active", self._handle_active_command))
         app.add_handler(CommandHandler("inbox", self._handle_inbox_command))
+        app.add_handler(CommandHandler("mute", self._handle_mute_command))
+        app.add_handler(CommandHandler("audit", self._handle_audit_command))
         app.add_handler(CommandHandler("upgrade", self._handle_upgrade_command))
         app.add_handler(CommandHandler("help", self._handle_help_command))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -252,6 +280,8 @@ class TelegramBot:
             BotCommand("run", "Start a flow"),
             BotCommand("active", "List active & queued runs"),
             BotCommand("inbox", "Show inbox items"),
+            BotCommand("mute", "Toggle notification mute"),
+            BotCommand("audit", "Security audit status"),
             BotCommand("upgrade", "Upgrade llmflows & restart"),
             BotCommand("help", "Show commands & chat ID"),
         ])
@@ -497,19 +527,118 @@ class TelegramBot:
 
         trigger_daemon_reexec()
 
+    # ── /mute command — toggle notification mute ───────────────────────────
+
+    async def _handle_mute_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        self._muted = not self._muted
+        self._save_state()
+
+        if self._muted:
+            await update.message.reply_text(
+                "🔇 Notifications muted. HITL steps still notify.",
+            )
+        else:
+            await update.message.reply_text("🔔 Notifications unmuted.")
+
+    # ── /audit command — show security audit status ────────────────────────
+
+    async def _handle_audit_command(self, update, context) -> None:
+        chat_id = update.effective_chat.id
+        if not self._is_allowed(chat_id):
+            return
+        self._active_chats.add(chat_id)
+
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        session = self.session_factory()
+        try:
+            spaces = SpaceService(session).list_all()
+            if not spaces:
+                await update.message.reply_text("No spaces registered.")
+                return
+
+            counts = {"safe": 0, "unsafe": 0, "error": 0, "unaudited": 0}
+            parts: list[str] = []
+
+            for space in spaces:
+                lines: list[str] = [f"<b>{space.name}</b>"]
+                flows = FlowService(session).list_by_space(space.id)
+                for f in flows:
+                    audit = FlowAuditService.get_audit(space.path, f.name)
+                    if audit is None:
+                        icon, status = "❓", "not audited"
+                        counts["unaudited"] += 1
+                    elif audit.status == "safe":
+                        icon, status = "✅", "safe"
+                        counts["safe"] += 1
+                    elif audit.status == "unsafe":
+                        icon, status = "⚠️", "unsafe"
+                        counts["unsafe"] += 1
+                    else:
+                        icon, status = "⏳", audit.status
+                        counts["error"] += 1
+                    lines.append(f"  {icon} {f.name} — {status}")
+
+                for skill_info in SkillService.discover(space.path):
+                    audit = SecurityAuditService.get_audit(space.path, skill_info.name)
+                    if audit is None:
+                        icon, status = "❓", "not audited"
+                        counts["unaudited"] += 1
+                    elif audit.status == "safe":
+                        icon, status = "✅", "safe"
+                        counts["safe"] += 1
+                    elif audit.status == "unsafe":
+                        icon, status = "⚠️", "unsafe"
+                        counts["unsafe"] += 1
+                    else:
+                        icon, status = "⏳", audit.status
+                        counts["error"] += 1
+                    lines.append(f"  {icon} 📄 {skill_info.name} — {status}")
+
+                parts.append("\n".join(lines))
+
+            summary = " · ".join(
+                f"{v} {k}" for k, v in counts.items() if v > 0
+            )
+            text = "\n\n".join(parts) + f"\n\n{summary}"
+
+            needs_audit = counts["unsafe"] + counts["error"] + counts["unaudited"]
+            markup = None
+            if needs_audit > 0:
+                markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        f"Run Bulk Audit ({needs_audit})",
+                        callback_data="audit_bulk:all",
+                    ),
+                ]])
+
+            await self._send_message_safe(chat_id, text, markup)
+        finally:
+            session.close()
+
     # ── /help — show commands and chat ID ───────────────────────────────────
 
     async def _handle_help_command(self, update, context) -> None:
         from ... import __version__
         chat_id = update.effective_chat.id
         self._active_chats.add(chat_id)
+        mute_status = "on" if self._muted else "off"
         await update.message.reply_text(
             f"<b>llmflows bot</b> v{__version__}\n\n"
-            f"Chat ID: <code>{chat_id}</code>\n\n"
+            f"Chat ID: <code>{chat_id}</code>\n"
+            f"Mute: {mute_status}\n\n"
             f"<b>Commands:</b>\n"
             f"/run — Start a flow\n"
             f"/active — List active &amp; queued runs\n"
             f"/inbox — Show inbox items\n"
+            f"/mute — Toggle notification mute\n"
+            f"/audit — Security audit status\n"
             f"/upgrade — Upgrade &amp; restart\n"
             f"/help — Show this message",
             parse_mode="HTML",
@@ -615,6 +744,10 @@ class TelegramBot:
             await self._cb_cancel_run(query, data[len("cancelrun:"):])
             return
 
+        if data.startswith("audit_bulk:"):
+            await self._cb_audit_bulk(query, chat_id)
+            return
+
         if data.startswith("accept_improvement:"):
             await self._cb_accept_improvement(query, data[len("accept_improvement:"):])
             return
@@ -703,6 +836,59 @@ class TelegramBot:
             await query.edit_message_text(f"Cancelled <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
         finally:
             session.close()
+
+    # ── Bulk audit callback ────────────────────────────────────────────────
+
+    async def _cb_audit_bulk(self, query, chat_id: int) -> None:
+        await query.edit_message_reply_markup(reply_markup=None)
+        await self._send_message_safe(chat_id, "Running security audit…")
+
+        from ..audit import FlowAuditService, SecurityAuditService
+        from ..skill import SkillService
+
+        loop = asyncio.get_event_loop()
+
+        def _do_bulk():
+            results = {"audited": 0, "safe": 0, "unsafe": 0, "error": 0}
+            session = self.session_factory()
+            try:
+                spaces = SpaceService(session).list_all()
+                for space in spaces:
+                    flows = FlowService(session).list_by_space(space.id)
+                    for f in flows:
+                        existing = FlowAuditService.get_audit(space.path, f.name)
+                        if existing is None or existing.status in ("unsafe", "error"):
+                            try:
+                                r = FlowAuditService.run_audit(space.path, f.name, f.to_dict())
+                                results["audited"] += 1
+                                results[r.status] = results.get(r.status, 0) + 1
+                            except Exception:
+                                results["error"] += 1
+                                logger.warning("Audit failed for flow %s", f.name, exc_info=True)
+
+                    for skill_info in SkillService.discover(space.path):
+                        existing = SecurityAuditService.get_audit(space.path, skill_info.name)
+                        if existing is None or existing.status in ("unsafe", "error"):
+                            try:
+                                r = SecurityAuditService.run_audit(space.path, skill_info.name)
+                                results["audited"] += 1
+                                results[r.status] = results.get(r.status, 0) + 1
+                            except Exception:
+                                results["error"] += 1
+                                logger.warning("Audit failed for skill %s", skill_info.name, exc_info=True)
+            finally:
+                session.close()
+            return results
+
+        results = await loop.run_in_executor(None, _do_bulk)
+        summary_parts = [f"Audited {results['audited']} items"]
+        if results["safe"]:
+            summary_parts.append(f"✅ {results['safe']} safe")
+        if results["unsafe"]:
+            summary_parts.append(f"⚠️ {results['unsafe']} unsafe")
+        if results["error"]:
+            summary_parts.append(f"⏳ {results['error']} errors")
+        await self._send_message_safe(chat_id, " · ".join(summary_parts))
 
     # ── Flow improvement callbacks ─────────────────────────────────────────
 
@@ -1039,6 +1225,9 @@ class TelegramBot:
 
     def send(self, event: str, payload: dict[str, Any]) -> None:
         if not self._app or not self._loop:
+            return
+
+        if self._muted and event != "step.awaiting_user":
             return
 
         text = self._format_notification(event, payload)
