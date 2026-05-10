@@ -1,6 +1,6 @@
 {
   "name": "feature-brainstorm",
-  "version": 3,
+  "version": 6,
   "description": "Deep-research a feature from a GitHub issue: analyze the codebase, propose up to 3 high-level approaches, and post them to the issue for the user to select or refine.",
   "steps": [
     {

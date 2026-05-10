@@ -138,6 +138,7 @@ export function SecurityAuditModal({
   const [auditing, setAuditing] = useState(false);
   const [auditingKeys, setAuditingKeys] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, AuditResult>>(new Map());
+  const [auditTotal, setAuditTotal] = useState(0);
   const autoRunTriggered = useRef(false);
 
   const applyOverrides = useCallback((resources: AuditResource[]): AuditResource[] =>
@@ -173,6 +174,7 @@ export function SecurityAuditModal({
     const flowsToAudit = resolvedFlows.filter(needsAudit);
     const skillsToAudit = resolvedSkills.filter(needsAudit);
     const keys = new Set([...flowsToAudit.map((f) => f.key), ...skillsToAudit.map((s) => s.key)]);
+    setAuditTotal(keys.size);
     setAuditingKeys(keys);
 
     for (const f of flowsToAudit) {
@@ -201,8 +203,8 @@ export function SecurityAuditModal({
   const handleNavigate = (path: string) => { onClose(); navigate(path); };
 
   const toAuditCount = [...resolvedFlows, ...resolvedSkills].filter((r) => r.audit?.status !== "safe").length;
-  const done = auditing ? toAuditCount - auditingKeys.size : 0;
-  const total = toAuditCount;
+  const done = auditing ? auditTotal - auditingKeys.size : 0;
+  const total = auditing ? auditTotal : toAuditCount;
 
   return (
     <div
