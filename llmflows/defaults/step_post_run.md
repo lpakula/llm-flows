@@ -42,53 +42,28 @@ Read all previous step artifacts in the run directory. Then:
 1. Analyze the error and determine the root cause
 2. Write a concise error analysis to `{{ run.dir }}/inbox.md`
 3. Determine if the flow definition itself could be changed to prevent this error
-4. If you can propose a concrete fix, write two files (see format below)
+4. If you can propose a concrete fix, write `{{ run.dir }}/improvement.md` (see format below)
 {% else -%}
 1. Review the run artifacts and step results
 2. Look for inefficiencies, unnecessary steps, missing gates, or suboptimal configurations
 3. If the run completed smoothly with no issues, stop — do not write any files
-4. If you identify concrete improvements, write two files (see format below)
+4. If you identify concrete improvements, write `{{ run.dir }}/improvement.md` (see format below)
 {% endif -%}
 
-## Flow Proposal Format
+## Improvement Proposal Format
 
-To propose a flow improvement, write **two files** in the run directory:
+Write a single file: **`{{ run.dir }}/improvement.md`**
 
-### `{{ run.dir }}/improvement.md`
+This file is shown to the user who can approve or reject individual suggestions. Use a **numbered list** where each item is a self-contained improvement:
 
-A markdown explanation of what changed and why. This is shown to the user for approval.
-
-### `{{ run.dir }}/flow.json`
-
-A **complete flow definition** (not a patch). Same format as `llmflows flow export`.
-Include ALL steps, not just the changed ones:
-
-```json
-{
-  "name": "flow-name",
-  "version": 4,
-  "description": "Updated flow description",
-  "variables": {
-    "var_name": {"value": "default_value", "is_env": false}
-  },
-  "steps": [
-    {
-      "name": "step-name",
-      "position": 0,
-      "content": "Step instructions...",
-      "step_type": "agent",
-      "agent_alias": "normal",
-      "gates": [],
-      "ifs": []
-    }
-  ]
-}
+```markdown
+1. **Short title**: Description of the change and why it's needed.
+2. **Short title**: Description of the change and why it's needed.
 ```
 
-If step content references `{% raw %}{{flow.VAR}}{% endraw %}`, the variable **must** be declared in `"variables"` so it appears in the UI for the user to configure.
+Each item must be specific enough for another agent to apply it to the current flow definition. Include concrete details: which step to modify, what to add/remove, which variables to declare, etc.
 
-The `version` must be **higher** than the current flow version — increment by 1.
-Both files are required — `improvement.md` is shown to the user, `flow.json` is imported on approval.
+Do **not** write a `flow.json` — the flow will be generated automatically when the user approves.
 
 ## LANGUAGE
 
@@ -123,4 +98,5 @@ If the current flow has audit findings, try to address them in your proposal whe
 - Do NOT propose changes for one-off user errors or transient failures
 - Keep the proposal minimal — change only what's needed
 - Preserve step names, types, and aliases unless the change specifically requires modifying them
+- Do NOT write a flow.json file — only write improvement.md
 - After writing files, stop

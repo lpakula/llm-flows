@@ -101,6 +101,10 @@ class StepRespondBody(BaseModel):
     response: str = ""
 
 
+class ApproveImprovementBody(BaseModel):
+    selection: str = ""
+
+
 class RejectImprovementBody(BaseModel):
     reason: str = ""
 
@@ -1920,12 +1924,11 @@ async def get_inbox():
                 artifacts_dir = ContextService.get_artifacts_dir(
                     Path(space.path), run.id, run.flow_name or "",
                 )
-                flow_json = ContextService.read_flow_json(artifacts_dir)
-                if not flow_json:
+                improvement = ContextService.read_improvement(artifacts_dir)
+                if not improvement:
                     run_svc.archive_inbox_item(item.id)
                     continue
 
-                improvement = ContextService.read_improvement(artifacts_dir)
                 awaiting.append({
                     "type": "flow_improvement",
                     "inbox_id": item.id,
@@ -1934,7 +1937,7 @@ async def get_inbox():
                     "run_id": run.id,
                     "flow_id": run.flow_id or "",
                     "flow_name": run.flow_name or "",
-                    "summary": improvement or "Flow improvement proposed.",
+                    "summary": improvement,
                     "awaiting_since": (item.created_at.isoformat() + "Z") if item.created_at else None,
                 })
 
@@ -1944,9 +1947,13 @@ async def get_inbox():
 
 
 @app.post("/api/inbox/{item_id}/improvement/approve")
-async def approve_flow_improvement(item_id: str):
-    """Approve a flow improvement proposal — imports it as a new flow version."""
-    from ..services.context import ContextService
+async def approve_flow_improvement(item_id: str, body: ApproveImprovementBody | None = None):
+    """Approve a flow improvement proposal.
+
+    Generates the updated flow.json on-the-fly from the current flow
+    definition + selected improvements, then audits and applies it.
+    """
+    from ..services.context import ContextService, generate_flow_from_improvements
     from ..db.models import InboxItem, FlowRun, Space as SpaceModel
 
     session, _ = _get_services()
@@ -1962,17 +1969,23 @@ async def approve_flow_improvement(item_id: str):
         if not run or not space:
             raise HTTPException(status_code=404, detail="Run or space not found")
 
-        artifacts_dir = ContextService.get_artifacts_dir(
-            Path(space.path), run.id, run.flow_name or "",
-        )
-        flow_json = ContextService.read_flow_json(artifacts_dir)
-        if not flow_json or not flow_json.get("steps"):
-            raise HTTPException(status_code=400, detail="No valid flow.json found")
-
         if not run.flow_id:
             raise HTTPException(status_code=400, detail="Run has no associated flow")
 
+        artifacts_dir = ContextService.get_artifacts_dir(
+            Path(space.path), run.id, run.flow_name or "",
+        )
+        improvement_text = ContextService.read_improvement(artifacts_dir)
+        if not improvement_text:
+            raise HTTPException(status_code=400, detail="No improvement.md found")
+
+        selection = body.selection if body else ""
+
         flow_svc = FlowService(session)
+        current_flow = flow_svc.export_flow_dict(run.flow_id)
+
+        flow_json = generate_flow_from_improvements(current_flow, improvement_text, selection)
+
         flow_obj = flow_svc.get(run.flow_id)
         flow_name = flow_obj.name if flow_obj else run.flow_name or ""
 
@@ -1988,6 +2001,18 @@ async def approve_flow_improvement(item_id: str):
             raise HTTPException(status_code=500, detail="Failed to apply proposal")
 
         FlowAuditService.save_audit(space.path, flow.name, audit_result)
+
+        if selection.strip():
+            from datetime import datetime, timezone
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+            entry = (
+                f"## Skipped improvements ({ts})\n\n"
+                f"From run {run.id}, the user approved only: \"{selection.strip()}\"\n\n"
+                f"The full proposal was:\n\n{improvement_text}\n\n"
+                "Do not re-propose the items that were not selected."
+            )
+            ContextService.append_memory(flow_dir, entry)
 
         run_svc = RunService(session)
         run_svc.archive_inbox_item(item_id)

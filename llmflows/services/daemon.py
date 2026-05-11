@@ -1473,8 +1473,8 @@ class Daemon:
         if not run.completed_at:
             run_svc.mark_completed(run.id, outcome=run.outcome or "completed")
 
-        flow_json = ContextService.read_flow_json(artifacts_dir)
-        if flow_json:
+        improvement = ContextService.read_improvement(artifacts_dir)
+        if improvement:
             already_exists = (
                 run_svc.session.query(InboxItemModel)
                 .filter_by(type="flow_improvement", reference_id=run.id)
@@ -1486,7 +1486,6 @@ class Daemon:
                     "Run %s post-run found flow improvement proposal, creating inbox item",
                     run.id,
                 )
-                improvement = ContextService.read_improvement(artifacts_dir)
                 try:
                     inbox_item = run_svc.create_inbox_item(
                         type="flow_improvement",

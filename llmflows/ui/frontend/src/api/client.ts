@@ -125,7 +125,11 @@ export const api = {
   setInboxMuted: (muted: boolean) => post<{ muted: boolean }>("/api/inbox/muted", { muted }),
   archiveInboxItem: (itemId: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/archive`),
   archiveInboxBatch: (itemIds: string[]) => post<{ ok: boolean; archived: number }>("/api/inbox/archive-batch", { item_ids: itemIds }),
-  approveImprovement: (itemId: string) => post<{ ok: boolean; flow_id: string; version: number }>(`/api/inbox/${itemId}/improvement/approve`),
+  approveImprovement: (itemId: string, selection?: string) =>
+    post<{ ok: boolean; flow_id: string; version: number }>(
+      `/api/inbox/${itemId}/improvement/approve`,
+      selection ? { selection } : undefined,
+    ),
   rejectImprovement: (itemId: string, reason: string) => post<{ ok: boolean }>(`/api/inbox/${itemId}/improvement/reject`, { reason }),
 
   // Queue

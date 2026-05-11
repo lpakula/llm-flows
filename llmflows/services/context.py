@@ -1,6 +1,11 @@
 """Context service -- renders step prompts and collects artifacts."""
 
+import json
 import logging
+import os
+import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 from jinja2 import ChainableUndefined, Environment, TemplateError
@@ -335,3 +340,128 @@ class ContextService:
     def step_dir_name(position: int, step_name: str) -> str:
         """Build a filesystem-safe artifact directory name for a step."""
         return f"{position:02d}-{step_name.replace(' ', '-').lower()}"
+
+
+_GENERATE_SYSTEM_PROMPT = """\
+You are a flow definition editor. You receive a current flow definition (JSON), \
+a list of proposed improvements, and the user's selection of which ones to apply. \
+Your job is to apply ONLY the selected improvements to the flow and return the \
+updated flow JSON.
+
+Rules:
+- Start from the current flow JSON exactly as provided.
+- Apply only the improvements the user selected — leave everything else unchanged.
+- Do NOT rewrite, reorganize, or change anything not covered by the selection.
+- Increment the "version" field by 1.
+- Return ONLY the complete flow JSON — no markdown fences, no explanation, no commentary.\
+"""
+
+
+def generate_flow_from_improvements(
+    current_flow: dict,
+    improvements: str,
+    selection: str = "",
+) -> dict:
+    """Call pi CLI to generate an updated flow.json from improvements.
+
+    Takes the current flow export, the full improvement.md text, and an
+    optional natural-language selection (empty means apply all).
+    Returns the resulting flow dict.
+
+    Raises ValueError if the LLM output is not valid flow JSON.
+    """
+    from .chat import resolve_chat_model, resolve_chat_env
+
+    model = resolve_chat_model(tier="normal")
+    env = resolve_chat_env()
+    env["NODE_PATH"] = str(
+        Path(__file__).resolve().parent.parent.parent
+        / ".llmflows"
+        / "node_modules"
+    )
+
+    selection_text = selection.strip() if selection else "Apply all improvements."
+    prompt_text = (
+        "## Current flow definition\n\n"
+        f"```json\n{json.dumps(current_flow, indent=2)}\n```\n\n"
+        "## Proposed improvements\n\n"
+        f"{improvements}\n\n"
+        f"## User selection\n\n{selection_text}\n\n"
+        "Apply the selected improvements to the current flow. "
+        "Return ONLY the updated JSON."
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False
+    ) as f:
+        f.write(prompt_text)
+        prompt_file = f.name
+
+    try:
+        cmd = [
+            "pi",
+            "-p",
+            "--system-prompt", _GENERATE_SYSTEM_PROMPT,
+            "--mode", "text",
+            f"@{prompt_file}",
+        ]
+        if model:
+            cmd.extend(["--model", model])
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            cwd=str(Path.home()),
+        )
+
+        if proc.returncode != 0:
+            logger.warning("pi generate call failed: %s", proc.stderr[:300])
+            raise ValueError("LLM call failed")
+
+        return _parse_flow_json_response(proc.stdout)
+
+    except subprocess.TimeoutExpired:
+        raise ValueError("LLM call timed out")
+    except FileNotFoundError:
+        raise ValueError("pi CLI not available")
+    finally:
+        os.unlink(prompt_file)
+
+
+def _parse_flow_json_response(output: str) -> dict:
+    """Extract and validate a flow JSON object from LLM output."""
+    text = output.strip()
+
+    # Strip markdown code fences if present
+    fenced = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+
+    # Find the outermost JSON object
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in LLM response")
+
+    depth = 0
+    end = start
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    try:
+        data = json.loads(text[start:end])
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in LLM response: {e}")
+
+    if not isinstance(data, dict) or not data.get("steps"):
+        raise ValueError("LLM response missing required 'steps' field")
+
+    return data

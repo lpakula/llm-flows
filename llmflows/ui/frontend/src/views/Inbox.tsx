@@ -185,11 +185,12 @@ function FlowImprovementCard({
   onDiscard,
 }: {
   item: FlowImprovementItem;
-  onApprove: (inboxId: string) => Promise<void>;
+  onApprove: (inboxId: string, selection?: string) => Promise<void>;
   onReject: (inboxId: string, reason: string) => Promise<void>;
   onDiscard: (inboxId: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [selection, setSelection] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [acting, setActing] = useState(false);
@@ -197,7 +198,7 @@ function FlowImprovementCard({
   const handleApprove = async () => {
     setActing(true);
     try {
-      await onApprove(item.inbox_id);
+      await onApprove(item.inbox_id, selection.trim() || undefined);
     } finally {
       setActing(false);
     }
@@ -285,29 +286,47 @@ function FlowImprovementCard({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleApprove}
+            <div className="space-y-2">
+              <textarea
+                value={selection}
+                onChange={(e) => setSelection(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleApprove();
+                  }
+                }}
+                placeholder="Which improvements to apply? (empty = all)"
+                rows={1}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-gray-600 focus:border-gray-600 resize-none overflow-hidden"
                 disabled={acting}
-                className="text-xs font-medium text-green-500 hover:text-green-400 disabled:opacity-40 transition"
-              >
-                {acting ? "..." : "Approve"}
-              </button>
-              <button
-                onClick={() => setRejecting(true)}
-                disabled={acting}
-                className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
-              >
-                Reject
-              </button>
-              <button
-                onClick={async () => { setActing(true); try { await onDiscard(item.inbox_id); } finally { setActing(false); } }}
-                disabled={acting}
-                className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
-              >
-                Discard
-              </button>
-              <span className="flex-1" />
+                onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleApprove}
+                  disabled={acting}
+                  className="text-xs font-medium text-green-500 hover:text-green-400 disabled:opacity-40 transition"
+                >
+                  {acting ? "Applying..." : "Approve"}
+                </button>
+                <button
+                  onClick={() => setRejecting(true)}
+                  disabled={acting}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={async () => { setActing(true); try { await onDiscard(item.inbox_id); } finally { setActing(false); } }}
+                  disabled={acting}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 transition"
+                >
+                  Discard
+                </button>
+                <span className="flex-1" />
+                <span className="text-[10px] text-gray-700">Enter to approve</span>
+              </div>
             </div>
           )}
         </div>
@@ -441,9 +460,9 @@ export function InboxView() {
     }
   };
 
-  const handleApproveImprovement = async (inboxId: string) => {
+  const handleApproveImprovement = async (inboxId: string, selection?: string) => {
     try {
-      await api.approveImprovement(inboxId);
+      await api.approveImprovement(inboxId, selection);
       await refresh();
       window.dispatchEvent(new Event("inbox-updated"));
     } catch (e) {

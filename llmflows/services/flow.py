@@ -271,11 +271,8 @@ class FlowService:
             ],
         }
 
-    def export_flow_to_disk(self, flow_id: str, space_path: str) -> str:
-        """Export a single flow as JSON to <space_path>/flows/<flow_name>.json.
-
-        Returns the written file path.
-        """
+    def export_flow_dict(self, flow_id: str) -> dict:
+        """Export a single flow as a JSON-serialisable dict."""
         flow = self.get(flow_id)
         if not flow:
             raise ValueError(f"Flow {flow_id} not found")
@@ -325,6 +322,19 @@ class FlowService:
             if conns:
                 step_data["connectors"] = conns
             flow_data["steps"].append(step_data)
+
+        return flow_data
+
+    def export_flow_to_disk(self, flow_id: str, space_path: str) -> str:
+        """Export a single flow as JSON to <space_path>/flows/<flow_name>.json.
+
+        Returns the written file path.
+        """
+        flow = self.get(flow_id)
+        if not flow:
+            raise ValueError(f"Flow {flow_id} not found")
+
+        flow_data = self.export_flow_dict(flow_id)
 
         flows_dir = Path(space_path) / "flows"
         flows_dir.mkdir(parents=True, exist_ok=True)
