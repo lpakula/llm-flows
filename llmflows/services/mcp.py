@@ -175,7 +175,14 @@ def check_connector_health(server_id: str) -> dict:
 
 
 def _mcp_handshake(binary_path: str, args: list[str], connector) -> dict:
-    """Spawn the MCP server and perform an initialize + tools/list handshake."""
+    """Spawn the MCP server and perform an initialize + tools/list handshake.
+
+    MCP stdio servers are long-running — they don't exit after processing.
+    We write requests, read responses with a timeout, then terminate.
+    """
+    import threading
+    import time
+
     env = os.environ.copy()
     extra = os.pathsep.join(str(p) for p in _EXTRA_BIN_PATHS if p.is_dir())
     if extra:
@@ -205,34 +212,71 @@ def _mcp_handshake(binary_path: str, args: list[str], connector) -> dict:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, text=True,
         )
-        stdout, stderr = proc.communicate(
-            input=init_request + tools_request, timeout=15
-        )
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-        return {"ok": False, "binary_found": True, "server_responsive": False,
-                "binary_path": binary_path, "error": "Server timed out (15s)", "tools": None}
     except Exception as e:
         return {"ok": False, "binary_found": True, "server_responsive": False,
                 "binary_path": binary_path, "error": str(e), "tools": None}
 
+    # Give server a moment to start (or crash)
+    time.sleep(1)
+    exit_code = proc.poll()
+    if exit_code is not None:
+        stderr = (proc.stderr.read() if proc.stderr else "").strip()
+        first_useful_line = ""
+        for line in stderr.splitlines():
+            line = line.strip()
+            if line and not line.startswith("/") and "integer expression" not in line:
+                first_useful_line = line
+                break
+        error = first_useful_line or stderr[:200] or f"Server exited with code {exit_code}"
+        return {"ok": False, "binary_found": True, "server_responsive": False,
+                "binary_path": binary_path, "error": error, "tools": None}
+
+    # Server is running — send handshake
+    stdout_lines: list[str] = []
+
+    def _read_stdout():
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            stdout_lines.append(line)
+
+    reader = threading.Thread(target=_read_stdout, daemon=True)
+    reader.start()
+
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(init_request)
+        proc.stdin.write(tools_request)
+        proc.stdin.flush()
+
+        reader.join(timeout=10)
+    except (BrokenPipeError, OSError):
+        pass
+    finally:
+        proc.kill()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+
     tools = []
-    for line in stdout.strip().splitlines():
+    got_response = False
+    for line in stdout_lines:
         line = line.strip()
         if not line:
             continue
         try:
             msg = json.loads(line)
+            got_response = True
             if msg.get("id") == 2 and "result" in msg:
                 tools = [t.get("name", "") for t in msg["result"].get("tools", [])]
         except json.JSONDecodeError:
             continue
 
-    if not stdout.strip():
-        error_hint = stderr.strip()[:200] if stderr.strip() else "No response from server"
-        return {"ok": False, "binary_found": True, "server_responsive": False,
-                "binary_path": binary_path, "error": error_hint, "tools": None}
+    if got_response:
+        return {"ok": True, "binary_found": True, "server_responsive": True,
+                "binary_path": binary_path, "error": None, "tools": tools or None}
 
-    return {"ok": True, "binary_found": True, "server_responsive": True,
-            "binary_path": binary_path, "error": None, "tools": tools or None}
+    return {"ok": False, "binary_found": True, "server_responsive": False,
+            "binary_path": binary_path,
+            "error": "Server started but did not respond to MCP handshake",
+            "tools": None}
