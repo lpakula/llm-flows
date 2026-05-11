@@ -7,8 +7,11 @@ This module provides a single helper that reads connector configs from DB
 and builds the MCP_SERVERS JSON that gets passed to the bridge.
 """
 
+import json
 import logging
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 from ..config import SYSTEM_DIR
@@ -95,9 +98,141 @@ def _build_entry(connector) -> dict | None:
     if command == "npx" and "-y" not in args:
         args.insert(0, "-y")
 
+    resolved = _find_binary(command)
+    if resolved:
+        command = resolved
+
     return {
         "server_id": server_id,
         "command": command,
         "args": args,
         "env": env_vars,
     }
+
+
+_EXTRA_BIN_PATHS: list[Path] = [
+    Path.home() / ".maestro" / "bin",
+    Path.home() / ".local" / "bin",
+    Path("/opt/homebrew/bin"),
+    Path("/usr/local/bin"),
+]
+
+
+def _find_binary(name: str) -> str | None:
+    """Locate a binary by name, checking PATH and common install locations."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for extra_dir in _EXTRA_BIN_PATHS:
+        candidate = extra_dir / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def check_connector_health(server_id: str) -> dict:
+    """Verify a connector is usable: binary exists and MCP server responds.
+
+    Returns {"ok": bool, "binary_found": bool, "server_responsive": bool,
+             "binary_path": str|None, "error": str|None, "tools": list|None}
+    """
+    from ..db.database import get_session
+    from ..db.models import McpConnector
+
+    session = get_session()
+    try:
+        connector = session.query(McpConnector).filter_by(server_id=server_id).first()
+        if not connector:
+            return {"ok": False, "binary_found": False, "server_responsive": False,
+                    "binary_path": None, "error": f"Connector '{server_id}' not found", "tools": None}
+    finally:
+        session.close()
+
+    if server_id in BUILTIN_COMMANDS:
+        script = _TOOLS_DIR / BUILTIN_COMMANDS[server_id]
+        tsx_bin = _NODE_MODULES / ".bin" / "tsx"
+        binary_path = str(tsx_bin) if tsx_bin.exists() else None
+        return {"ok": tsx_bin.exists() and script.exists(), "binary_found": tsx_bin.exists(),
+                "server_responsive": script.exists(), "binary_path": binary_path,
+                "error": None if (tsx_bin.exists() and script.exists()) else "Built-in server files missing",
+                "tools": None}
+
+    command_str = connector.command.strip()
+    if not command_str:
+        return {"ok": False, "binary_found": False, "server_responsive": False,
+                "binary_path": None, "error": "No command configured", "tools": None}
+
+    parts = command_str.split()
+    binary = parts[0]
+    args = parts[1:]
+
+    binary_path = _find_binary(binary)
+    if not binary_path:
+        return {"ok": False, "binary_found": False, "server_responsive": False,
+                "binary_path": None, "error": f"Binary '{binary}' not found in PATH", "tools": None}
+
+    return _mcp_handshake(binary_path, args, connector)
+
+
+def _mcp_handshake(binary_path: str, args: list[str], connector) -> dict:
+    """Spawn the MCP server and perform an initialize + tools/list handshake."""
+    env = os.environ.copy()
+    extra = os.pathsep.join(str(p) for p in _EXTRA_BIN_PATHS if p.is_dir())
+    if extra:
+        env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+    for k, v in connector.get_env().items():
+        val = str(v)
+        if val.startswith("~"):
+            val = os.path.expanduser(val)
+        env[k] = val
+    for k, v in connector.get_credentials().items():
+        env[k] = str(v)
+
+    init_request = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2024-11-05",
+                   "capabilities": {},
+                   "clientInfo": {"name": "llmflows-healthcheck", "version": "1.0.0"}}
+    }) + "\n"
+
+    tools_request = json.dumps({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
+    }) + "\n"
+
+    try:
+        proc = subprocess.Popen(
+            [binary_path] + args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env, text=True,
+        )
+        stdout, stderr = proc.communicate(
+            input=init_request + tools_request, timeout=15
+        )
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        return {"ok": False, "binary_found": True, "server_responsive": False,
+                "binary_path": binary_path, "error": "Server timed out (15s)", "tools": None}
+    except Exception as e:
+        return {"ok": False, "binary_found": True, "server_responsive": False,
+                "binary_path": binary_path, "error": str(e), "tools": None}
+
+    tools = []
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+            if msg.get("id") == 2 and "result" in msg:
+                tools = [t.get("name", "") for t in msg["result"].get("tools", [])]
+        except json.JSONDecodeError:
+            continue
+
+    if not stdout.strip():
+        error_hint = stderr.strip()[:200] if stderr.strip() else "No response from server"
+        return {"ok": False, "binary_found": True, "server_responsive": False,
+                "binary_path": binary_path, "error": error_hint, "tools": None}
+
+    return {"ok": True, "binary_found": True, "server_responsive": True,
+            "binary_path": binary_path, "error": None, "tools": tools or None}

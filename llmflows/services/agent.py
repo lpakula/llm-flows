@@ -8,6 +8,7 @@ Agent output is streamed to a per-step log file.
 Agent PID is stored in .llmflows/<flow>/runs/<run_id>/agent.pid for liveness checks.
 """
 
+import json
 import logging
 import os
 import signal
@@ -180,7 +181,12 @@ class AgentService:
         prompt_content = prompt_file.read_text()
 
         try:
-            cmd = self._build_agent_command(reg, prompt_file, prompt_content, model, extensions=extensions)
+            mcp_config_file = self._write_mcp_config(reg, directory, extra_env)
+
+            cmd = self._build_agent_command(
+                reg, prompt_file, prompt_content, model,
+                extensions=extensions, mcp_config_file=mcp_config_file,
+            )
             env = os.environ.copy()
             venv_bin = str(Path(sys.prefix) / "bin")
             env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
@@ -221,8 +227,61 @@ class AgentService:
             return False
 
     @staticmethod
+    def _write_mcp_config(reg: dict, cwd: Path, extra_env: Optional[dict[str, str]] = None) -> Optional[Path]:
+        """Write MCP server config for code agents that read it from disk.
+
+        For Cursor: writes .cursor/mcp.json in workspace.
+        For Claude Code: writes .mcp.json in workspace.
+        Returns the config file path if written, None otherwise.
+        """
+        mcp_servers_json = (extra_env or {}).get("MCP_SERVERS")
+        if not mcp_servers_json:
+            return None
+
+        binary = reg.get("binary", "")
+        if binary not in ("agent", "claude"):
+            return None
+
+        try:
+            servers = json.loads(mcp_servers_json)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        if not servers:
+            return None
+
+        mcp_servers_dict = {}
+        for srv in servers:
+            sid = srv.get("server_id", "")
+            if not sid:
+                continue
+            entry: dict = {"command": srv.get("command", "")}
+            if srv.get("args"):
+                entry["args"] = srv["args"]
+            if srv.get("env"):
+                entry["env"] = srv["env"]
+            mcp_servers_dict[sid] = entry
+
+        if not mcp_servers_dict:
+            return None
+
+        config_content = json.dumps({"mcpServers": mcp_servers_dict}, indent=2)
+
+        if binary == "agent":
+            config_dir = cwd / ".cursor"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / "mcp.json"
+        else:
+            config_file = cwd / ".mcp.json"
+
+        config_file.write_text(config_content)
+        logger.info("Wrote MCP config for %s: %s", binary, config_file)
+        return config_file
+
+    @staticmethod
     def _build_agent_command(reg: dict, prompt_file: Path, prompt_content: str,
-                             model: str, extensions: Optional[list[str]] = None) -> list[str]:
+                             model: str, extensions: Optional[list[str]] = None,
+                             mcp_config_file: Optional[Path] = None) -> list[str]:
         """Build the CLI command list for a given agent backend."""
         binary = reg["binary"]
         mode = reg["prompt_mode"]
@@ -232,6 +291,8 @@ class AgentService:
                    "--output-format", "stream-json"]
             if model:
                 cmd.extend(["--model", model])
+            if mcp_config_file:
+                cmd.append("--approve-mcps")
             return cmd
 
         if binary == "claude":
@@ -240,6 +301,8 @@ class AgentService:
                    "--dangerously-skip-permissions"]
             if model:
                 cmd.extend(["--model", model])
+            if mcp_config_file:
+                cmd.extend(["--mcp-config", str(mcp_config_file)])
             return cmd
 
         if binary == "pi":

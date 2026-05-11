@@ -77,13 +77,15 @@ function ConfigModal({
   const [saved, setSaved] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const googleIds = new Set(["google_workspace", "youtube"]);
   const isGoogle = googleIds.has(sid(connector));
+  const isMaestro = sid(connector) === "maestro";
 
   const connectorId = sid(connector);
   useEffect(() => {
     setLocalConfig(connector.config);
-    setDirty(false); setSaved(false); setShowErrors(false);
+    setDirty(false); setSaved(false); setShowErrors(false); setConnectError(null);
   }, [connectorId]);
 
   const setField = (key: string, value: string) => {
@@ -113,12 +115,15 @@ function ConfigModal({
 
   const saveConfig = async () => {
     if (hasInvalid()) { setShowErrors(true); return; }
-    setShowErrors(false); setSaving(true);
+    setShowErrors(false); setConnectError(null); setSaving(true);
     try {
       const updated = await api.updateConnector(sid(connector), { config: localConfig, enabled: true });
       onUpdate(updated);
       onClose();
-    } catch (e) { console.error("Failed to save:", e); }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to connect";
+      setConnectError(msg);
+    }
     setSaving(false);
   };
 
@@ -188,6 +193,8 @@ function ConfigModal({
                   onClose();
                   if (isGoogle) {
                     onAskChat(`Help me configure the ${connector.name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`);
+                  } else if (isMaestro) {
+                    onAskChat(`Install the Maestro CLI for mobile testing. Run: curl -Ls "https://get.maestro.mobile.dev" | bash. Then verify it works with: maestro --version. Once installed, enable the connector with: llmflows connectors enable maestro.`);
                   } else {
                     onAskChat(`Help me configure the ${connector.name} connector. Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`);
                   }
@@ -206,6 +213,13 @@ function ConfigModal({
                 </p>
               </div>
             )}
+          </div>
+        )}
+
+        {connectError && (
+          <div className="flex items-start gap-2 rounded-lg bg-red-500/5 border border-red-500/20 px-4 py-3">
+            <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+            <p className="text-xs text-red-400">{connectError}</p>
           </div>
         )}
 

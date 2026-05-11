@@ -155,14 +155,36 @@ def connectors_remove(server_id):
 
 @connectors.command("enable")
 @click.argument("server_id")
-def connectors_enable(server_id):
-    """Enable a connector."""
+@click.option("--skip-check", is_flag=True, help="Skip health check before enabling.")
+def connectors_enable(server_id, skip_check):
+    """Enable a connector (verifies the server is reachable first)."""
     session = get_session()
     try:
         connector = session.query(McpConnector).filter_by(server_id=server_id).first()
         if not connector:
             click.echo(f"Connector '{server_id}' not found.")
             raise SystemExit(1)
+
+        if not skip_check and not connector.builtin:
+            click.echo(f"Verifying {click.style(connector.name, fg='cyan')}...")
+            from ..services.mcp import check_connector_health
+            result = check_connector_health(server_id)
+
+            if not result["binary_found"]:
+                click.echo(click.style(f"  ✗ Binary not found: {result['error']}", fg="red"))
+                click.echo(click.style("  Use --skip-check to enable anyway.", fg="bright_black"))
+                raise SystemExit(1)
+
+            if not result["server_responsive"]:
+                click.echo(click.style(f"  ✗ Server not responsive: {result['error']}", fg="red"))
+                click.echo(click.style("  Use --skip-check to enable anyway.", fg="bright_black"))
+                raise SystemExit(1)
+
+            click.echo(click.style(f"  ✓ Binary found: {result['binary_path']}", fg="green"))
+            click.echo(click.style("  ✓ Server responded to MCP handshake", fg="green"))
+            if result.get("tools"):
+                click.echo(click.style(f"  ✓ {len(result['tools'])} tools available", fg="green"))
+
         connector.enabled = True
         session.commit()
         click.echo(f"Enabled {click.style(connector.name, fg='cyan')}")
@@ -242,19 +264,36 @@ def connectors_config(server_id, key, value):
 @connectors.command("test")
 @click.argument("server_id")
 def connectors_test(server_id):
-    """Test a connector by listing its available tools."""
-    click.echo(f"Testing {click.style(server_id, fg='cyan')}...")
-    click.echo(click.style("(Requires the daemon to be running with this connector enabled)", fg="bright_black"))
+    """Test a connector by verifying the binary and performing an MCP handshake."""
+    click.echo(f"Testing {click.style(server_id, fg='cyan')}...\n")
 
-    from ..services.mcp import McpService
-    svc = McpService()
-    url = svc.get_endpoint(server_id)
-    if not url:
-        click.echo(click.style(f"Connector '{server_id}' is not running. Start the daemon and enable it first.", fg="red"))
+    from ..services.mcp import check_connector_health
+    result = check_connector_health(server_id)
+
+    if result.get("error") and not result["binary_found"]:
+        click.echo(click.style(f"  ✗ {result['error']}", fg="red"))
         raise SystemExit(1)
 
-    click.echo(f"Server URL: {url}")
-    click.echo("Use the MCP bridge to discover tools (requires the MCP SDK).")
+    if result["binary_found"]:
+        click.echo(click.style(f"  ✓ Binary found: {result['binary_path']}", fg="green"))
+    else:
+        click.echo(click.style(f"  ✗ Binary not found", fg="red"))
+
+    if result["server_responsive"]:
+        click.echo(click.style("  ✓ Server responded to MCP handshake", fg="green"))
+    else:
+        click.echo(click.style(f"  ✗ Server not responsive: {result.get('error', 'unknown')}", fg="red"))
+
+    if result.get("tools"):
+        click.echo(click.style(f"\n  Available tools ({len(result['tools'])}):", fg="white", bold=True))
+        for tool_name in sorted(result["tools"]):
+            click.echo(click.style(f"    • {tool_name}", fg="bright_black"))
+
+    if result["ok"]:
+        click.echo(click.style("\n  All checks passed.", fg="green", bold=True))
+    else:
+        click.echo("")
+        raise SystemExit(1)
 
 
 @connectors.command("restart")

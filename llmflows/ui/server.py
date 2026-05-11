@@ -483,6 +483,19 @@ MCP_CATALOG: list[dict] = [
         ],
         "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
     },
+    {
+        "server_id": "maestro",
+        "name": "Maestro (Mobile Testing)",
+        "command": "maestro mcp",
+        "category": "Testing",
+        "description": "Drive Android emulators and iOS simulators for mobile E2E testing via Maestro CLI.",
+        "required_credentials": [],
+        "config_fields": [
+            {"key": "MAESTRO_CLOUD_API_KEY", "label": "Maestro Cloud API Key (optional)", "type": "secret",
+             "target": "credentials", "placeholder": "For cloud device runs only"},
+        ],
+        "docs_url": "https://docs.maestro.dev/get-started/maestro-mcp",
+    },
 ]
 
 
@@ -639,6 +652,14 @@ async def update_connector(server_id: str, body: ConnectorUpdateBody):
                     existing_creds[k] = v
             connector.credentials = json.dumps(existing_creds)
         if body.enabled is not None:
+            if body.enabled and not connector.builtin:
+                from ..services.mcp import check_connector_health
+                health = check_connector_health(server_id)
+                if not health["ok"]:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=health.get("error") or "Connector health check failed",
+                    )
             connector.enabled = body.enabled
 
         session.commit()
@@ -673,6 +694,13 @@ async def delete_connector(server_id: str):
         raise
     finally:
         session.close()
+
+
+@app.post("/api/connectors/{server_id}/test")
+async def test_connector(server_id: str):
+    """Health-check a connector: verify binary and MCP handshake."""
+    from ..services.mcp import check_connector_health
+    return check_connector_health(server_id)
 
 
 @app.post("/api/daemon/stop")
