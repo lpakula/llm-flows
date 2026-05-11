@@ -485,7 +485,7 @@ MCP_CATALOG: list[dict] = [
     },
     {
         "server_id": "maestro",
-        "name": "Maestro (Mobile Testing)",
+        "name": "Maestro",
         "command": "maestro mcp",
         "category": "Testing",
         "description": "Drive Android emulators and iOS simulators for mobile E2E testing via Maestro CLI.",
