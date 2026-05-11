@@ -19,7 +19,14 @@ def _find_orphan_daemon_pids(exclude_pid: int | None = None) -> list[int]:
     `daemon stop` deleted it before the process actually exited). Returns
     deduplicated PIDs sorted oldest-first; excludes ``exclude_pid`` and the
     current process.
+
+    Skipped when ``LLMFLOWS_HOME`` is set — in that case we're in a
+    dev/worktree instance and must not kill daemons belonging to other homes
+    (including the production daemon).
     """
+    if "LLMFLOWS_HOME" in os.environ:
+        return []
+
     try:
         out = subprocess.check_output(
             ["pgrep", "-u", str(os.getuid()), "-f", "llmflows daemon"],
