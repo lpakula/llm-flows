@@ -2069,6 +2069,24 @@ async def archive_inbox_item(item_id: str):
         session.close()
 
 
+@app.post("/api/inbox/archive-batch")
+async def archive_inbox_batch(body: dict):
+    """Archive multiple inbox items at once."""
+    item_ids = body.get("item_ids", [])
+    if not item_ids:
+        return {"ok": True, "archived": 0}
+    session, _ = _get_services()
+    try:
+        run_svc = RunService(session)
+        count = 0
+        for item_id in item_ids:
+            if run_svc.archive_inbox_item(item_id):
+                count += 1
+        return {"ok": True, "archived": count}
+    finally:
+        session.close()
+
+
 @app.post("/api/step-runs/{step_run_id}/respond")
 async def respond_to_step(step_run_id: str, body: StepRespondBody):
     """User responds to an awaiting_user step (confirm manual or answer prompt)."""

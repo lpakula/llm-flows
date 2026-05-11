@@ -1,12 +1,59 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useInterval } from "@/hooks/useInterval";
 import type { InboxItem, FlowImprovementItem, CompletedRunItem } from "@/api/types";
-import { Check, UserCheck, ArrowRight, ChevronRight, ChevronDown, Archive, ExternalLink, Sparkles } from "lucide-react";
+import { Check, UserCheck, ChevronRight, ChevronDown, Archive, Sparkles } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { AttachmentsGrid } from "@/components/AttachmentsGrid";
 import { formatSeconds } from "@/lib/format";
+
+type AnyInboxItem = InboxItem | FlowImprovementItem | CompletedRunItem;
+
+interface InboxGroup {
+  key: string;
+  flowName: string;
+  spaceName: string;
+  spaceId: string;
+  flowId: string;
+  awaiting: (InboxItem | FlowImprovementItem)[];
+  completed: CompletedRunItem[];
+}
+
+function groupInboxItems(
+  awaiting: (InboxItem | FlowImprovementItem)[],
+  completed: CompletedRunItem[],
+): InboxGroup[] {
+  const map = new Map<string, InboxGroup>();
+  const getOrCreate = (item: AnyInboxItem) => {
+    const key = `${item.flow_id}::${item.space_id}`;
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        flowName: item.flow_name,
+        spaceName: item.space_name,
+        spaceId: item.space_id,
+        flowId: item.flow_id,
+        awaiting: [],
+        completed: [],
+      };
+      map.set(key, group);
+    }
+    return group;
+  };
+
+  for (const item of awaiting) getOrCreate(item).awaiting.push(item);
+  for (const item of completed) getOrCreate(item).completed.push(item);
+
+  const groups = Array.from(map.values());
+  groups.sort((a, b) => {
+    if (a.awaiting.length > 0 && b.awaiting.length === 0) return -1;
+    if (a.awaiting.length === 0 && b.awaiting.length > 0) return 1;
+    return 0;
+  });
+  return groups;
+}
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -40,7 +87,6 @@ function InboxCard({
   const [response, setResponse] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const navigate = useNavigate();
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
@@ -59,7 +105,7 @@ function InboxCard({
         className="w-full px-5 py-3.5 flex items-center gap-3 text-left hover:bg-gray-800/40 transition"
       >
         <UserCheck size={14} className="text-amber-400 flex-shrink-0" />
-        <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-200 truncate">
               {title}
@@ -68,11 +114,9 @@ function InboxCard({
               HITL
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1.5">
-            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
-            <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
-            <span><span className="text-gray-600">Step:</span> {item.step_name.replace(/-/g, " ")}</span>
-            <span className="font-mono">{item.run_id}</span>
+          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1">
+            <span>{item.step_name.replace(/-/g, " ")}</span>
+            <span className="font-mono">{item.run_id.slice(0, 8)}</span>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -126,12 +170,6 @@ function InboxCard({
                 {submitting ? "..." : "Submit"}
               </button>
               <span className="text-[10px] text-gray-700 flex-1">Enter to submit, Shift+Enter for new line</span>
-              <button
-                onClick={() => navigate(flowUrl(item.space_id, item.flow_id))}
-                className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
-              >
-                View flow <ArrowRight size={10} />
-              </button>
             </div>
           </div>
         </div>
@@ -155,7 +193,6 @@ function FlowImprovementCard({
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [acting, setActing] = useState(false);
-  const navigate = useNavigate();
 
   const handleApprove = async () => {
     setActing(true);
@@ -189,10 +226,6 @@ function FlowImprovementCard({
             <span className="text-sm font-medium text-gray-200">
               Flow analysis report
             </span>
-          </div>
-          <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1">
-            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
-            <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -275,12 +308,6 @@ function FlowImprovementCard({
                 Discard
               </button>
               <span className="flex-1" />
-              <button
-                onClick={() => navigate(flowUrl(item.space_id, item.flow_id))}
-                className="text-[11px] text-blue-500 hover:text-blue-400 inline-flex items-center gap-0.5"
-              >
-                View flow <ArrowRight size={10} />
-              </button>
             </div>
           )}
         </div>
@@ -291,7 +318,6 @@ function FlowImprovementCard({
 
 function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchive: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const navigate = useNavigate();
   const title = item.inbox_title || item.flow_name || "Run";
   const preview = item.inbox_body || "";
   const truncatedPreview = preview.length > 140 ? preview.slice(0, 140) + "…" : preview;
@@ -315,8 +341,6 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
             <p className="text-xs text-gray-400 mt-1 line-clamp-2">{truncatedPreview}</p>
           )}
           <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-1.5">
-            <span><span className="text-gray-600">Flow:</span> {item.flow_name}</span>
-            <span><span className="text-gray-600">Space:</span> {item.space_name}</span>
             {item.duration_seconds != null && (
               <span><span className="text-gray-600">Time:</span> {formatSeconds(item.duration_seconds)}</span>
             )}
@@ -327,13 +351,6 @@ function CompletedRunCard({ item, onArchive }: { item: CompletedRunItem; onArchi
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-[11px] text-gray-600">{timeAgo(item.completed_at)}</span>
-          <button
-            onClick={(e) => { e.stopPropagation(); navigate(flowUrl(item.space_id, item.flow_id)); }}
-            className="p-1.5 rounded-md text-gray-500 hover:text-blue-400 hover:bg-gray-800 transition"
-            title="View flow"
-          >
-            <ExternalLink size={13} />
-          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onArchive(item.inbox_id); }}
             className="p-1.5 rounded-md text-gray-500 hover:text-green-400 hover:bg-gray-800 transition"
@@ -369,6 +386,8 @@ export function InboxView() {
   const [awaiting, setAwaiting] = useState<(InboxItem | FlowImprovementItem)[]>([]);
   const [completed, setCompleted] = useState<CompletedRunItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [archivingGroups, setArchivingGroups] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     try {
@@ -386,6 +405,11 @@ export function InboxView() {
   }, [refresh]);
   useInterval(refresh, 5000);
 
+  const groups = useMemo(
+    () => groupInboxItems(awaiting, completed),
+    [awaiting, completed],
+  );
+
   const handleRespond = async (stepRunId: string, response: string) => {
     await api.respondToStep(stepRunId, response);
     await refresh();
@@ -399,6 +423,21 @@ export function InboxView() {
       window.dispatchEvent(new Event("inbox-updated"));
     } catch (e) {
       console.error("Archive error:", e);
+    }
+  };
+
+  const handleArchiveGroup = async (group: InboxGroup) => {
+    const ids = group.completed.map((c) => c.inbox_id);
+    if (ids.length === 0) return;
+    setArchivingGroups((s) => new Set(s).add(group.key));
+    try {
+      await api.archiveInboxBatch(ids);
+      await refresh();
+      window.dispatchEvent(new Event("inbox-updated"));
+    } catch (e) {
+      console.error("Archive group error:", e);
+    } finally {
+      setArchivingGroups((s) => { const n = new Set(s); n.delete(group.key); return n; });
     }
   };
 
@@ -443,36 +482,50 @@ export function InboxView() {
           </div>
         )}
 
-        {awaiting.length > 0 && (
-          <div className="space-y-3 mb-6">
-            {awaiting.map((item) =>
-              isFlowImprovement(item) ? (
-                <FlowImprovementCard
-                  key={item.inbox_id}
-                  item={item}
-                  onApprove={handleApproveImprovement}
-                  onReject={handleRejectImprovement}
-                  onDiscard={handleArchive}
-                />
-              ) : (
-                <InboxCard key={item.step_run_id} item={item} onRespond={handleRespond} />
-              ),
-            )}
-          </div>
-        )}
+        {groups.map((group) => (
+          <div key={group.key} className="mb-6">
+            <div className="flex items-center gap-2 mb-2.5">
+              <button
+                onClick={() => navigate(flowUrl(group.spaceId, group.flowId))}
+                className="text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 px-2 py-1 rounded transition truncate"
+              >
+                {group.flowName}
+              </button>
+              <span className="text-xs text-gray-600 truncate">{group.spaceName}</span>
+              <span className="flex-1" />
+              {group.completed.length > 0 && (
+                <button
+                  onClick={() => handleArchiveGroup(group)}
+                  disabled={archivingGroups.has(group.key)}
+                  className="inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-green-400 disabled:opacity-40 transition"
+                  title="Archive all completed in this group"
+                >
+                  <Archive size={12} />
+                  Archive{group.completed.length > 1 ? ` (${group.completed.length})` : ""}
+                </button>
+              )}
+            </div>
 
-        {completed.length > 0 && (
-          <>
-            {awaiting.length > 0 && (
-              <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-3">Recently completed</div>
-            )}
-            <div className="space-y-3">
-              {completed.map((item) => (
+            <div className="space-y-2">
+              {group.awaiting.map((item) =>
+                isFlowImprovement(item) ? (
+                  <FlowImprovementCard
+                    key={item.inbox_id}
+                    item={item}
+                    onApprove={handleApproveImprovement}
+                    onReject={handleRejectImprovement}
+                    onDiscard={handleArchive}
+                  />
+                ) : (
+                  <InboxCard key={item.step_run_id} item={item} onRespond={handleRespond} />
+                ),
+              )}
+              {group.completed.map((item) => (
                 <CompletedRunCard key={item.inbox_id} item={item} onArchive={handleArchive} />
               ))}
             </div>
-          </>
-        )}
+          </div>
+        ))}
       </div>
     </div>
   );
