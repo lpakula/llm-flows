@@ -5,6 +5,13 @@ for ``/llmflows:flow-name`` mentions.  The surrounding text becomes
 ``TASK_DESCRIPTION``; additional GitHub context (issue body, PR branch,
 review comments, etc.) is passed as run variables.
 
+Inline variable overrides are supported via ``--key value`` syntax::
+
+    /llmflows:deploy --env staging --region "us-east-1" Roll out the fix
+
+Variables are stripped from the task description and merged into
+``run_variables``, allowing flow variable overrides from GitHub comments.
+
 On ``run.completed``, posts a summary comment back to the linked issue or PR.
 """
 
@@ -24,6 +31,9 @@ from ..space import SpaceService
 logger = logging.getLogger("llmflows.github")
 
 MENTION_RE = re.compile(r"/llmflows:([\w][\w-]*)")
+
+# Matches --key value or --key "quoted value" inline variable overrides
+_VAR_RE = re.compile(r"--(\w[\w-]*)\s+(?:\"([^\"]*)\"|(\S+))")
 
 BOT_MARKER = "<!-- llmflows-bot -->"
 
@@ -84,19 +94,31 @@ def _git_remote_url(path: str) -> Optional[str]:
     return None
 
 
-def parse_mention(body: str) -> tuple[Optional[str], str]:
-    """Extract ``(flow_name, task_description)`` from a comment body."""
+def parse_mention(body: str) -> tuple[Optional[str], str, dict[str, str]]:
+    """Extract ``(flow_name, task_description, variables)`` from a comment body.
+
+    Variables are parsed from ``--key value`` or ``--key "quoted value"`` tokens.
+    They are stripped from the task description text.
+    """
     if not body:
-        return None, ""
+        return None, "", {}
     if BOT_MARKER in body:
-        return None, ""
+        return None, "", {}
     match = MENTION_RE.search(body)
     if not match:
-        return None, ""
+        return None, "", {}
     flow_name = match.group(1)
     text = body[:match.start()] + body[match.end():]
+
+    variables: dict[str, str] = {}
+    for var_match in _VAR_RE.finditer(text):
+        key = var_match.group(1)
+        value = var_match.group(2) if var_match.group(2) is not None else var_match.group(3)
+        variables[key] = value
+
+    text = _VAR_RE.sub("", text)
     text = re.sub(r"  +", " ", text).strip()
-    return flow_name, text
+    return flow_name, text, variables
 
 
 def _truncate(text: str, limit: int = _MAX_COMMENT_BODY) -> str:
@@ -277,7 +299,7 @@ class GitHubChannel:
         if not self._is_allowed_user(comment):
             return
 
-        flow_name, task = parse_mention(comment.get("body", ""))
+        flow_name, task, user_vars = parse_mention(comment.get("body", ""))
         if not flow_name:
             return
 
@@ -320,6 +342,9 @@ class GitHubChannel:
         else:
             self._add_issue_comments(run_vars, repo, issue_data["number"])
 
+        if user_vars:
+            run_vars.update(user_vars)
+
         self._enqueue(repo, space_info, flow_name, run_vars)
 
     def _process_review_comment(self, repo: str, space_info: dict, comment: dict,
@@ -331,7 +356,7 @@ class GitHubChannel:
         if not self._is_allowed_user(comment):
             return
 
-        flow_name, task = parse_mention(comment.get("body", ""))
+        flow_name, task, user_vars = parse_mention(comment.get("body", ""))
         if not flow_name:
             return
 
@@ -362,6 +387,10 @@ class GitHubChannel:
         run_vars = self._build_base_vars(task, github_ref, "pr_review")
         self._add_issue_vars(run_vars, pr_data)
         self._add_pr_context(run_vars, repo, pr_data["number"])
+
+        if user_vars:
+            run_vars.update(user_vars)
+
         self._enqueue(repo, space_info, flow_name, run_vars)
 
     # ── variable builders ─────────────────────────────────────────────────

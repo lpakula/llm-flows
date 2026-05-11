@@ -23,52 +23,55 @@ from llmflows.services.gateway.github import (
 
 class TestParseMention:
     def test_basic_mention(self):
-        flow, text = parse_mention("/llmflows:feature-develop Add timeout handling")
+        flow, text, vars = parse_mention("/llmflows:feature-develop Add timeout handling")
         assert flow == "feature-develop"
         assert text == "Add timeout handling"
+        assert vars == {}
 
     def test_mention_at_end(self):
-        flow, text = parse_mention("Fix the login page timeout.\n\n/llmflows:bugfix")
+        flow, text, vars = parse_mention("Fix the login page timeout.\n\n/llmflows:bugfix")
         assert flow == "bugfix"
         assert text == "Fix the login page timeout."
+        assert vars == {}
 
     def test_mention_inline(self):
-        flow, text = parse_mention("Please /llmflows:pr-followup fix the tests")
+        flow, text, vars = parse_mention("Please /llmflows:pr-followup fix the tests")
         assert flow == "pr-followup"
         assert text == "Please fix the tests"
 
     def test_mention_with_hyphens(self):
-        flow, text = parse_mention("/llmflows:feature-from-issue do the thing")
+        flow, text, vars = parse_mention("/llmflows:feature-from-issue do the thing")
         assert flow == "feature-from-issue"
         assert text == "do the thing"
 
     def test_no_mention(self):
-        flow, text = parse_mention("Just a regular comment")
+        flow, text, vars = parse_mention("Just a regular comment")
         assert flow is None
         assert text == ""
+        assert vars == {}
 
     def test_bare_mention_no_flow(self):
-        flow, text = parse_mention("/llmflows do something")
+        flow, text, vars = parse_mention("/llmflows do something")
         assert flow is None
         assert text == ""
 
     def test_empty_body(self):
-        flow, text = parse_mention("")
+        flow, text, vars = parse_mention("")
         assert flow is None
         assert text == ""
 
     def test_none_body(self):
-        flow, text = parse_mention(None)
+        flow, text, vars = parse_mention(None)
         assert flow is None
         assert text == ""
 
     def test_mention_only(self):
-        flow, text = parse_mention("/llmflows:my-flow")
+        flow, text, vars = parse_mention("/llmflows:my-flow")
         assert flow == "my-flow"
         assert text == ""
 
     def test_multiple_mentions_picks_first(self):
-        flow, text = parse_mention("/llmflows:first then /llmflows:second")
+        flow, text, vars = parse_mention("/llmflows:first then /llmflows:second")
         assert flow == "first"
 
     def test_mention_regex_pattern(self):
@@ -78,15 +81,52 @@ class TestParseMention:
         assert not MENTION_RE.search("/llmflows: space-after-colon")
 
     def test_old_at_syntax_ignored(self):
-        flow, text = parse_mention("@llmflows:feature-develop do stuff")
+        flow, text, vars = parse_mention("@llmflows:feature-develop do stuff")
         assert flow is None
         assert text == ""
 
     def test_bot_marker_skipped(self):
         from llmflows.services.gateway.github import BOT_MARKER
-        flow, text = parse_mention(f"{BOT_MARKER}\n/llmflows:feature-develop do stuff")
+        flow, text, vars = parse_mention(f"{BOT_MARKER}\n/llmflows:feature-develop do stuff")
         assert flow is None
         assert text == ""
+
+    # ── Variable parsing ──────────────────────────────────────────────────
+
+    def test_single_variable(self):
+        flow, text, vars = parse_mention("/llmflows:my-flow --branch main")
+        assert flow == "my-flow"
+        assert text == ""
+        assert vars == {"branch": "main"}
+
+    def test_multiple_variables(self):
+        flow, text, vars = parse_mention("/llmflows:deploy --env staging --region us-east-1")
+        assert flow == "deploy"
+        assert text == ""
+        assert vars == {"env": "staging", "region": "us-east-1"}
+
+    def test_variable_with_task(self):
+        flow, text, vars = parse_mention("/llmflows:feature-develop Fix the login bug --priority high")
+        assert flow == "feature-develop"
+        assert text == "Fix the login bug"
+        assert vars == {"priority": "high"}
+
+    def test_quoted_variable_value(self):
+        flow, text, vars = parse_mention('/llmflows:my-flow --message "hello world" do stuff')
+        assert flow == "my-flow"
+        assert text == "do stuff"
+        assert vars == {"message": "hello world"}
+
+    def test_variable_with_hyphens_in_key(self):
+        flow, text, vars = parse_mention("/llmflows:my-flow --base-branch develop")
+        assert flow == "my-flow"
+        assert vars == {"base-branch": "develop"}
+
+    def test_variables_stripped_from_task(self):
+        flow, text, vars = parse_mention("/llmflows:bugfix --severity critical Please fix ASAP --notify true")
+        assert flow == "bugfix"
+        assert text == "Please fix ASAP"
+        assert vars == {"severity": "critical", "notify": "true"}
 
 
 # ── Remote URL parsing ───────────────────────────────────────────────────────
@@ -385,6 +425,93 @@ class TestEyesReactionOrdering:
                         comment, triggered,
                     )
                     mock_eyes.assert_called_once_with("org/repo", "issue_comment", 888)
+
+
+class TestVariableOverrides:
+    """Variables passed as --key value should be merged into run_variables."""
+
+    def test_variables_enqueued_on_issue_comment(self, gh_channel, gh_db):
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel._active_refs = set()
+        gh_channel.allowed_users = {"alice"}
+
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        flow = Flow(name="deploy", space_id=space.id)
+        gh_db.add(flow)
+        gh_db.commit()
+
+        comment = {
+            "id": 1001,
+            "body": '/llmflows:deploy --env staging --region "us-east-1" Roll out the fix',
+            "user": {"login": "alice"},
+            "issue_url": "https://api.github.com/repos/org/repo/issues/12",
+        }
+
+        issue_data = {"number": 12, "title": "Deploy", "body": "...", "html_url": "https://github.com/org/repo/issues/12"}
+
+        with patch("llmflows.services.gateway.github._gh_api", return_value=issue_data):
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                with patch.object(gh_channel, "_react_eyes"):
+                    triggered = set()
+                    gh_channel._process_issue_comment(
+                        "org/repo",
+                        {"space_id": space.id, "space_name": "test"},
+                        comment, triggered,
+                    )
+
+        gh_db.expire_all()
+        runs = gh_db.query(FlowRun).all()
+        assert len(runs) == 1
+        rv = runs[0].run_variables
+        assert rv["env"] == "staging"
+        assert rv["region"] == "us-east-1"
+        assert rv["TASK_DESCRIPTION"] == "Roll out the fix"
+
+    def test_variables_enqueued_on_review_comment(self, gh_channel, gh_db):
+        gh_channel._bot_user = "llmflows-bot"
+        gh_channel._active_refs = set()
+        gh_channel.allowed_users = {"bob"}
+
+        space = Space(name="test", path="/tmp/test")
+        gh_db.add(space)
+        gh_db.commit()
+
+        flow = Flow(name="pr-fix", space_id=space.id)
+        gh_db.add(flow)
+        gh_db.commit()
+
+        comment = {
+            "id": 2001,
+            "body": "/llmflows:pr-fix --base-branch develop fix this code",
+            "user": {"login": "bob"},
+            "pull_request_url": "https://api.github.com/repos/org/repo/pulls/5",
+        }
+
+        pr_data = {
+            "number": 5, "title": "My PR", "body": "...",
+            "html_url": "https://github.com/org/repo/pull/5",
+            "head": {"ref": "feature-x"},
+        }
+
+        with patch("llmflows.services.gateway.github._gh_api", return_value=pr_data):
+            with patch.object(gh_channel, "_has_eyes_reaction", return_value=False):
+                with patch.object(gh_channel, "_react_eyes"):
+                    triggered = set()
+                    gh_channel._process_review_comment(
+                        "org/repo",
+                        {"space_id": space.id, "space_name": "test"},
+                        comment, triggered,
+                    )
+
+        gh_db.expire_all()
+        runs = gh_db.query(FlowRun).all()
+        assert len(runs) == 1
+        rv = runs[0].run_variables
+        assert rv["base-branch"] == "develop"
+        assert rv["TASK_DESCRIPTION"] == "fix this code"
 
 
 class TestIssueComments:
