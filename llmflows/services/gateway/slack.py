@@ -100,6 +100,7 @@ class SlackChannel:
         self.allowed_channels: set[str] = set(config.get("allowed_channel_ids", []))
         self._active_channels: set[str] = set()
         self._awaiting_response: dict[str, str] = {}  # thread_ts -> step_run_id
+        self._awaiting_improvement: dict[str, str] = {}  # channel_id -> inbox_id
         self._chat_sessions: dict[str, _ChatSession] = {}  # thread_ts -> session
         self._chat_pending_space: dict[str, str] = {}  # message_ts -> space_id
         self._notification_messages: dict[str, list[tuple[str, str]]] = {}  # inbox_id -> [(channel, ts)]
@@ -281,6 +282,12 @@ class SlackChannel:
         chat_session = self._chat_sessions.get(thread_ts) if thread_ts else None
         if chat_session:
             self._chat_reply(channel, thread_ts, text, chat_session, say)
+            return
+
+        # Flow improvement response
+        inbox_id = self._awaiting_improvement.pop(channel, None)
+        if inbox_id:
+            self._process_improvement_response(channel, inbox_id, text, say)
             return
 
         # Variable collection for run
@@ -704,7 +711,7 @@ class SlackChannel:
                                 },
                                 {
                                     "type": "button",
-                                    "text": {"type": "plain_text", "text": "Accept"},
+                                    "text": {"type": "plain_text", "text": "Respond"},
                                     "action_id": f"accept_improvement:{item.id}",
                                     "value": item.id,
                                     "style": "primary",
@@ -1314,7 +1321,7 @@ class SlackChannel:
                         "elements": [
                             {
                                 "type": "button",
-                                "text": {"type": "plain_text", "text": "Accept"},
+                                "text": {"type": "plain_text", "text": "Respond"},
                                 "action_id": f"accept_improvement:{inbox_id}",
                                 "value": inbox_id,
                                 "style": "primary",
@@ -1368,52 +1375,77 @@ class SlackChannel:
     # ── Flow improvement callbacks ───────────────────────────────────────
 
     def _cb_accept_improvement(self, channel: str, inbox_id: str, say, message_ts: str) -> None:
+        self._awaiting_improvement[channel] = inbox_id
+        self._update_message(channel, message_ts, "Which improvements to apply? (empty = all):")
+
+    def _process_improvement_response(self, channel: str, inbox_id: str, selection: str, say) -> None:
+        from ..audit import FlowAuditService
+        from ..context import ContextService, generate_flow_from_improvements
+
         session = self.session_factory()
         try:
             item = session.query(InboxItem).filter_by(id=inbox_id).first()
             if not item or item.type != "flow_improvement":
-                self._update_message(channel, message_ts, "Improvement proposal not found.")
+                say(text="Improvement proposal not found.", channel=channel)
                 return
             if item.archived_at:
-                self._update_message(channel, message_ts, "Already handled.")
+                say(text="Already handled.", channel=channel)
                 return
 
             run = session.query(FlowRun).filter_by(id=item.reference_id).first()
             space = session.query(SpaceModel).filter_by(id=item.space_id).first()
             if not run or not space or not run.flow_id:
-                self._update_message(channel, message_ts, "Run or flow not found.")
+                say(text="Run or flow not found.", channel=channel)
                 return
 
             artifacts_dir = ContextService.get_artifacts_dir(
                 Path(space.path), run.id, run.flow_name or "",
             )
-            flow_json = ContextService.read_flow_json(artifacts_dir)
-            if not flow_json or not flow_json.get("steps"):
-                self._update_message(channel, message_ts, "No valid flow proposal found.")
+            improvement_text = ContextService.read_improvement(artifacts_dir)
+            if not improvement_text:
+                say(text="No improvement proposal found.", channel=channel)
                 return
 
-            from ..audit import FlowAuditService
+            flow_svc = FlowService(session)
+            current_flow = flow_svc.export_flow_dict(run.flow_id)
+            flow_json = generate_flow_from_improvements(current_flow, improvement_text, selection)
 
-            flow_name = run.flow_name or "?"
+            flow_obj = flow_svc.get(run.flow_id)
+            flow_name = (flow_obj.name if flow_obj else None) or run.flow_name or "?"
+
             audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
             if audit_result.status == "unsafe":
-                self._update_message(
-                    channel, message_ts,
-                    f":x: Security audit failed for *{flow_name}*: {audit_result.summary}",
+                say(
+                    text=f":x: Security audit failed for *{flow_name}*: {audit_result.summary}",
+                    channel=channel,
                 )
                 return
 
-            flow = FlowService(session).apply_flow_proposal(run.flow_id, flow_json)
+            flow = flow_svc.apply_flow_proposal(run.flow_id, flow_json)
             if not flow:
-                self._update_message(channel, message_ts, "Failed to apply proposal.")
+                say(text="Failed to apply proposal.", channel=channel)
                 return
 
             FlowAuditService.save_audit(space.path, flow.name, audit_result)
+
+            if selection.strip():
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+                entry = (
+                    f"## Skipped improvements ({ts})\n\n"
+                    f"From run {run.id}, the user approved only: \"{selection.strip()}\"\n\n"
+                    f"The full proposal was:\n\n{improvement_text}\n\n"
+                    "Do not re-propose the items that were not selected."
+                )
+                ContextService.append_memory(flow_dir, entry)
+
             RunService(session).archive_inbox_item(inbox_id)
-            self._update_message(
-                channel, message_ts,
-                f":white_check_mark: Accepted improvement for *{flow_name}* (v{flow.version})",
+            say(
+                text=f":white_check_mark: Applied improvements for *{flow_name}* (v{flow.version})",
+                channel=channel,
             )
+        except ValueError as e:
+            say(text=f"Error: {e}", channel=channel)
         finally:
             session.close()
 
@@ -1550,7 +1582,7 @@ class SlackChannel:
         if event == "flow.improvement" and inbox_id:
             buttons.append({
                 "type": "button",
-                "text": {"type": "plain_text", "text": "Accept"},
+                "text": {"type": "plain_text", "text": "Respond"},
                 "action_id": f"accept_improvement:{inbox_id}",
                 "value": inbox_id,
                 "style": "primary",

@@ -7,7 +7,6 @@
       "name": "Research & Propose",
       "position": 0,
       "content": "# DISCOVER FEATURES\n\n## PURPOSE\n\nResearch and propose innovative features for llm-flows based on the current state of the project, existing flows, and the broader AI automation landscape.\n\n## CONTEXT\n\nllm-flows is a general-purpose AI automation platform. It is NOT limited to coding \u2014 users automate research, content creation, data processing, monitoring, reporting, communication, scheduling, and any repeatable workflow.\n\n## WORKFLOW\n\n1. Project Analysis:\n   - Read `README.md` and `AGENTS.md` to understand the architecture and goals.\n   - Run `llmflows flow list` to see existing capabilities and avoid proposing things that are already flows.\n   - Use the GitHub connector to list existing issues and avoid proposing features that are already being discussed or implemented.\n   - Use `git branch` and `git log -n 20 --oneline` to see active or recent development.\n2. Memory & Feedback:\n   - Check if `{{space.dir}}/memory/rejected-features.md` exists. If so, read it.\n   - Analyze the titles AND the feedback comments to understand why previous features were rejected.\n3. Market Research:\n   - Use web search and browser to research advancements in AI automation, agent frameworks, and workflow orchestration.\n4. Propose Features:\n   - Select 3 to 5 new, innovative features.\n   - For each feature, provide a **Title**, **Why it matters**, and **How it would work** (implementation sketch).\n5. Save the output to `{{step.dir}}/_result.md`.",
-      "step_type": "agent",
       "connectors": [
         "web_search",
         "browser",
@@ -26,8 +25,7 @@
       "content": "# PROCESS SELECTION\n\n## PURPOSE\n\nCreate a GitHub issue for the selected feature (triggering brainstorm) and update the rejected features memory.\n\n## WORKFLOW\n\n1. Read the user's response from `{{hitl.response.0}}`.\n2. Identify Selection & Feedback:\n   - If the user entered a number (e.g., \"4\") or a feature name, that is the **Selected Feature**.\n   - Any additional text provided (e.g., \"4, but focus on X\") is **Implementation Feedback**.\n   - If the user entered \"0\", all features are rejected. Text after \"0\" is **Rejection Feedback**.\n3. Update Memory:\n   - Ensure `{{space.dir}}/memory` exists.\n   - Read existing `{{space.dir}}/memory/rejected-features.md` if it exists.\n   - Append NEW rejected features (titles/descriptions) and any Rejection Feedback to the file. Avoid duplicating features that are already in the memory.\n4. Create GitHub Issue:\n   - If a feature was selected, use the GitHub connector to create an issue with the feature title and body (description, implementation sketch, and user feedback).\n   - Use the GitHub connector to post a comment on the newly created issue:\n     `/llmflows:gh-brainstorm <Feature Title>`\n5. Write a summary to `{{step.dir}}/_result.md`:\n   - Created issue URL (if applicable)\n   - Memory updates made\n   - Rejection feedback captured (if applicable)\n6. Write to `{{run.dir}}/inbox.md`:\n   - If feature selected: issue URL and note that brainstorm was triggered\n   - If rejected: confirmation that feedback was saved to memory",
       "connectors": [
         "github"
-      ],
-      "step_type": "agent"
+      ]
     }
   ],
   "schedule_cron": "0 20 * * 1-5",

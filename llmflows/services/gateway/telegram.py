@@ -133,6 +133,7 @@ class TelegramBot:
         self.allowed_ids: set[int] = set(config.get("allowed_chat_ids", []))
         self._active_chats: set[int] = set()
         self._awaiting_response: dict[int, str] = {}  # chat_id -> step_run_id
+        self._awaiting_improvement: dict[int, str] = {}  # chat_id -> inbox_id
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
         self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
         self._muted: bool = False
@@ -600,6 +601,12 @@ class TelegramBot:
             return
         self._active_chats.add(chat_id)
 
+        inbox_id = self._awaiting_improvement.pop(chat_id, None)
+        if inbox_id:
+            selection = update.message.text or ""
+            await self._process_improvement_response(update, inbox_id, selection)
+            return
+
         step_run_id = self._awaiting_response.pop(chat_id, None)
         if step_run_id:
             response_text = update.message.text or ""
@@ -914,52 +921,81 @@ class TelegramBot:
     # ── Flow improvement callbacks ─────────────────────────────────────────
 
     async def _cb_accept_improvement(self, query, inbox_id: str) -> None:
+        chat_id = query.message.chat_id
+        self._awaiting_improvement[chat_id] = inbox_id
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(
+            "Which improvements to apply? (empty = all):"
+        )
+
+    async def _process_improvement_response(self, update, inbox_id: str, selection: str) -> None:
+        from ..audit import FlowAuditService
+        from ..context import ContextService, generate_flow_from_improvements
+
         session = self.session_factory()
         try:
             item = session.query(InboxItem).filter_by(id=inbox_id).first()
             if not item or item.type != "flow_improvement":
-                await query.edit_message_text("Improvement proposal not found.")
+                await update.message.reply_text("Improvement proposal not found.")
                 return
             if item.archived_at:
-                await query.edit_message_text("Already handled.")
+                await update.message.reply_text("Already handled.")
                 return
 
             run = session.query(FlowRun).filter_by(id=item.reference_id).first()
             space = session.query(SpaceModel).filter_by(id=item.space_id).first()
             if not run or not space or not run.flow_id:
-                await query.edit_message_text("Run or flow not found.")
+                await update.message.reply_text("Run or flow not found.")
                 return
 
             artifacts_dir = ContextService.get_artifacts_dir(
                 Path(space.path), run.id, run.flow_name or "",
             )
-            flow_json = ContextService.read_flow_json(artifacts_dir)
-            if not flow_json or not flow_json.get("steps"):
-                await query.edit_message_text("No valid flow proposal found.")
+            improvement_text = ContextService.read_improvement(artifacts_dir)
+            if not improvement_text:
+                await update.message.reply_text("No improvement proposal found.")
                 return
 
-            from ..audit import FlowAuditService
+            flow_svc = FlowService(session)
+            current_flow = flow_svc.export_flow_dict(run.flow_id)
+            flow_json = generate_flow_from_improvements(current_flow, improvement_text, selection)
 
-            flow_name = run.flow_name or "?"
+            flow_obj = flow_svc.get(run.flow_id)
+            flow_name = (flow_obj.name if flow_obj else None) or run.flow_name or "?"
+
             audit_result = FlowAuditService.run_audit(space.path, flow_name, flow_json)
             if audit_result.status == "unsafe":
-                await query.edit_message_text(
+                await update.message.reply_text(
                     f"❌ Security audit failed for <b>{flow_name}</b>: {audit_result.summary}",
                     parse_mode="HTML",
                 )
                 return
 
-            flow = FlowService(session).apply_flow_proposal(run.flow_id, flow_json)
+            flow = flow_svc.apply_flow_proposal(run.flow_id, flow_json)
             if not flow:
-                await query.edit_message_text("Failed to apply proposal.")
+                await update.message.reply_text("Failed to apply proposal.")
                 return
 
             FlowAuditService.save_audit(space.path, flow.name, audit_result)
+
+            if selection.strip():
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                flow_dir = ContextService.get_flow_dir(Path(space.path), run.flow_name or "")
+                entry = (
+                    f"## Skipped improvements ({ts})\n\n"
+                    f"From run {run.id}, the user approved only: \"{selection.strip()}\"\n\n"
+                    f"The full proposal was:\n\n{improvement_text}\n\n"
+                    "Do not re-propose the items that were not selected."
+                )
+                ContextService.append_memory(flow_dir, entry)
+
             RunService(session).archive_inbox_item(inbox_id)
-            await query.edit_message_text(
-                f"✅ Accepted improvement for <b>{flow_name}</b> (v{flow.version})",
+            await update.message.reply_text(
+                f"✅ Applied improvements for <b>{flow_name}</b> (v{flow.version})",
                 parse_mode="HTML",
             )
+        except ValueError as e:
+            await update.message.reply_text(f"Error: {e}")
         finally:
             session.close()
 
@@ -1215,7 +1251,7 @@ class TelegramBot:
 
                 markup = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"),
+                        InlineKeyboardButton("Respond", callback_data=f"accept_improvement:{inbox_id}"),
                         InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"),
                         InlineKeyboardButton("Discard", callback_data=f"discard_improvement:{inbox_id}"),
                     ],
@@ -1297,7 +1333,7 @@ class TelegramBot:
         if event == "step.awaiting_user" and step_run_id:
             buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
         if event == "flow.improvement" and inbox_id:
-            buttons.append(InlineKeyboardButton("Accept", callback_data=f"accept_improvement:{inbox_id}"))
+            buttons.append(InlineKeyboardButton("Respond", callback_data=f"accept_improvement:{inbox_id}"))
             buttons.append(InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"))
             buttons.append(InlineKeyboardButton("Discard", callback_data=f"discard_improvement:{inbox_id}"))
         elif inbox_id:
