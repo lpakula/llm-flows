@@ -111,14 +111,15 @@ def daemon_start(foreground):
 
     init_db()
 
-    from ..services.container import ensure_image, image_name
+    if not os.environ.get("LLMFLOWS_IMAGE_ENSURED"):
+        from ..services.container import ensure_image, image_name
 
-    if not ensure_image(on_status=click.echo):
-        click.echo(
-            f"Cannot start daemon without Docker image {image_name()}.",
-            err=True,
-        )
-        raise SystemExit(1)
+        if not ensure_image(on_status=click.echo):
+            click.echo(
+                f"Cannot start daemon without Docker image {image_name()}.",
+                err=True,
+            )
+            raise SystemExit(1)
 
     from ..config import SYSTEM_DIR
     log_file = str(SYSTEM_DIR / "daemon.log")

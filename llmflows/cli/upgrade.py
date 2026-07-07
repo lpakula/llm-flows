@@ -29,7 +29,7 @@ def upgrade():
         click.echo(f"Stopped UI (pids: {ui_killed})")
 
     click.echo("Restarting daemon…")
-    ok, msg = restart_daemon_via_cli()
+    ok, msg = restart_daemon_via_cli(on_status=lambda m: click.echo(f"  {m}"))
     if ok:
         click.echo(f"  {msg}")
     else:

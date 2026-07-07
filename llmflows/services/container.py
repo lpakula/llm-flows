@@ -197,7 +197,11 @@ def image_exists(name: str) -> bool:
         return False
 
 
-def build_image(tag: str | None = None, *, no_cache: bool = False) -> bool:
+def build_image(
+    tag: str | None = None,
+    *,
+    no_cache: bool = False,
+) -> bool:
     """Build the llmflows Docker image. Returns True on success."""
     tag = tag or image_name()
     root = resolve_build_context()
@@ -215,16 +219,27 @@ def build_image(tag: str | None = None, *, no_cache: bool = False) -> bool:
 
     logger.info("Building Docker image %s from %s", tag, root)
     try:
-        result = subprocess.run(cmd, cwd=str(root), timeout=1800)
+        result = subprocess.run(
+            cmd,
+            cwd=str(root),
+            timeout=1800,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
-def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
+def ensure_image(
+    *,
+    on_status: Optional[Callable[[str], None]] = None,
+    quiet: bool = False,
+) -> bool:
     """Ensure the runner Docker image exists, building it when missing.
 
     Skipped inside runner containers (``LLMFLOWS_RUNNER=1``).
+    When ``quiet`` is True, only errors are reported via ``on_status``.
     """
     if os.environ.get("LLMFLOWS_RUNNER"):
         return True
@@ -232,12 +247,6 @@ def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
     tag = image_name()
     if image_exists(tag):
         return True
-
-    msg = f"Docker image {tag} not found, building…"
-    if on_status:
-        on_status(msg)
-    else:
-        logger.info(msg)
 
     if not shutil.which("docker"):
         err = "Docker CLI not found — install Docker or build the image manually"
@@ -247,24 +256,19 @@ def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
             logger.error(err)
         return False
 
-    if find_project_root() is None and not os.environ.get("LLMFLOWS_SOURCE"):
-        prep = "Preparing Docker build context…"
-        if on_status:
-            on_status(prep)
-        else:
-            logger.info(prep)
+    if on_status and not quiet:
+        on_status(f"building {tag} (first run, may take several minutes)…")
+    elif not quiet:
+        logger.info("Building Docker image %s", tag)
 
     if build_image(tag):
-        done = f"Docker image {tag} ready"
-        if on_status:
-            on_status(done)
-        else:
-            logger.info(done)
+        if not quiet:
+            logger.info("Docker image %s ready", tag)
         return True
 
     err = (
-        f"Failed to build Docker image {tag}. "
-        f"Clone https://github.com/{_GITHUB_REPO}, checkout {_release_tag(__version__) or 'the release tag'}, "
+        f"failed to build {tag} — clone https://github.com/{_GITHUB_REPO}, "
+        f"checkout {_release_tag(__version__) or 'the release tag'}, "
         "and run: llmflows runner build"
     )
     if on_status:

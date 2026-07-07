@@ -115,16 +115,19 @@ def _kill_other_ui_instances() -> None:
 
 def _ensure_docker_image() -> bool:
     """Build the runner Docker image when missing. Returns True if ready."""
-    from ..services.container import ensure_image, image_name
+    from ..services.container import ensure_image, image_exists, image_name
 
     tag = image_name()
-    if ensure_image(on_status=lambda msg: click.echo(f"  Docker:          {msg}")):
+    if image_exists(tag):
         return True
-    click.echo(
-        f"  Docker:          image {tag} unavailable — flow runs and chat will fail.",
-        err=True,
-    )
-    return False
+
+    if not ensure_image(on_status=lambda msg: click.echo(f"  Docker:          {msg}")):
+        click.echo(
+            f"  Docker:          image {tag} unavailable — flow runs and chat will fail.",
+            err=True,
+        )
+        return False
+    return True
 
 
 def _ensure_daemon_running() -> None:
@@ -166,22 +169,25 @@ def _ensure_daemon_running() -> None:
 
     cmd = [_llmflows_bin(), "daemon", "start"]
 
+    env = os.environ.copy()
+    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
+
     subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
-        env=os.environ.copy(),
+        env=env,
     )
 
-    for _ in range(40):  # up to ~10s
+    for _ in range(120):  # up to ~30s
         time.sleep(0.25)
         new_pid = read_pid_file()
         if new_pid:
             click.echo(f"  Daemon:          started (pid {new_pid})")
             return
-    click.echo("  Daemon:          did not register a PID within 10s — check daemon.log", err=True)
+    click.echo("  Daemon:          did not register a PID within 30s — check daemon.log", err=True)
 
 
 def _maybe_reexec_for_dev(dev: bool) -> None:

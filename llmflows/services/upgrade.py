@@ -8,6 +8,7 @@ import subprocess
 import sys
 from importlib.metadata import version
 from pathlib import Path
+from typing import Callable, Optional
 
 logger = logging.getLogger("llmflows.upgrade")
 
@@ -119,6 +120,8 @@ def start_ui_background(no_daemon: bool = False) -> int | None:
     cmd = [_llmflows_bin(), "ui"]
     if no_daemon:
         cmd.append("--no-daemon")
+    env = os.environ.copy()
+    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
     try:
         proc = subprocess.Popen(
             cmd,
@@ -126,6 +129,7 @@ def start_ui_background(no_daemon: bool = False) -> int | None:
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
         return proc.pid
     except Exception:
@@ -133,30 +137,60 @@ def start_ui_background(no_daemon: bool = False) -> int | None:
         return None
 
 
-def restart_daemon_via_cli() -> tuple[bool, str]:
+def restart_daemon_via_cli(
+    on_status: Optional[Callable[[str], None]] = None,
+    *,
+    wait_seconds: float = 30.0,
+) -> tuple[bool, str]:
     """Stop and start the daemon (for CLI use). Returns ``(success, message)``."""
     import time
 
+    from ..services.container import ensure_image, image_name
+    from ..services.daemon import read_pid_file
+
     llmflows = _llmflows_bin()
+    tag = image_name()
+
+    if not ensure_image(
+        on_status=(lambda msg: on_status(f"Docker: {msg}") if on_status else None),
+        quiet=on_status is None,
+    ):
+        return False, f"Docker image {tag} is not available"
 
     try:
         subprocess.run(
             [llmflows, "daemon", "stop"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
     except Exception:
         pass
 
     time.sleep(0.5)
 
+    env = os.environ.copy()
+    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
+
     try:
-        result = subprocess.run(
+        subprocess.Popen(
             [llmflows, "daemon", "start"],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=env,
         )
-        return result.returncode == 0, result.stdout.strip()
     except Exception as e:
         return False, str(e)
+
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        pid = read_pid_file()
+        if pid:
+            return True, f"Daemon started (pid {pid})"
+
+    return False, f"Daemon did not register a PID within {int(wait_seconds)}s — check daemon.log"
 
 
 def trigger_daemon_reexec() -> None:

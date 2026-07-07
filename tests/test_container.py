@@ -92,5 +92,4 @@ def test_ensure_image_builds_when_missing():
                         with patch.object(container_mod, "build_image", return_value=True) as build:
                             assert container_mod.ensure_image(on_status=on_status) is True
                             build.assert_called_once_with("llmflows:9.9.9")
-    assert messages[0].startswith("Docker image llmflows:9.9.9 not found")
-    assert "ready" in messages[-1]
+    assert "building llmflows:9.9.9" in messages[0]
