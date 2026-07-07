@@ -24,4 +24,8 @@ rp5m/tasks/
 
 .worktrees/
 
+# Generated at wheel build for pip-only Docker context (see scripts/build.py)
+llmflows/docker/*
+!llmflows/docker/.gitkeep
+
 llmflows/ui/frontend/tsconfig.tsbuildinfo

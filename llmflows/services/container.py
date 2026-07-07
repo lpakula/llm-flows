@@ -116,8 +116,9 @@ def resolve_build_context() -> Optional[Path]:
 def stage_package_build_context() -> Optional[Path]:
     """Stage a docker build context from the installed pip package.
 
-    The wheel bundles ``llmflows/docker/`` (Dockerfile, pyproject.toml, tools,
-    scripts).  This copies them plus the installed package tree into
+    The wheel bundles ``llmflows/docker/`` (generated at pack time from root
+    ``Dockerfile``, ``pyproject.toml``, ``uv.lock``, etc.).  This copies them
+    plus the installed package tree into
     ``~/.llmflows/docker-build/pkg/<version>/``.
     """
     import llmflows
@@ -130,7 +131,9 @@ def stage_package_build_context() -> Optional[Path]:
     _sync_docker_bundle_from_repo(docker_bundle)
 
     required = (
+        "Dockerfile",
         "pyproject.toml",
+        "uv.lock",
         "README.md",
         "tools/package.json",
         "scripts/build.py",
@@ -151,6 +154,7 @@ def stage_package_build_context() -> Optional[Path]:
 
         shutil.copy2(docker_bundle / "Dockerfile", staging / "Dockerfile")
         shutil.copy2(docker_bundle / "pyproject.toml", staging / "pyproject.toml")
+        shutil.copy2(docker_bundle / "uv.lock", staging / "uv.lock")
         shutil.copy2(docker_bundle / "README.md", staging / "README.md")
         shutil.copytree(docker_bundle / "tools", staging / "tools")
         shutil.copytree(docker_bundle / "scripts", staging / "scripts")
@@ -172,7 +176,9 @@ def _sync_docker_bundle_from_repo(docker_bundle: Path) -> None:
     if not local:
         return
     mappings = {
+        local / "Dockerfile": docker_bundle / "Dockerfile",
         local / "pyproject.toml": docker_bundle / "pyproject.toml",
+        local / "uv.lock": docker_bundle / "uv.lock",
         local / "README.md": docker_bundle / "README.md",
         local / "tools" / "package.json": docker_bundle / "tools" / "package.json",
         local / "scripts" / "build.py": docker_bundle / "scripts" / "build.py",
@@ -197,6 +203,12 @@ def image_exists(name: str) -> bool:
         return False
 
 
+def _frontend_build_arg(root: Path) -> str:
+    """Skip npm build when committed static UI is present in the build context."""
+    static = root / "llmflows" / "ui" / "static" / "index.html"
+    return "0" if static.is_file() else "1"
+
+
 def build_image(
     tag: str | None = None,
     *,
@@ -213,7 +225,15 @@ def build_image(
         )
         return False
 
-    cmd = ["docker", "build", "-t", tag, "."]
+    cmd = [
+        "docker",
+        "build",
+        "-t",
+        tag,
+        "--build-arg",
+        f"BUILD_FRONTEND={_frontend_build_arg(root)}",
+        ".",
+    ]
     if no_cache:
         cmd.insert(2, "--no-cache")
 

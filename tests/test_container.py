@@ -47,6 +47,7 @@ def test_stage_package_build_context(tmp_path, monkeypatch):
     (docker / "scripts").mkdir(parents=True)
     (docker / "Dockerfile").write_text("FROM scratch\n")
     (docker / "pyproject.toml").write_text("[project]\nname='llmflows'\n")
+    (docker / "uv.lock").write_text("version = 1\n")
     (docker / "README.md").write_text("readme\n")
     (docker / "tools" / "package.json").write_text("{}\n")
     (docker / "scripts" / "build.py").write_text("# build\n")
@@ -64,6 +65,21 @@ def test_stage_package_build_context(tmp_path, monkeypatch):
     assert (staged / "Dockerfile").is_file()
     assert (staged / "llmflows" / "__init__.py").is_file()
     assert (staged / "tools" / "package.json").is_file()
+    assert (staged / "uv.lock").is_file()
+
+
+def test_frontend_build_arg_skips_when_static_present(tmp_path):
+    root = tmp_path / "repo"
+    static = root / "llmflows" / "ui" / "static"
+    static.mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    assert container_mod._frontend_build_arg(root) == "0"
+
+
+def test_frontend_build_arg_builds_when_static_missing(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    assert container_mod._frontend_build_arg(root) == "1"
 
 
 def test_ensure_image_skips_inside_runner():

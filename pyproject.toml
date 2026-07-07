@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmflows"
-version = "0.51.4"
+version = "0.51.5"
 description = "AI automations that run in the background"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -78,6 +78,7 @@ include = [
     "llmflows/**/*.mako",
     "llmflows/docker/**",
     "scripts/*.py",
+    "uv.lock",
 ]
 exclude = [
     "llmflows/ui/frontend/node_modules/**",

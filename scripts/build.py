@@ -11,6 +11,17 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 FRONTEND_DIR = "llmflows/ui/frontend"
 STATIC_DIR = "llmflows/ui/static"
+DOCKER_BUNDLE = Path("llmflows/docker")
+
+# Copied into the wheel at build time for pip-only Docker image builds.
+DOCKER_BUNDLE_FILES = (
+    ("Dockerfile", DOCKER_BUNDLE / "Dockerfile"),
+    ("pyproject.toml", DOCKER_BUNDLE / "pyproject.toml"),
+    ("uv.lock", DOCKER_BUNDLE / "uv.lock"),
+    ("README.md", DOCKER_BUNDLE / "README.md"),
+    ("tools/package.json", DOCKER_BUNDLE / "tools" / "package.json"),
+    ("scripts/build.py", DOCKER_BUNDLE / "scripts" / "build.py"),
+)
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -39,16 +50,11 @@ class CustomBuildHook(BuildHookInterface):
 
     def _sync_docker_bundle(self):
         """Copy docker build inputs into the wheel for pip-only installs."""
-        bundle = Path("llmflows/docker")
-        bundle.mkdir(parents=True, exist_ok=True)
-        (bundle / "tools").mkdir(parents=True, exist_ok=True)
-        (bundle / "scripts").mkdir(parents=True, exist_ok=True)
-        for src, dest in (
-            ("pyproject.toml", bundle / "pyproject.toml"),
-            ("README.md", bundle / "README.md"),
-            ("tools/package.json", bundle / "tools" / "package.json"),
-            ("scripts/build.py", bundle / "scripts" / "build.py"),
-        ):
-            if Path(src).is_file():
-                shutil.copy2(src, dest)
+        DOCKER_BUNDLE.mkdir(parents=True, exist_ok=True)
+        (DOCKER_BUNDLE / "tools").mkdir(parents=True, exist_ok=True)
+        (DOCKER_BUNDLE / "scripts").mkdir(parents=True, exist_ok=True)
+        for src, dest in DOCKER_BUNDLE_FILES:
+            src_path = Path(src)
+            if src_path.is_file():
+                shutil.copy2(src_path, dest)
         stderr.write(">>> Synced docker build bundle into llmflows/docker/\n")
