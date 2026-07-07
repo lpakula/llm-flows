@@ -732,6 +732,8 @@ async def kill_all_agents():
 
         # Mark all active runs as cancelled
         try:
+            from ..services.container import kill_run_container
+
             run_svc = RunService(session)
             active_runs = (
                 session.query(FlowRun)
@@ -740,11 +742,15 @@ async def kill_all_agents():
                 .all()
             )
             for run in active_runs:
+                if run.container_id:
+                    kill_run_container(run.container_id)
+                    run.container_id = None
                 active_step = run_svc.get_active_step(run.id)
                 if active_step:
                     run_svc.mark_step_completed(active_step.id, outcome="cancelled")
                 run_svc.mark_completed(run.id, outcome="cancelled")
             runs_cancelled = len(active_runs)
+            session.commit()
         except Exception as exc:
             errors.append(f"run cancel: {exc}")
 
@@ -1198,13 +1204,7 @@ async def stop_run(run_id: str):
             session.commit()
             return {"ok": True, "killed": False, "dequeued": True}
 
-        run_svc.mark_completed(run_id, outcome="cancelled")
-
-        space = space_svc.get(run.space_id) if run.space_id else None
-        killed = False
-        if space:
-            killed = AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
-
+        _, killed = run_svc.cancel_run(run_id)
         return {"ok": True, "killed": killed, "dequeued": False}
     finally:
         session.close()

@@ -465,6 +465,13 @@ def remove_container(container_id: str) -> bool:
         return False
 
 
+def kill_run_container(container_id: str | None) -> bool:
+    """Force-stop and remove a runner container for a cancelled run."""
+    if not container_id:
+        return False
+    return remove_container(container_id)
+
+
 def get_container_logs(container_id: str, tail: int = 100) -> str:
     """Get recent logs from a runner container."""
     if not container_id:

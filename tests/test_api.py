@@ -138,6 +138,46 @@ class TestScheduleAPI:
         assert response.status_code == 404
 
 
+class TestStopRunAPI:
+    def test_stop_run_kills_container(self, client, api_db):
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock, patch
+
+        run = MagicMock()
+        run.id = "abc123"
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = None
+
+        with patch("llmflows.ui.server.RunService") as MockRunSvc:
+            mock_run_svc = MockRunSvc.return_value
+            mock_run_svc.get.return_value = run
+            mock_run_svc.cancel_run.return_value = (run, True)
+            response = client.post("/api/runs/abc123/stop")
+
+        assert response.status_code == 200
+        assert response.json()["killed"] is True
+        mock_run_svc.cancel_run.assert_called_once_with("abc123")
+
+    def test_stop_run_kills_host_agent_when_no_container(self, client, api_db):
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock, patch
+
+        run = MagicMock()
+        run.id = "abc123"
+        run.started_at = datetime.now(timezone.utc)
+        run.completed_at = None
+
+        with patch("llmflows.ui.server.RunService") as MockRunSvc:
+            mock_run_svc = MockRunSvc.return_value
+            mock_run_svc.get.return_value = run
+            mock_run_svc.cancel_run.return_value = (run, True)
+            response = client.post("/api/runs/abc123/stop")
+
+        assert response.status_code == 200
+        assert response.json()["killed"] is True
+        mock_run_svc.cancel_run.assert_called_once_with("abc123")
+
+
 class TestFlowVersioningAPI:
     def test_list_versions_empty(self, client, api_db):
         fid = api_db["flow_id"]

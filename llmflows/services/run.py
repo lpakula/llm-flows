@@ -108,6 +108,45 @@ class RunService:
         self.session.commit()
         return run
 
+    def cancel_run(self, run_id: str) -> tuple[Optional[FlowRun], bool]:
+        """Mark a run cancelled and stop its runner container or host agent.
+
+        Returns ``(run, killed)`` where *killed* is True when a process/container
+        was stopped. For queued runs that have not started, deletes the run and
+        returns ``(None, False)``.
+        """
+        run = self.get(run_id)
+        if not run or run.completed_at:
+            return run, False
+
+        if not run.started_at:
+            self.session.delete(run)
+            self.session.commit()
+            return None, False
+
+        container_id = run.container_id
+        active_step = self.get_active_step(run_id)
+        if active_step:
+            self.mark_step_completed(active_step.id, outcome="cancelled")
+
+        self.mark_completed(run_id, outcome="cancelled")
+
+        killed = False
+        if container_id:
+            from .container import kill_run_container
+
+            killed = kill_run_container(container_id)
+            run.container_id = None
+            self.session.commit()
+        else:
+            space = self.session.query(Space).filter_by(id=run.space_id).first()
+            if space:
+                from .agent import AgentService
+
+                killed = AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+
+        return run, killed
+
     def pause(self, run_id: str) -> Optional[FlowRun]:
         """Pause an active run."""
         run = self.session.query(FlowRun).filter_by(id=run_id).first()

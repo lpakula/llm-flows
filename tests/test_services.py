@@ -553,6 +553,24 @@ class TestRunService:
         assert active is not None
         assert active.id == sr.id
 
+    def test_cancel_run_kills_container(self, test_db, test_space):
+        run_svc = RunService(test_db)
+        flow_svc = FlowService(test_db)
+        flow = flow_svc.create("cancel-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+        run.container_id = "deadbeef"
+        test_db.commit()
+
+        with patch("llmflows.services.container.kill_run_container", return_value=True) as mock_kill:
+            cancelled, killed = run_svc.cancel_run(run.id)
+
+        assert killed is True
+        mock_kill.assert_called_once_with("deadbeef")
+        assert cancelled.completed_at is not None
+        assert cancelled.outcome == "cancelled"
+        assert cancelled.container_id is None
+
     def test_list_step_runs(self, test_db, test_space):
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)

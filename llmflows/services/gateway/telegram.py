@@ -787,11 +787,7 @@ class TelegramBot:
                 await query.edit_message_text(f"Dequeued <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
                 return
 
-            run_svc.mark_completed(run_id, outcome="cancelled")
-            space = session.query(SpaceModel).filter_by(id=run.space_id).first()
-            if space:
-                from ..agent import AgentService
-                AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+            _, _killed = run_svc.cancel_run(run_id)
             await query.edit_message_text(f"Cancelled <b>{flow_label}</b> (<code>{run_id}</code>)", parse_mode="HTML")
         finally:
             session.close()

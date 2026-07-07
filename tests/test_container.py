@@ -82,6 +82,13 @@ def test_frontend_build_arg_builds_when_static_missing(tmp_path):
     assert container_mod._frontend_build_arg(root) == "1"
 
 
+def test_kill_run_container_delegates_to_remove_container():
+    with patch.object(container_mod, "remove_container", return_value=True) as mock_rm:
+        assert container_mod.kill_run_container("abc123") is True
+        mock_rm.assert_called_once_with("abc123")
+    assert container_mod.kill_run_container(None) is False
+
+
 def test_ensure_image_skips_inside_runner():
     with patch.dict("os.environ", {"LLMFLOWS_RUNNER": "1"}):
         assert container_mod.ensure_image() is True
