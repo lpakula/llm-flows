@@ -9,6 +9,9 @@ import logging
 import os
 import shutil
 import subprocess
+import tarfile
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -22,20 +25,162 @@ from .google_host import flow_google_connectors, google_oauth_volume_args, youtu
 
 logger = logging.getLogger("llmflows.container")
 
+_GITHUB_REPO = "lpakula/llm-flows"
+_BUILD_CACHE_DIR = SYSTEM_DIR / "docker-build"
+
 
 def image_name() -> str:
     """Docker image tag for runner/chat containers (matches release version)."""
     return os.environ.get("LLMFLOWS_IMAGE") or f"llmflows:{__version__}"
 
 
-def find_project_root() -> Path:
-    """Find the llmflows project root (where Dockerfile lives)."""
+def find_project_root() -> Optional[Path]:
+    """Find a local checkout root that contains a Dockerfile (editable installs)."""
     current = Path(__file__).resolve().parent
     while current != current.parent:
-        if (current / "Dockerfile").exists():
+        if (current / "Dockerfile").is_file():
             return current
         current = current.parent
-    return Path.cwd()
+    return None
+
+
+def _release_tag(version: str) -> Optional[str]:
+    if not version or version == "unknown":
+        return None
+    return version if version.startswith("v") else f"v{version}"
+
+
+def fetch_release_source(version: str | None = None) -> Optional[Path]:
+    """Download the GitHub release source tree for docker build (pip installs).
+
+    Cached under ``~/.llmflows/docker-build/<tag>/``.
+    """
+    tag = _release_tag(version or __version__)
+    if not tag:
+        return None
+
+    cached = _BUILD_CACHE_DIR / tag
+    if (cached / "Dockerfile").is_file():
+        return cached
+
+    url = f"https://github.com/{_GITHUB_REPO}/archive/refs/tags/{tag}.tar.gz"
+    _BUILD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with tempfile.TemporaryDirectory(dir=_BUILD_CACHE_DIR) as tmp:
+            archive = Path(tmp) / "source.tar.gz"
+            logger.info("Downloading release source %s from GitHub", tag)
+            urllib.request.urlretrieve(url, archive)
+
+            with tarfile.open(archive, "r:gz") as tar:
+                top_levels = {m.name.split("/")[0] for m in tar.getmembers() if m.name}
+                if len(top_levels) != 1:
+                    logger.error("Unexpected archive layout for %s", tag)
+                    return None
+                tar.extractall(path=tmp)
+
+            extracted = Path(tmp) / next(iter(top_levels))
+            if not (extracted / "Dockerfile").is_file():
+                logger.error("Dockerfile missing in downloaded release %s", tag)
+                return None
+
+            if cached.exists():
+                shutil.rmtree(cached)
+            shutil.move(str(extracted), str(cached))
+            return cached
+    except Exception as exc:
+        logger.error("Failed to download release source %s: %s", tag, exc)
+        return None
+
+
+def resolve_build_context() -> Optional[Path]:
+    """Return a directory suitable for ``docker build`` (contains Dockerfile)."""
+    source = os.environ.get("LLMFLOWS_SOURCE")
+    if source:
+        root = Path(source).expanduser().resolve()
+        if (root / "Dockerfile").is_file():
+            return root
+        logger.error("LLMFLOWS_SOURCE=%s has no Dockerfile", root)
+
+    local = find_project_root()
+    if local:
+        return local
+
+    staged = stage_package_build_context()
+    if staged:
+        return staged
+
+    return fetch_release_source()
+
+
+def stage_package_build_context() -> Optional[Path]:
+    """Stage a docker build context from the installed pip package.
+
+    The wheel bundles ``llmflows/docker/`` (Dockerfile, pyproject.toml, tools,
+    scripts).  This copies them plus the installed package tree into
+    ``~/.llmflows/docker-build/pkg/<version>/``.
+    """
+    import llmflows
+
+    pkg_root = Path(llmflows.__file__).resolve().parent
+    docker_bundle = pkg_root / "docker"
+    if not (docker_bundle / "Dockerfile").is_file():
+        return None
+
+    _sync_docker_bundle_from_repo(docker_bundle)
+
+    required = (
+        "pyproject.toml",
+        "README.md",
+        "tools/package.json",
+        "scripts/build.py",
+    )
+    for name in required:
+        if not (docker_bundle / name).is_file():
+            logger.error("Docker bundle incomplete — missing %s", name)
+            return None
+
+    staging = _BUILD_CACHE_DIR / "pkg" / __version__
+    if (staging / ".ready").is_file() and (staging / "Dockerfile").is_file():
+        return staging
+
+    try:
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
+
+        shutil.copy2(docker_bundle / "Dockerfile", staging / "Dockerfile")
+        shutil.copy2(docker_bundle / "pyproject.toml", staging / "pyproject.toml")
+        shutil.copy2(docker_bundle / "README.md", staging / "README.md")
+        shutil.copytree(docker_bundle / "tools", staging / "tools")
+        shutil.copytree(docker_bundle / "scripts", staging / "scripts")
+        shutil.copytree(
+            pkg_root,
+            staging / "llmflows",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        (staging / ".ready").touch()
+        return staging
+    except OSError as exc:
+        logger.error("Failed to stage docker build context: %s", exc)
+        return None
+
+
+def _sync_docker_bundle_from_repo(docker_bundle: Path) -> None:
+    """Fill docker bundle files from a local repo checkout (editable installs)."""
+    local = find_project_root()
+    if not local:
+        return
+    mappings = {
+        local / "pyproject.toml": docker_bundle / "pyproject.toml",
+        local / "README.md": docker_bundle / "README.md",
+        local / "tools" / "package.json": docker_bundle / "tools" / "package.json",
+        local / "scripts" / "build.py": docker_bundle / "scripts" / "build.py",
+    }
+    for src, dest in mappings.items():
+        if src.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
 
 
 def image_exists(name: str) -> bool:
@@ -55,9 +200,13 @@ def image_exists(name: str) -> bool:
 def build_image(tag: str | None = None, *, no_cache: bool = False) -> bool:
     """Build the llmflows Docker image. Returns True on success."""
     tag = tag or image_name()
-    root = find_project_root()
-    if not (root / "Dockerfile").is_file():
-        logger.error("Dockerfile not found at %s — cannot build %s", root, tag)
+    root = resolve_build_context()
+    if not root:
+        logger.error(
+            "No Docker build context for %s — clone %s or set LLMFLOWS_SOURCE",
+            tag,
+            f"https://github.com/{_GITHUB_REPO}",
+        )
         return False
 
     cmd = ["docker", "build", "-t", tag, "."]
@@ -98,6 +247,13 @@ def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
             logger.error(err)
         return False
 
+    if find_project_root() is None and not os.environ.get("LLMFLOWS_SOURCE"):
+        prep = "Preparing Docker build context…"
+        if on_status:
+            on_status(prep)
+        else:
+            logger.info(prep)
+
     if build_image(tag):
         done = f"Docker image {tag} ready"
         if on_status:
@@ -106,7 +262,11 @@ def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
             logger.info(done)
         return True
 
-    err = f"Failed to build Docker image {tag} — run: llmflows runner build"
+    err = (
+        f"Failed to build Docker image {tag}. "
+        f"Clone https://github.com/{_GITHUB_REPO}, checkout {_release_tag(__version__) or 'the release tag'}, "
+        "and run: llmflows runner build"
+    )
     if on_status:
         on_status(err)
     else:
