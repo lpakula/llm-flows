@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,7 @@ from ..services.chat import (
     CHAT_SESSIONS_DIR,
     build_flow_context as _build_flow_context,
     build_pi_env as _build_pi_env,
+    build_chat_container_env as _build_chat_container_env,
     build_space_context as _build_space_context,
     build_system_prompt as _build_system_prompt,
     get_skill_paths as _get_skill_paths,
@@ -3188,27 +3190,45 @@ async def chat(body: ChatBody):
 
     chat_model = _resolve_chat_model(body.tier or "max")
 
+    workspace_path = space.path if space else "/workspace"
+    host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
+
+    from ..utils.paths import host_path_to_container_path
+
+    container_session = Path(host_path_to_container_path(session_file, host_home=host_home))
+    container_system = Path(host_path_to_container_path(system_file, host_home=host_home))
+    container_skills = [
+        Path(host_path_to_container_path(sp, host_home=host_home))
+        for sp in skill_paths
+    ]
+
     pi_cmd = build_pi_command(
         message=body.message,
-        session_file=session_file,
-        system_file=system_file,
+        session_file=container_session,
+        system_file=container_system,
         model=chat_model,
-        skill_paths=skill_paths,
+        skill_paths=container_skills,
         connector_ids=selected,
     )
 
-    env = _build_pi_env()
+    env = _build_chat_container_env()
 
-    workspace_path = space.path if space else "/workspace"
-    host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
     from ..services.network import ensure_network
     try:
         network_name = ensure_network()
     except Exception:
         network_name = "bridge"
+
+    container_name = f"llmflows-chat-{session_id[:8]}"
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
+        capture_output=True,
+        timeout=10,
+    )
+
     docker_cmd = [
-        "docker", "run", "-i", "--rm",
-        "--name", f"llmflows-chat-{session_id[:8]}",
+        "docker", "run", "--rm",
+        "--name", container_name,
         "--entrypoint", "",
         "-w", "/workspace",
         "-v", f"{workspace_path}:/workspace",
@@ -3224,15 +3244,16 @@ async def chat(body: ChatBody):
     docker_cmd.append(IMAGE_NAME)
     docker_cmd.extend(pi_cmd)
 
-    _chat_stderr = (CHAT_SESSIONS_DIR / session_id / "stderr.log").open("w")
-    logging.getLogger("llmflows.chat").info("Chat container: %s", " ".join(docker_cmd))
-    proc = await asyncio.create_subprocess_exec(
-        *docker_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=_chat_stderr,
-    )
-
     async def stream():
+        stderr_file = (CHAT_SESSIONS_DIR / session_id / "stderr.log").open("w")
+        logging.getLogger("llmflows.chat").info("Chat container: %s", " ".join(docker_cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *docker_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_file,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+
         total_cost = 0.0
         agent_done = False
         try:
@@ -3288,6 +3309,8 @@ async def chat(body: ChatBody):
                 proc.terminate()
                 await proc.wait()
             raise
+        finally:
+            stderr_file.close()
         done_payload: dict = {"type": "done", "session_id": session_id}
         if total_cost > 0:
             done_payload["cost_usd"] = round(total_cost, 6)

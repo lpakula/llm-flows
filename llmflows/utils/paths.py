@@ -6,6 +6,7 @@ from typing import Optional
 
 CONTAINER_WORKSPACE = "/workspace"
 CONTAINER_HOME = "/root/.llmflows"
+CONTAINER_PKG = "/opt/llmflows/llmflows"
 
 
 def resolve_existing_path(
@@ -72,6 +73,45 @@ def container_path_to_host(text: str, *, space_host_path: Optional[str] = None) 
     if not host:
         return text
     return text.replace(CONTAINER_WORKSPACE, str(Path(host).resolve()))
+
+
+def host_path_to_container_path(
+    path: str,
+    *,
+    host_home: Optional[str] = None,
+    space_host_path: Optional[str] = None,
+) -> str:
+    """Map a host filesystem path to its equivalent inside a runner/chat container."""
+    if not path:
+        return path
+
+    resolved = Path(path).expanduser().resolve()
+
+    home = Path(host_home or os.environ.get("LLMFLOWS_HOME", Path.home() / ".llmflows")).expanduser().resolve()
+    try:
+        rel = resolved.relative_to(home)
+        return f"{CONTAINER_HOME}/{rel}" if rel.parts else CONTAINER_HOME
+    except ValueError:
+        pass
+
+    if space_host_path:
+        space = Path(space_host_path).expanduser().resolve()
+        try:
+            rel = resolved.relative_to(space)
+            return f"{CONTAINER_WORKSPACE}/{rel}"
+        except ValueError:
+            pass
+
+    try:
+        import llmflows
+
+        pkg_root = Path(llmflows.__file__).resolve().parent
+        rel = resolved.relative_to(pkg_root)
+        return f"{CONTAINER_PKG}/{rel}"
+    except ValueError:
+        pass
+
+    return path
 
 
 def normalize_gate_failures_for_display(

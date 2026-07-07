@@ -398,7 +398,11 @@ def build_pi_command(
         import json as _json
         import os
         os.environ["MCP_SERVERS"] = _json.dumps(servers)
-        cmd.extend(["--extension", str(MCP_BRIDGE_TOOL)])
+        ext_path = str(MCP_BRIDGE_TOOL)
+        from ..utils.paths import CONTAINER_HOME, host_path_to_container_path
+        if str(session_file).startswith(CONTAINER_HOME):
+            ext_path = host_path_to_container_path(ext_path)
+        cmd.extend(["--extension", ext_path])
 
     return cmd
 
@@ -407,6 +411,44 @@ def build_pi_env() -> dict[str, str]:
     """Build the full environment for Pi, including MCP server URLs."""
     env = resolve_chat_env()
     env["NODE_PATH"] = str(resolve_node_modules())
+    if env.get("GEMINI_API_KEY"):
+        env.pop("GOOGLE_API_KEY", None)
+
+    ollama_host = env.get("OLLAMA_HOST")
+    if ollama_host:
+        from ..config import ensure_pi_ollama_provider
+        ensure_pi_ollama_provider(ollama_host)
+
+    return env
+
+
+def build_chat_container_env() -> dict[str, str]:
+    """Environment variables to pass into the chat Docker container.
+
+    Only forwards API keys and llmflows settings — not the full host
+    ``os.environ`` (which can include IDE paths that confuse Pi in Docker).
+    """
+    from ..db.database import get_session
+    from ..db.models import AgentConfig
+
+    env: dict[str, str] = {
+        "LLMFLOWS_RUNNER": "1",
+        "LLMFLOWS_HOME": "/root/.llmflows",
+        "NODE_PATH": "/opt/llmflows/tools/node_modules",
+    }
+    for key in ("LLMFLOWS_DEV_HOME", "OLLAMA_HOST"):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+
+    session = get_session()
+    try:
+        for cfg in session.query(AgentConfig).all():
+            if cfg.value:
+                env[cfg.key] = cfg.value
+    finally:
+        session.close()
+
     if env.get("GEMINI_API_KEY"):
         env.pop("GOOGLE_API_KEY", None)
 
