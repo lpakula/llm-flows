@@ -243,9 +243,13 @@ def build_image(
             cmd,
             cwd=str(root),
             timeout=1800,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or "").strip().splitlines()[-20:]
+            for line in tail:
+                logger.error("%s", line)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False

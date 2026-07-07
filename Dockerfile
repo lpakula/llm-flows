@@ -50,7 +50,9 @@ RUN if [ "$BUILD_FRONTEND" = "1" ]; then \
       cd llmflows/ui/frontend && npm install && npm run build; \
     fi
 
-RUN uv pip install --system --locked .
+RUN uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+    && uv pip install --system -r /tmp/requirements.txt \
+    && uv pip install --system --no-deps .
 
 RUN mkdir -p /root/.llmflows
 ENV LLMFLOWS_HOME=/root/.llmflows
