@@ -5,6 +5,7 @@ from pathlib import Path
 from llmflows.utils.paths import (
     CONTAINER_HOME,
     CONTAINER_PKG,
+    coerce_space_path_for_db,
     container_path_to_host,
     host_path_to_container_path,
     normalize_gate_failures_for_display,
@@ -65,3 +66,16 @@ def test_normalize_space_path_for_db_passthrough_without_host(monkeypatch):
 def test_space_host_path_resolves(monkeypatch):
     monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "~/my-space")
     assert space_host_path() == str(Path("~/my-space").expanduser().resolve())
+
+
+def test_coerce_space_path_for_db_rejects_workspace_without_host(monkeypatch):
+    import pytest
+
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    with pytest.raises(ValueError, match="/workspace"):
+        coerce_space_path_for_db("/workspace")
+
+
+def test_coerce_space_path_for_db_maps_workspace_with_host(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert coerce_space_path_for_db("/workspace") == "/Users/me/proj"

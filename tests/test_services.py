@@ -71,6 +71,12 @@ class TestSpaceService:
         assert space.path == "/Users/me/proj"
         assert len(svc.list_all()) == 1
 
+    def test_register_rejects_bare_workspace_without_host(self, test_db, monkeypatch):
+        svc = SpaceService(test_db)
+        monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+        with pytest.raises(ValueError, match="/workspace"):
+            svc.register("workspace", "/workspace")
+
 
 class TestFlowService:
     def test_create_flow(self, test_db, test_space):

@@ -13,9 +13,9 @@ class SpaceService:
 
     def register(self, name: str, path: str) -> Space:
         """Register a space in the central database."""
-        from ..utils.paths import normalize_space_path_for_db
+        from ..utils.paths import coerce_space_path_for_db
 
-        path = normalize_space_path_for_db(path)
+        path = coerce_space_path_for_db(path)
         existing = self.session.query(Space).filter_by(path=path).first()
         if existing:
             return existing
@@ -37,9 +37,13 @@ class SpaceService:
 
     def update(self, space_id: str, **kwargs) -> Optional[Space]:
         """Update fields on a space."""
+        from ..utils.paths import coerce_space_path_for_db
+
         space = self.get(space_id)
         if not space:
             return None
+        if "path" in kwargs:
+            kwargs["path"] = coerce_space_path_for_db(kwargs["path"])
         for key, value in kwargs.items():
             if hasattr(space, key):
                 setattr(space, key, value)

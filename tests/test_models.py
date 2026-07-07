@@ -33,6 +33,18 @@ def test_create_space(test_db):
     assert fetched.created_at is not None
 
 
+def test_space_path_rejects_container_workspace(test_db, monkeypatch):
+    import pytest
+
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    space = Space(name="bad", path="/tmp/ok")
+    test_db.add(space)
+    test_db.commit()
+
+    with pytest.raises(ValueError, match="/workspace"):
+        space.path = "/workspace"
+
+
 def test_space_to_dict(test_db):
     space = Space(name="test", path="/tmp/test")
     test_db.add(space)

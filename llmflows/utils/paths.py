@@ -32,6 +32,16 @@ def normalize_space_path_for_db(path: str) -> str:
     return str(normalized.resolve())
 
 
+def coerce_space_path_for_db(path: str) -> str:
+    """Normalize a space path and reject bare container ``/workspace`` paths."""
+    normalized = normalize_space_path_for_db(path)
+    if normalized == CONTAINER_WORKSPACE:
+        raise ValueError(
+            "Space path cannot be the container mount /workspace; use the host path"
+        )
+    return str(Path(normalized).expanduser().resolve())
+
+
 def resolve_existing_path(
     path: str,
     *,

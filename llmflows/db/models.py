@@ -6,7 +6,7 @@ import string
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import DeclarativeBase, relationship, validates
 
 
 def generate_id() -> str:
@@ -144,6 +144,12 @@ class Space(Base):
     flows = relationship("Flow", back_populates="space", cascade="all, delete-orphan")
     flow_runs = relationship("FlowRun", back_populates="space", cascade="all, delete-orphan",
                              order_by="FlowRun.created_at")
+
+    @validates("path")
+    def validate_path(self, key: str, path: str) -> str:
+        from ..utils.paths import coerce_space_path_for_db
+
+        return coerce_space_path_for_db(path)
 
     def get_variables(self) -> dict:
         """Parse variables JSON into ``{KEY: {value, is_env}}``."""
