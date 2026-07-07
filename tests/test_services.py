@@ -57,6 +57,20 @@ class TestSpaceService:
         svc = SpaceService(test_db)
         assert svc.get_by_path("/tmp/nope") is None
 
+    def test_resolve_current_uses_space_host_path_in_runner(self, test_db, monkeypatch):
+        svc = SpaceService(test_db)
+        space = svc.register("personal", "/Users/me/proj")
+        monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+        monkeypatch.chdir("/")
+        assert svc.resolve_current().id == space.id
+
+    def test_register_maps_container_workspace_to_host(self, test_db, monkeypatch):
+        svc = SpaceService(test_db)
+        monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+        space = svc.register("workspace", "/workspace")
+        assert space.path == "/Users/me/proj"
+        assert len(svc.list_all()) == 1
+
 
 class TestFlowService:
     def test_create_flow(self, test_db, test_space):

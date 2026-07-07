@@ -8,6 +8,8 @@ from llmflows.utils.paths import (
     container_path_to_host,
     host_path_to_container_path,
     normalize_gate_failures_for_display,
+    normalize_space_path_for_db,
+    space_host_path,
 )
 
 
@@ -48,3 +50,18 @@ def test_host_path_to_container_pkg():
     skill = pkg_root / "defaults" / "skills" / "flows"
     out = host_path_to_container_path(str(skill))
     assert out == f"{CONTAINER_PKG}/defaults/skills/flows"
+
+
+def test_normalize_space_path_for_db_maps_workspace_to_host(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert normalize_space_path_for_db("/workspace") == "/Users/me/proj"
+
+
+def test_normalize_space_path_for_db_passthrough_without_host(monkeypatch):
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    assert normalize_space_path_for_db("/workspace") == "/workspace"
+
+
+def test_space_host_path_resolves(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "~/my-space")
+    assert space_host_path() == str(Path("~/my-space").expanduser().resolve())

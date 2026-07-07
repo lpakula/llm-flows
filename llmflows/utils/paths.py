@@ -9,6 +9,29 @@ CONTAINER_HOME = "/root/.llmflows"
 CONTAINER_PKG = "/opt/llmflows/llmflows"
 
 
+def space_host_path() -> Optional[str]:
+    """Host filesystem path for the mounted space inside a runner/chat container."""
+    host = os.environ.get("LLMFLOWS_SPACE_HOST_PATH")
+    if not host:
+        return None
+    return str(Path(host).expanduser().resolve())
+
+
+def normalize_space_path_for_db(path: str) -> str:
+    """Map container ``/workspace`` to the host space path before DB storage.
+
+    Runner containers mount the real space at ``/workspace`` but the central DB
+    must always store the host path (e.g. ``/Users/me/proj``), never ``/workspace``.
+    """
+    host = space_host_path()
+    if not host:
+        return path
+    normalized = Path(path).expanduser()
+    if str(normalized) == CONTAINER_WORKSPACE or normalized.resolve() == Path(CONTAINER_WORKSPACE).resolve():
+        return host
+    return str(normalized.resolve())
+
+
 def resolve_existing_path(
     path: str,
     *,

@@ -13,6 +13,9 @@ class SpaceService:
 
     def register(self, name: str, path: str) -> Space:
         """Register a space in the central database."""
+        from ..utils.paths import normalize_space_path_for_db
+
+        path = normalize_space_path_for_db(path)
         existing = self.session.query(Space).filter_by(path=path).first()
         if existing:
             return existing
@@ -58,10 +61,20 @@ class SpaceService:
     def resolve_current(self) -> Optional[Space]:
         """Resolve the current space from the git root or working directory."""
         from ..config import get_repo_root, find_space_dir
+        from ..utils.paths import normalize_space_path_for_db, space_host_path
+
+        host_path = space_host_path()
+        if host_path:
+            space = self.get_by_path(host_path)
+            if space:
+                return space
+
         repo_root = get_repo_root()
         if repo_root is not None:
-            return self.get_by_path(str(repo_root))
+            path = normalize_space_path_for_db(str(repo_root))
+            return self.get_by_path(path)
         space_dir = find_space_dir()
         if space_dir is not None:
-            return self.get_by_path(str(space_dir.parent))
+            path = normalize_space_path_for_db(str(space_dir.parent))
+            return self.get_by_path(path)
         return None
