@@ -42,6 +42,29 @@ def coerce_space_path_for_db(path: str) -> str:
     return str(Path(normalized).expanduser().resolve())
 
 
+def space_local_path(path: str) -> str:
+    """Map a stored (host) space path to the local filesystem.
+
+    The central DB stores the host path (e.g. ``/Users/me/proj``), but inside a
+    runner/chat container the space is mounted at ``/workspace``. When running in
+    a container (``LLMFLOWS_SPACE_HOST_PATH`` set), translate the host path — and
+    any sub-path under it — to the container mount so file reads/writes resolve.
+    On the host this is a no-op.
+    """
+    host = space_host_path()
+    if not host:
+        return path
+    resolved = Path(path).expanduser().resolve()
+    host_root = Path(host)
+    if resolved == host_root:
+        return CONTAINER_WORKSPACE
+    try:
+        rel = resolved.relative_to(host_root)
+        return str(Path(CONTAINER_WORKSPACE) / rel)
+    except ValueError:
+        return str(resolved)
+
+
 def resolve_existing_path(
     path: str,
     *,

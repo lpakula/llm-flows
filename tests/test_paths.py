@@ -11,6 +11,7 @@ from llmflows.utils.paths import (
     normalize_gate_failures_for_display,
     normalize_space_path_for_db,
     space_host_path,
+    space_local_path,
 )
 
 
@@ -79,3 +80,21 @@ def test_coerce_space_path_for_db_rejects_workspace_without_host(monkeypatch):
 def test_coerce_space_path_for_db_maps_workspace_with_host(monkeypatch):
     monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
     assert coerce_space_path_for_db("/workspace") == "/Users/me/proj"
+
+
+def test_space_local_path_passthrough_on_host(monkeypatch):
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    assert space_local_path("/Users/me/proj") == "/Users/me/proj"
+
+
+def test_space_local_path_maps_host_root_to_workspace(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert space_local_path("/Users/me/proj") == "/workspace"
+
+
+def test_space_local_path_maps_subpath_to_workspace(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert (
+        space_local_path("/Users/me/proj/.llmflows/my-flow/.audit.json")
+        == "/workspace/.llmflows/my-flow/.audit.json"
+    )

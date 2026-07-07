@@ -259,7 +259,9 @@ class SecurityAuditService:
 
     @staticmethod
     def get_audit_path(project_path: str, skill_name: str) -> Path:
-        return Path(project_path) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
+        from ..utils.paths import space_local_path
+
+        return Path(space_local_path(project_path)) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
 
     @staticmethod
     def get_audit(project_path: str, skill_name: str) -> AuditResult | None:
@@ -354,7 +356,9 @@ class FlowAuditService:
 
     @staticmethod
     def get_audit_path(project_path: str, flow_name: str) -> Path:
-        return Path(project_path) / ".llmflows" / flow_name / AUDIT_FILE
+        from ..utils.paths import space_local_path
+
+        return Path(space_local_path(project_path)) / ".llmflows" / flow_name / AUDIT_FILE
 
     @staticmethod
     def get_audit(project_path: str, flow_name: str) -> AuditResult | None:
