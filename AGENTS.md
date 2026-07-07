@@ -16,7 +16,7 @@ llmflows/
   cli/          Click command groups (daemon, flow, run, agent, space, ui, connectors)
   db/           SQLAlchemy models, Alembic migrations (SQLite, batch_alter_table pattern)
   services/     Core logic — daemon.py, flow.py, run.py, agent.py, context.py, gate.py
-    executors/  PiExecutor (agent/hitl steps) and CodeExecutor (code steps)
+    executors/  PiExecutor (agent/hitl steps)
   ui/
     server.py   FastAPI app (REST + WebSocket)
     frontend/   Vite + React 19 + Tailwind 4 + TypeScript source
@@ -56,7 +56,7 @@ llmflows daemon tick     # one-shot daemon tick, no background process
 
 ## Key patterns and abstractions
 
-**Step types**: `"agent"` / `"hitl"` → `PiExecutor`; `"code"` → `CodeExecutor` (external CLI agent subprocess). Unknown types normalise to `"agent"`.
+**Step types**: `"agent"` / `"hitl"` → `PiExecutor`. Unknown types normalise to `"agent"`.
 
 **Step directory naming** (used by `ContextService.step_dir_name`):
 ```
@@ -70,7 +70,7 @@ e.g. step `"Research and Implement"` at position 1 → `01-research-and-implemen
   00-step-name/
     _result.md      required — passed as context to next steps
     hitl.md         hitl steps only — user-facing question
-  inbox.md          optional — triggers Telegram/Slack notification on run completion
+  inbox.md          optional — triggers Telegram notification on run completion
 ~/.llmflows/attachments/<run_id>/
   screenshot.png    images rendered inline in notifications
 ```
@@ -107,7 +107,7 @@ with op.batch_alter_table("table_name") as batch_op:
 ## Dependencies
 
 - Python ≥ 3.11
-- Runtime: `click`, `sqlalchemy`, `alembic`, `fastapi`, `uvicorn`, `litellm`, `jinja2`, `rich`, `croniter`, `python-telegram-bot`, `slack-bolt`
+- Runtime: `click`, `sqlalchemy`, `alembic`, `fastapi`, `uvicorn`, `litellm`, `jinja2`, `rich`, `croniter`, `python-telegram-bot`, `psycopg2-binary`
 - Dev: `pytest`, `pytest-cov`, `httpx`
 - Package manager: `uv` (`uv lock` to regenerate lockfile after dep changes)
 

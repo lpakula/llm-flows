@@ -152,13 +152,13 @@ def agent_logs(run_id, follow, raw):
 
 @agent.group("alias")
 def alias_group():
-    """Manage agent aliases (per type: code/chat)."""
+    """Manage agent aliases (pi tiers)."""
     pass
 
 
 @alias_group.command("list")
 @click.option("--type", "-t", "type_filter", default=None,
-              type=click.Choice(["code", "pi"]),
+              type=click.Choice(["pi"]),
               help="Filter by type")
 def alias_list(type_filter):
     """List all configured aliases.
@@ -211,8 +211,8 @@ def alias_list(type_filter):
 @alias_group.command("update")
 @click.argument("tier")
 @click.option("--type", "-t", "alias_type", required=True,
-              type=click.Choice(["code", "pi"]),
-              help="Alias type (code or pi)")
+              type=click.Choice(["pi"]),
+              help="Alias type (pi)")
 @click.option("--agent", "-a", "agent_name", default=None, help="New agent/provider")
 @click.option("--model", "-m", default=None, help="New model")
 def alias_update(tier, alias_type, agent_name, model):
@@ -220,7 +220,7 @@ def alias_update(tier, alias_type, agent_name, model):
 
     Examples:
       llmflows agent alias update normal --type pi --agent pi --model anthropic/claude-sonnet-4-5
-      llmflows agent alias update max --type code --agent claude-code --model opus
+      llmflows agent alias update max --type pi --agent pi --model anthropic/claude-opus-4-7
     """
     from ..db.models import AgentAlias
     session = _get_session()

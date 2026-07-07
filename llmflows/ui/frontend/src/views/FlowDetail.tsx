@@ -859,7 +859,6 @@ export function FlowDetailView() {
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-sm font-medium text-white truncate">{step.name}</span>
                     <span className={`text-[10px] shrink-0 ${
-                      step.step_type === "code" ? "text-blue-400" :
                       step.step_type === "hitl" ? "text-amber-400" : "text-gray-500"
                     }`}>{step.step_type || "agent"}</span>
                     {step.agent_alias && (

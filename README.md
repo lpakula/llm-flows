@@ -73,7 +73,6 @@ Connect external channels to receive notifications, respond to HITL steps from a
 
 Available channels:
 - **Telegram** — get notified and respond to flows from your phone
-- **Slack** — receive updates and approve HITL steps in your workspace
 
 ### 🛠️ Built-in agent tools
 

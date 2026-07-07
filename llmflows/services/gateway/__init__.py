@@ -1,4 +1,4 @@
-"""Gateway services — channel integrations (Telegram, Slack, GitHub, etc.)."""
+"""Gateway services — Telegram channel integration."""
 
 from .channel import Channel, ChannelManager
 

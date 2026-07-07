@@ -50,7 +50,7 @@ class LaunchResult:
 class StepExecutor(ABC):
     """Base class for step executors.
 
-    Executors handle different step_type values: code, agent/hitl.
+    Executors handle agent and hitl step types via Pi.
     Async executors (code) launch a subprocess and return; the daemon polls
     is_running(). Sync executors complete within launch() and set
     is_sync=True on the result.

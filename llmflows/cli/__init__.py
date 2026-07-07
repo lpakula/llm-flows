@@ -9,6 +9,7 @@ from .daemon import daemon
 from .flow import flow
 from .mcp import connectors
 from .run import run
+from .runner import runner, run_daemon_cmd
 from .skill import skill
 from .ui import ui
 from .upgrade import upgrade
@@ -28,6 +29,8 @@ cli.add_command(daemon)
 cli.add_command(flow)
 cli.add_command(connectors)
 cli.add_command(run)
+cli.add_command(runner)
+cli.add_command(run_daemon_cmd)
 cli.add_command(skill)
 cli.add_command(ui)
 cli.add_command(upgrade)

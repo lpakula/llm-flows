@@ -1,4 +1,4 @@
-"""Agent launcher -- renders step prompts and launches coding agents.
+"""Agent launcher -- renders step prompts and launches Pi agents.
 
 Each flow step runs as a separate agent process. The daemon orchestrates
 step transitions; the agent receives a self-contained prompt, does the
@@ -47,7 +47,7 @@ class AgentService:
         step_content: str,
         flow_name: str,
         model: str = "",
-        agent: str = "cursor",
+        agent: str = "pi",
         artifacts_dir: Optional[Path] = None,
         gate_failures: Optional[list[dict]] = None,
         resume_prompt: str = "",
@@ -164,7 +164,7 @@ class AgentService:
 
     def _launch_agent(
         self, directory: Path, prompt_file: Path, log_file: Path, pid_file: Path,
-        model: str = "", agent: str = "cursor",
+        model: str = "", agent: str = "pi",
         space_variables: Optional[dict] = None,
         extensions: Optional[list[str]] = None,
         extra_env: Optional[dict[str, str]] = None,
@@ -228,82 +228,15 @@ class AgentService:
 
     @staticmethod
     def _write_mcp_config(reg: dict, cwd: Path, extra_env: Optional[dict[str, str]] = None) -> Optional[Path]:
-        """Write MCP server config for code agents that read it from disk.
-
-        For Cursor: writes .cursor/mcp.json in workspace.
-        For Claude Code: writes .mcp.json in workspace.
-        Returns the config file path if written, None otherwise.
-        """
-        mcp_servers_json = (extra_env or {}).get("MCP_SERVERS")
-        if not mcp_servers_json:
-            return None
-
-        binary = reg.get("binary", "")
-        if binary not in ("agent", "claude"):
-            return None
-
-        try:
-            servers = json.loads(mcp_servers_json)
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-        if not servers:
-            return None
-
-        mcp_servers_dict = {}
-        for srv in servers:
-            sid = srv.get("server_id", "")
-            if not sid:
-                continue
-            entry: dict = {"command": srv.get("command", "")}
-            if srv.get("args"):
-                entry["args"] = srv["args"]
-            if srv.get("env"):
-                entry["env"] = srv["env"]
-            mcp_servers_dict[sid] = entry
-
-        if not mcp_servers_dict:
-            return None
-
-        config_content = json.dumps({"mcpServers": mcp_servers_dict}, indent=2)
-
-        if binary == "agent":
-            config_dir = cwd / ".cursor"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_file = config_dir / "mcp.json"
-        else:
-            config_file = cwd / ".mcp.json"
-
-        config_file.write_text(config_content)
-        logger.info("Wrote MCP config for %s: %s", binary, config_file)
-        return config_file
+        """MCP config for Pi is passed via extensions, not disk config files."""
+        return None
 
     @staticmethod
     def _build_agent_command(reg: dict, prompt_file: Path, prompt_content: str,
                              model: str, extensions: Optional[list[str]] = None,
                              mcp_config_file: Optional[Path] = None) -> list[str]:
-        """Build the CLI command list for a given agent backend."""
+        """Build the CLI command list for Pi."""
         binary = reg["binary"]
-        mode = reg["prompt_mode"]
-
-        if binary == "agent":
-            cmd = ["agent", "-p", "-f", str(prompt_file),
-                   "--output-format", "stream-json"]
-            if model:
-                cmd.extend(["--model", model])
-            if mcp_config_file:
-                cmd.append("--approve-mcps")
-            return cmd
-
-        if binary == "claude":
-            cmd = ["claude", "-p", prompt_content,
-                   "--output-format", "stream-json", "--verbose",
-                   "--dangerously-skip-permissions"]
-            if model:
-                cmd.extend(["--model", model])
-            if mcp_config_file:
-                cmd.extend(["--mcp-config", str(mcp_config_file)])
-            return cmd
 
         if binary == "pi":
             cmd = ["pi", "-p", prompt_content, "--mode", "json"]
@@ -313,12 +246,7 @@ class AgentService:
                 cmd.extend(["--extension", ext])
             return cmd
 
-        cmd = [binary]
-        if mode == "file":
-            cmd.extend(["-f", str(prompt_file)])
-        elif mode == "arg":
-            cmd.append(prompt_content)
-        return cmd
+        raise ValueError(f"Unsupported agent binary: {binary}")
 
     @staticmethod
     def _resolve_pid_file(

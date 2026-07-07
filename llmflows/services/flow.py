@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Flow, FlowStep, FlowVersion
 
-VALID_STEP_TYPES = ("agent", "code", "hitl")
+VALID_STEP_TYPES = ("agent", "hitl")
 
 
 def _normalize_step_type(value: str | None) -> str:
     """Normalize step type. Known explicit types pass through; anything else
     (including None, empty string, or unknown values) becomes 'agent'.
-    'default' is accepted as a legacy alias for 'agent'."""
-    if not value or value == "default":
+    'default' and legacy 'code' are accepted as aliases for 'agent'."""
+    if not value or value in ("default", "code"):
         return "agent"
     return value if value in VALID_STEP_TYPES else "agent"
 
@@ -581,7 +581,7 @@ class FlowService:
             st = _normalize_step_type(step.step_type)
             alias_name = step.agent_alias or "normal"
 
-            alias_type = "code" if st == "code" else "pi"
+            alias_type = "pi"
             alias = self.session.query(AgentAlias).filter_by(
                 type=alias_type, name=alias_name,
             ).first()
@@ -596,15 +596,7 @@ class FlowService:
             agent_key = alias.agent
             reg = AGENT_REGISTRY.get(agent_key, {})
 
-            if reg.get("type") == "code":
-                binary = reg.get("binary", agent_key)
-                if not shutil.which(binary):
-                    warnings.append({
-                        "step_name": step.name,
-                        "warning_type": "missing_binary",
-                        "message": f"Binary '{binary}' for agent '{agent_key}' not found on PATH.",
-                    })
-            elif reg.get("type") == "chat":
+            if reg.get("type") == "provider":
                 api_key_env = reg.get("api_key_env", "")
                 if api_key_env:
                     import os

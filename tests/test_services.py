@@ -502,10 +502,10 @@ class TestRunService:
         run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
-        sr = run_svc.create_step_run(run.id, "research", 0, "step-run-flow", "cursor", "auto")
+        sr = run_svc.create_step_run(run.id, "research", 0, "step-run-flow", "pi", "anthropic/claude-sonnet-4-6")
         assert sr.id is not None
         assert sr.step_name == "research"
-        assert sr.agent == "cursor"
+        assert sr.agent == "pi"
         assert sr.started_at is not None
 
     def test_mark_step_completed(self, test_db, test_space):
@@ -614,11 +614,11 @@ class TestStepRunService:
         run = run_svc.enqueue(test_space.id, flow.id)
         run_svc.mark_started(run.id)
 
-        sr = run_svc.create_step_run(run.id, "research", 0, "to-dict-flow", "cursor", "auto")
+        sr = run_svc.create_step_run(run.id, "research", 0, "to-dict-flow", "pi", "anthropic/claude-sonnet-4-6")
         d = sr.to_dict()
         assert d["step_name"] == "research"
-        assert d["agent"] == "cursor"
-        assert d["model"] == "auto"
+        assert d["agent"] == "pi"
+        assert d["model"] == "anthropic/claude-sonnet-4-6"
         assert d["status"] == "running"
 
 
@@ -1209,7 +1209,7 @@ class TestGateRetryExhaustion:
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
         with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
-             _patch("llmflows.services.daemon.resolve_alias", return_value=("cursor", "default")), \
+             _patch("llmflows.services.daemon.resolve_alias", return_value=("pi", "anthropic/claude-sonnet-4-6")), \
              _patch("llmflows.services.daemon.get_executor") as mock_get_exec:
             mock_executor = MagicMock()
             mock_executor.launch = fake_executor_launch

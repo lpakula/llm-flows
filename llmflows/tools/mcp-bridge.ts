@@ -73,7 +73,13 @@ export default async function activate(api: any) {
       const transport = new StdioClientTransport({
         command: server.command,
         args: server.args || [],
-        env: { ...process.env, ...server.env },
+        env: {
+          PATH: process.env.PATH || "",
+          HOME: process.env.HOME || "",
+          NODE_PATH: process.env.NODE_PATH || "",
+          TMPDIR: process.env.TMPDIR || "/tmp",
+          ...server.env,
+        },
       });
       transports.push(transport);
       client = new Client(

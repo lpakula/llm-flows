@@ -160,7 +160,7 @@ class RunService:
 
     def create_step_run(
         self, run_id: str, step_name: str, step_position: int,
-        flow_name: str, agent: str = "cursor", model: str = "",
+        flow_name: str, agent: str = "pi", model: str = "",
     ) -> StepRun:
         """Create a new StepRun and mark it started."""
         step_run = StepRun(

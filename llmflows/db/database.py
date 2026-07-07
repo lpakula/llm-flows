@@ -1,5 +1,9 @@
-"""Database connection and initialization for central ~/.llmflows/llmflows.db."""
+"""Database connection and initialization.
 
+Supports PostgreSQL (via DATABASE_URL env var) or SQLite (fallback).
+"""
+
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +15,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import AGENT_REGISTRY, SYSTEM_DB, ensure_system_dir
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def _get_database_url() -> str:
+    """Resolve the database URL from env or fall back to SQLite."""
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+    return f"sqlite:///{SYSTEM_DB}"
 
 
 def _alembic_cfg(url: str) -> _AlembicConfig:
@@ -29,16 +41,12 @@ def get_db_path() -> Path:
 
 
 def _seed_agent_aliases(session):
-    """Seed default agent aliases if the table is empty.
-
-    Creates 3 tiers (max/normal/low) for each type (code/chat),
-    using the first registered agent of that type as the default.
-    """
+    """Create 3 tiers (max/normal/mini) for pi aliases, using Pi as the default agent."""
     from .models import AgentAlias
     if session.query(AgentAlias).count() > 0:
         return
     pos = 0
-    for alias_type in ("code", "pi"):
+    for alias_type in ("pi",):
         default_agent = None
         default_tiers = None
         for agent_key, reg in AGENT_REGISTRY.items():
@@ -91,6 +99,9 @@ def _seed_mcp_connectors(session):
 
 def _migrate_tool_config_to_mcp(session):
     """One-time migration: copy [browser] and [web_search] TOML config into McpConnector rows."""
+    url = _get_database_url()
+    if not url.startswith("sqlite"):
+        return
     import json
     from ..config import load_system_config, save_system_config
     from .models import McpConnector
@@ -139,22 +150,19 @@ def _migrate_tool_config_to_mcp(session):
 
 
 def init_db(*, seed: bool = True) -> Path:
-    """Initialize the database and run any pending migrations.
-
-    When *seed* is False the default agent aliases are not created,
-    which is useful for dev/worktree databases that copy production config instead.
-    """
+    """Initialize the database and run any pending migrations."""
     ensure_system_dir()
-    url = f"sqlite:///{SYSTEM_DB}"
+    url = _get_database_url()
     _alembic.upgrade(_alembic_cfg(url), "head")
 
-    engine = create_engine(url, echo=False)
+    engine = create_engine(url, echo=False, pool_pre_ping=True)
     session = sessionmaker(bind=engine)()
     try:
         if seed:
             _seed_agent_aliases(session)
         _seed_mcp_connectors(session)
-        _migrate_tool_config_to_mcp(session)
+        if url.startswith("sqlite"):
+            _migrate_tool_config_to_mcp(session)
     finally:
         session.close()
 
@@ -167,12 +175,16 @@ def get_engine(db_path: Optional[Path] = None):
     if _engine is not None:
         return _engine
 
-    path = db_path or SYSTEM_DB
-    if not path.exists():
-        raise FileNotFoundError(
-            "No llmflows database found. Run 'llmflows register' to register a space."
-        )
-    _engine = create_engine(f"sqlite:///{path}", echo=False)
+    url = _get_database_url()
+    if url.startswith("sqlite"):
+        path = db_path or SYSTEM_DB
+        if not path.exists():
+            raise FileNotFoundError(
+                "No llmflows database found. Run 'llmflows register' to register a space."
+            )
+        url = f"sqlite:///{path}"
+
+    _engine = create_engine(url, echo=False, pool_pre_ping=True)
     return _engine
 
 

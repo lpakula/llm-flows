@@ -2,12 +2,18 @@
  * MCP server: browser automation via stdio.
  *
  * Each agent run gets its own instance of this server (spawned by mcp-bridge).
- * The browser itself persists across runs via CDP — Chrome is launched as a
- * detached process and reconnected on subsequent starts.
+ *
+ * Two modes controlled by BROWSER_MODE:
+ *   "headless" (default) – Launches headless Chromium via Playwright inside the
+ *                          container. No external dependencies.
+ *   "host"              – Connects to real Chrome on the host via CDP
+ *                          (host.docker.internal:9222). Persistent profile,
+ *                          visible on desktop for HITL interaction.
  *
  * Environment variables:
- *   BROWSER_HEADLESS        – "true" (default) or "false"
- *   BROWSER_USER_DATA_DIR   – persistent profile directory
+ *   BROWSER_MODE            – "headless" (default) or "host"
+ *   BROWSER_HEADLESS        – "true" (default) or "false" (legacy, used in host mode)
+ *   BROWSER_USER_DATA_DIR   – persistent profile directory (host mode)
  *   BROWSER_ARTIFACTS_DIR   – base directory for screenshots
  */
 
@@ -24,12 +30,15 @@ import { spawn } from "child_process";
 
 // ── Config ───────────────────────────────────────────────────────────
 
+const browserMode = process.env.BROWSER_MODE || "headless";
 const headless = process.env.BROWSER_HEADLESS !== "false";
 const userDataDir = process.env.BROWSER_USER_DATA_DIR || "";
 const baseArtifactsDir = process.env.BROWSER_ARTIFACTS_DIR || "/tmp/browser-artifacts";
+const runnerContainer = process.env.LLMFLOWS_RUNNER === "1";
 
 const CDP_PORT = 9222;
-const CDP_URL = `http://localhost:${CDP_PORT}`;
+const CDP_HOST = browserMode === "host" ? "host.docker.internal" : "localhost";
+const CDP_URL = `http://${CDP_HOST}:${CDP_PORT}`;
 
 const CHROME_PATHS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -86,10 +95,23 @@ function launchChromeDetached(): void {
 async function ensureBrowser(): Promise<Browser> {
   if (browser && browser.isConnected()) return browser;
 
+  if (browserMode === "headless") {
+    browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+    return browser;
+  }
+
+  // Host mode: connect to Chrome via CDP on the orchestrator host
   try {
     browser = await connectCDP();
     return browser;
   } catch { /* not running */ }
+
+  if (runnerContainer) {
+    throw new Error(
+      `Host Chrome is not available at ${CDP_URL}. ` +
+      "The orchestrator should start Chrome on the host before the runner container uses the browser connector."
+    );
+  }
 
   launchChromeDetached();
 
@@ -100,7 +122,7 @@ async function ensureBrowser(): Promise<Browser> {
       return browser;
     } catch { /* not ready */ }
   }
-  throw new Error(`Chrome did not start on port ${CDP_PORT}`);
+  throw new Error(`Chrome did not start on ${CDP_URL}`);
 }
 
 let sessionPromise: Promise<Session> | null = null;

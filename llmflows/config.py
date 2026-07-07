@@ -18,12 +18,7 @@ SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 SPACE_DIR = ".llmflows"
 
 
-VALID_STEP_TYPES = ("agent", "code", "hitl")
-
-KNOWN_AGENTS = [
-    "cursor",
-    "claude-code",
-]
+VALID_STEP_TYPES = ("agent", "hitl")
 
 KNOWN_LLM_PROVIDERS = [
     "openai",
@@ -33,48 +28,7 @@ KNOWN_LLM_PROVIDERS = [
 ]
 
 AGENT_REGISTRY = {
-    # -- CLI coding agents (step_type=code) --
-    "cursor": {
-        "type": "code",
-        "label": "Cursor",
-        "binary": "agent",
-        "api_key_env": "CURSOR_API_KEY",
-        "command": "agent -p -f \"<prompt>\"",
-        "prompt_mode": "file",
-        "output_format": "stream-json",
-        "tiers": {"max": "claude-4.6-opus-max-thinking", "normal": "composer-2", "mini": "gemini-3-flash"},
-        "models": [
-            "auto",
-            "claude-4.6-opus-high-thinking", "claude-4.6-opus-high",
-            "claude-4.6-opus-max-thinking", "claude-4.6-opus-max",
-            "claude-4.6-sonnet-medium-thinking", "claude-4.6-sonnet-medium",
-            "claude-4.5-opus-high-thinking", "claude-4.5-opus-high",
-            "claude-4.5-sonnet-thinking", "claude-4.5-sonnet",
-            "claude-4-sonnet-thinking", "claude-4-sonnet",
-            "gemini-3.1-pro", "gemini-3-pro", "gemini-3-flash",
-            "gpt-5.4-high", "gpt-5.4-medium", "gpt-5.4-xhigh",
-            "gpt-5.2", "gpt-5.2-high",
-            "grok-4-20-thinking", "grok-4-20",
-            "composer-2", "composer-2-fast", "composer-1.5",
-        ],
-    },
-    "claude-code": {
-        "type": "code",
-        "label": "Claude Code",
-        "binary": "claude",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "command": "claude -p \"<prompt>\"",
-        "prompt_mode": "arg",
-        "output_format": "stream-json",
-        "tiers": {"max": "opus", "normal": "sonnet", "mini": "haiku"},
-        "models": [
-            "default",
-            "sonnet", "opus", "haiku",
-            "claude-sonnet-4.6", "claude-opus-4.6",
-            "claude-sonnet-4.5", "claude-opus-4.5",
-        ],
-    },
-    # -- Pi (default executor for default + hitl steps) --
+    # -- Pi (default executor for agent + hitl steps) --
     "pi": {
         "type": "pi",
         "label": "Pi",
@@ -344,12 +298,8 @@ def ensure_pi_ollama_provider(ollama_host: str) -> None:
 
 
 def infer_step_type(agent: str) -> str:
-    """Derive step_type from agent's registry type. Returns 'code' or 'agent'."""
-    reg = AGENT_REGISTRY.get(agent, {})
-    agent_type = reg.get("type", "agent")
-    if agent_type in ("pi", "provider"):
-        return "agent"
-    return agent_type
+    """Derive step_type from agent's registry type. Always returns 'agent'."""
+    return "agent"
 
 
 def find_space_dir(start_path: Optional[Path] = None) -> Optional[Path]:

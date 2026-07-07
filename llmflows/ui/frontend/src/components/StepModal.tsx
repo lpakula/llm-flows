@@ -3,7 +3,6 @@ import type { Gate, AgentAlias, SkillInfo, ConnectorConfig, StepType } from "@/a
 
 const STEP_TYPES: { value: StepType; label: string; desc: string }[] = [
   { value: "agent", label: "Agent", desc: "Pi-powered LLM with read/write/shell tools" },
-  { value: "code", label: "Code", desc: "Coding agent (Cursor, Claude Code, etc.)" },
   { value: "hitl", label: "HITL (human in the loop)", desc: "LLM + human approval" },
 ];
 
@@ -248,7 +247,7 @@ export function StepModal({
   const [form, setForm] = useState<StepFormData>({ ...initialData });
   const onChange = (updates: Partial<StepFormData>) => setForm((s) => ({ ...s, ...updates }));
   const st = form.step_type as StepType;
-  const aliasType = st === "code" ? "code" : "pi";
+  const aliasType = "pi";
   const filteredAliases = aliases.filter((a) => a.type === aliasType);
   const hasGates = form.gates.length > 0;
 

@@ -175,27 +175,18 @@ class Daemon:
         if run_id in self._browser_active_runs:
             self._browser_active_runs.discard(run_id)
             if not self._browser_active_runs:
-                self._kill_cdp_browser()
+                from .browser_host import stop_host_chrome
+                stop_host_chrome()
 
     def _track_browser_run(self, run_id: str) -> None:
-        """Mark a run as actively using the browser."""
+        """Mark a run as actively using the host browser."""
         self._browser_active_runs.add(run_id)
 
     @staticmethod
     def _kill_cdp_browser() -> None:
         """Kill the detached Chrome process listening on CDP port 9222."""
-        import subprocess
-        try:
-            out = subprocess.check_output(
-                ["lsof", "-ti", "tcp:9222"], text=True, stderr=subprocess.DEVNULL,
-            ).strip()
-            for pid in out.splitlines():
-                pid = pid.strip()
-                if pid:
-                    subprocess.call(["kill", pid], stderr=subprocess.DEVNULL)
-            logger.debug("Killed idle CDP browser (pids: %s)", out.replace("\n", ", "))
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        from .browser_host import stop_host_chrome
+        stop_host_chrome()
 
     def _extract_pi_cost_incremental(self, log_path_str: str) -> tuple[float, int]:
         """Incrementally parse new bytes from a Pi NDJSON log for cost data.
@@ -293,22 +284,6 @@ class Daemon:
                 result.append(TelegramBot(config=tg_config, session_factory=get_session))
             except Exception:
                 logger.exception("Failed to create Telegram channel")
-
-        slack_config = channels_config.get("slack", {})
-        if slack_config.get("enabled") and slack_config.get("bot_token") and slack_config.get("app_token"):
-            try:
-                from .gateway.slack import SlackChannel
-                result.append(SlackChannel(config=slack_config, session_factory=get_session))
-            except Exception:
-                logger.exception("Failed to create Slack channel")
-
-        gh_config = channels_config.get("github", {})
-        if gh_config.get("enabled") and gh_config.get("token"):
-            try:
-                from .gateway.github import GitHubChannel
-                result.append(GitHubChannel(config=gh_config, session_factory=get_session))
-            except Exception:
-                logger.exception("Failed to create GitHub channel")
 
         return result
 
@@ -498,8 +473,12 @@ class Daemon:
         self, space,
         run_svc: RunService, flow_svc: FlowService,
     ) -> None:
-        """Process a single space: orchestrate active runs step-by-step, pick up pending."""
-        working_path = Path(space.path)
+        """Process a single space: manage runner containers for flow runs.
+
+        In container mode, step-level logic is handled by RunDaemon inside each
+        runner container. The orchestrator only manages container lifecycle.
+        """
+        from .container import is_container_alive, get_container_exit_code, remove_container
 
         active_runs = run_svc.get_active_by_space(space.id)
 
@@ -507,40 +486,33 @@ class Daemon:
             if run.paused_at:
                 continue
 
-            active_step = run_svc.get_active_step(run.id)
-
-            if active_step:
-                if active_step.awaiting_user_at and not active_step.completed_at:
+            if run.container_id:
+                if is_container_alive(run.container_id):
                     continue
-                self._process_active_step(
-                    run, space, active_step, working_path,
-                    run_svc, flow_svc,
-                )
-            else:
-                if not run.current_step:
-                    self._launch_first_step(
-                        run, space, working_path,
-                        run_svc, flow_svc,
-                    )
-                else:
-                    latest = run_svc.get_latest_step_run(run.id, run.current_step)
-                    if latest and latest.completed_at:
-                        snap_steps = self._get_snapshot_steps(run)
-                        if snap_steps:
-                            try:
-                                idx = snap_steps.index(run.current_step)
-                                pos = idx
-                            except ValueError:
-                                pos = latest.step_position
-                        else:
-                            pos = latest.step_position
-                        self._advance_to_next_step(
-                            run, working_path,
-                            run.current_step, pos, run.flow_name or "",
-                            run_svc, flow_svc,
-                        )
 
-        self._process_async_post_run_steps(space, run_svc, flow_svc)
+                exit_code = get_container_exit_code(run.container_id)
+                run_svc.session.refresh(run)
+
+                if not run.completed_at:
+                    logger.warning(
+                        "Runner container for run %s exited (code=%s) but run not completed — marking error",
+                        run.id, exit_code,
+                    )
+                    run_svc.mark_completed(run.id, outcome="error")
+
+                remove_container(run.container_id)
+                run.container_id = None
+                run_svc.session.commit()
+
+                if run.completed_at:
+                    self._handle_completed_run_notifications(run, space, run_svc)
+                    self._finalize_run(run.id)
+            else:
+                active_step = run_svc.get_active_step(run.id)
+                if active_step and active_step.awaiting_user_at and not active_step.completed_at:
+                    continue
+                if not run.container_id and run.started_at and not run.completed_at:
+                    self._launch_run_container(run, space, run_svc, flow_svc)
 
         active_by_flow: dict[str, int] = {}
         for r in active_runs:
@@ -555,6 +527,8 @@ class Daemon:
             if current < max_concurrent:
                 active_by_flow[fid] = current + 1
                 self._start_run(pending, run_svc, flow_svc, space)
+
+        self._process_async_post_run_steps(space, run_svc, flow_svc)
 
     def _process_async_post_run_steps(
         self, space, run_svc: RunService, flow_svc: FlowService,
@@ -619,7 +593,7 @@ class Daemon:
             step_position=step_run.step_position,
             step_content="",
             flow_name=step_run.flow_name,
-            agent=step_run.agent or "cursor",
+            agent=step_run.agent or "pi",
             model=step_run.model or "",
             step_type=step_type,
             working_path=working_path,
@@ -1146,7 +1120,7 @@ class Daemon:
         )
 
         alias_name = force_alias or (snap_step or {}).get("agent_alias") or getattr(step_obj, 'agent_alias', None) or "normal"
-        alias_type = "code" if step_type == "code" else "pi"
+        alias_type = "pi"
         try:
             resolved_agent, resolved_model = resolve_alias(run_svc.session, alias_type, alias_name)
             if alias_type == "pi" and resolved_agent in KNOWN_LLM_PROVIDERS:
@@ -1541,13 +1515,97 @@ class Daemon:
                 shutil.copy2(f, dest_dir / f.name)
                 logger.debug("Published attachment %s for run %s", f.name, run_id)
 
+    def _launch_run_container(
+        self, run, space,
+        run_svc: RunService, flow_svc: FlowService,
+    ) -> None:
+        """Launch a runner container for an active run that has no container."""
+        import os
+        from .container import launch_run_container
+        from .browser_host import flow_needs_host_browser
+
+        if flow_needs_host_browser(run.flow_snapshot, run_svc.session):
+            self._track_browser_run(run.id)
+
+        host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
+        container_id = launch_run_container(
+            run_id=run.id,
+            space_path=space.path,
+            flow_snapshot=run.flow_snapshot,
+            host_home=host_home,
+        )
+        if container_id:
+            run.container_id = container_id
+            run_svc.session.commit()
+            logger.info("Launched runner container %s for run %s", container_id[:12], run.id)
+        else:
+            logger.error("Failed to launch container for run %s", run.id)
+            self._finalize_run(run.id)
+            run_svc.mark_completed(run.id, outcome="error")
+
+    def _handle_completed_run_notifications(self, run, space, run_svc: RunService) -> None:
+        """Send notifications for a completed run (after container exits)."""
+        space_root = Path(space.path)
+        artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
+        inbox_message = ContextService.read_inbox_message(artifacts_dir)
+        if inbox_message:
+            try:
+                inbox_item = run_svc.create_inbox_item(
+                    type="completed_run", reference_id=run.id,
+                    space_id=run.space_id,
+                    title=run.flow_name or run.id,
+                )
+                self.notifications.notify("run.completed", {
+                    "flow_name": run.flow_name or run.id,
+                    "run_id": run.id,
+                    "outcome": run.outcome or "completed",
+                    "summary": run.summary or "",
+                    "inbox_message": inbox_message,
+                    "inbox_id": inbox_item.id,
+                    "cost_usd": run.cost_usd,
+                    "duration_seconds": run.duration_seconds,
+                })
+            except Exception:
+                logger.debug("Failed to send completion notification for run %s", run.id, exc_info=True)
+
     def _start_run(
         self, run, run_svc: RunService,
         flow_svc: FlowService, space,
     ) -> None:
-        """Mark run as started for step orchestration."""
+        """Mark run as started, build snapshot, and launch a runner container."""
+        import json as _json
+        import os
+
         logger.info("Starting run %s (flow=%s)", run.id, run.flow_name)
+
+        if not run.flow_snapshot:
+            snapshot = flow_svc.build_flow_snapshot(run.flow_name, space_id=run.space_id)
+            if snapshot:
+                run.flow_snapshot = _json.dumps(snapshot)
+                run_svc.session.commit()
+
         run_svc.mark_started(run.id)
+
+        from .container import launch_run_container
+        from .browser_host import flow_needs_host_browser
+
+        if flow_needs_host_browser(run.flow_snapshot, run_svc.session):
+            self._track_browser_run(run.id)
+
+        host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
+        container_id = launch_run_container(
+            run_id=run.id,
+            space_path=space.path,
+            flow_snapshot=run.flow_snapshot,
+            host_home=host_home,
+        )
+        if container_id:
+            run.container_id = container_id
+            run_svc.session.commit()
+        else:
+            logger.error("Failed to launch container for run %s", run.id)
+            self._finalize_run(run.id)
+            run_svc.mark_completed(run.id, outcome="error")
 
 
 def write_pid_file(pid: int) -> Path:

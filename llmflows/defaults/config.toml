@@ -16,13 +16,3 @@ port_range_start = 19100
 enabled = false
 bot_token = ""
 allowed_chat_ids = []
-[channels.slack]
-enabled = false
-bot_token = ""
-app_token = ""
-allowed_channel_ids = []
-[channels.github]
-enabled = false
-token = ""
-poll_interval_seconds = 60
-allowed_users = []

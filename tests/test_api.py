@@ -40,7 +40,7 @@ def api_db(tmp_path):
     setup_session.flush()
     step = FlowStep(flow_id=flow.id, name="research", position=0, content="# Research")
     setup_session.add(step)
-    alias = AgentAlias(name="normal", type="pi", agent="cursor", model="default")
+    alias = AgentAlias(name="normal", type="pi", agent="pi", model="default")
     setup_session.add(alias)
     setup_session.commit()
 
@@ -243,16 +243,11 @@ class TestGatewayAPI:
         assert data["telegram_enabled"] is False
         assert data["telegram_bot_token"] == ""
         assert data["telegram_allowed_chat_ids"] == []
-        assert data["slack_enabled"] is False
-        assert data["slack_bot_token"] == ""
-        assert data["slack_app_token"] == ""
-        assert data["slack_allowed_channel_ids"] == []
 
     def test_get_gateway_config_with_channels(self, client, api_db):
         config = {
             "channels": {
                 "telegram": {"enabled": True, "bot_token": "tok123", "allowed_chat_ids": [111]},
-                "slack": {"enabled": False, "bot_token": "", "app_token": "", "allowed_channel_ids": []},
             }
         }
         with patch("llmflows.ui.server.load_system_config", return_value=config):
@@ -279,23 +274,6 @@ class TestGatewayAPI:
         assert data["telegram_enabled"] is True
         assert data["telegram_bot_token"] == "new-tok"
         mock_save.assert_called_once()
-
-    def test_update_gateway_config_slack(self, client, api_db):
-        stored = {"channels": {"slack": {}}}
-        with (
-            patch("llmflows.ui.server.load_system_config", return_value=stored),
-            patch("llmflows.ui.server.save_system_config"),
-            patch("llmflows.ui.server._signal_gateway_restart"),
-        ):
-            response = client.patch(
-                "/api/config/gateway",
-                json={"slack_enabled": True, "slack_bot_token": "xoxb-test", "slack_app_token": "xapp-test"},
-            )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["slack_enabled"] is True
-        assert data["slack_bot_token"] == "xoxb-test"
-        assert data["slack_app_token"] == "xapp-test"
 
     def test_update_gateway_partial(self, client, api_db):
         stored = {
@@ -459,7 +437,7 @@ class TestFlowImportAudit:
         )
         session.add(space)
         session.flush()
-        alias = AgentAlias(name="normal", type="pi", agent="cursor", model="default")
+        alias = AgentAlias(name="normal", type="pi", agent="pi", model="default")
         session.add(alias)
         session.commit()
         space_id = space.id

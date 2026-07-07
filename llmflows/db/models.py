@@ -27,8 +27,8 @@ class AgentAlias(Base):
 
     id: str = Column(String(6), primary_key=True, default=generate_id)
     name: str = Column(String(50), nullable=False)
-    type: str = Column(String(20), nullable=False, default="code")
-    agent: str = Column(String(50), nullable=False, default="cursor")
+    type: str = Column(String(20), nullable=False, default="pi")
+    agent: str = Column(String(50), nullable=False, default="pi")
     model: str = Column(String(100), nullable=False)
     position: int = Column(Integer, default=0)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -351,7 +351,7 @@ class FlowStep(Base):
             "gates": self.get_gates(),
             "ifs": self.get_ifs(),
             "agent_alias": self.agent_alias or "normal",
-            "step_type": self.step_type or "code",
+            "step_type": self.step_type or "agent",
             "allow_max": bool(self.allow_max),
             "max_gate_retries": self.max_gate_retries if self.max_gate_retries is not None else 5,
             "skills": self.get_skills(),
@@ -378,6 +378,7 @@ class FlowRun(Base):
     one_shot: bool = Column(Boolean, default=False)
     paused_at: datetime = Column(DateTime, nullable=True)
     resume_prompt: str = Column(Text, default="")
+    container_id: str = Column(String(64), nullable=True)
     created_at: datetime = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     started_at: datetime = Column(DateTime, nullable=True)
     completed_at: datetime = Column(DateTime, nullable=True)
@@ -515,7 +516,7 @@ class StepRun(Base):
     step_name: str = Column(String(255), nullable=False)
     step_position: int = Column(Integer, nullable=False)
     flow_name: str = Column(String(255), nullable=False)
-    agent: str = Column(String(50), nullable=False, default="cursor")
+    agent: str = Column(String(50), nullable=False, default="pi")
     model: str = Column(String(100), nullable=False, default="")
     log_path: str = Column(Text, default="")
     prompt: str = Column(Text, default="")
@@ -576,7 +577,7 @@ class StepRun(Base):
             "step_name": self.step_name,
             "step_position": self.step_position,
             "flow_name": self.flow_name,
-            "agent": self.agent or "cursor",
+            "agent": self.agent or "pi",
             "model": self.model,
             "log_path": self.log_path,
             "prompt": self.prompt,

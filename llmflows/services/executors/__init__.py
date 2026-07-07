@@ -2,23 +2,19 @@
 
 from .base import StepContext, StepExecutor, LaunchResult
 
-_executor_cache: dict[str, StepExecutor] = {}
+_executor: StepExecutor | None = None
 
 
 def get_executor(step_type: str) -> StepExecutor:
-    """Return a StepExecutor instance for the given step_type."""
-    if step_type in _executor_cache:
-        return _executor_cache[step_type]
+    """Return a StepExecutor instance for the given step_type.
 
-    if step_type == "code":
-        from .code import CodeExecutor
-        executor = CodeExecutor()
-    else:
+    All step types use PiExecutor — coding CLI agents are not supported.
+    """
+    global _executor
+    if _executor is None:
         from .pi import PiExecutor
-        executor = PiExecutor()
-
-    _executor_cache[step_type] = executor
-    return executor
+        _executor = PiExecutor()
+    return _executor
 
 
 __all__ = ["get_executor", "StepContext", "StepExecutor", "LaunchResult"]

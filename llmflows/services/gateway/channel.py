@@ -1,6 +1,6 @@
 """Channel abstraction for gateway integrations.
 
-Each channel (Telegram, Slack, etc.) implements the Channel protocol,
+Each channel (Telegram, etc.) implements the Channel protocol,
 providing bidirectional communication: inbound messages from users
 and outbound notifications from the daemon.
 """

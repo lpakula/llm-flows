@@ -11,12 +11,12 @@ export interface SpaceSettings {
   block_unsafe_runs: boolean;
 }
 
-export type StepType = "agent" | "code" | "hitl";
+export type StepType = "agent" | "hitl";
 
 export interface AgentAlias {
   id: string;
   name: string;
-  type: "code" | "pi";
+  type: "pi";
   agent: string;
   model: string;
   position: number;
@@ -134,14 +134,6 @@ export interface GatewayConfig {
   telegram_enabled: boolean;
   telegram_bot_token: string;
   telegram_allowed_chat_ids: number[];
-  slack_enabled: boolean;
-  slack_bot_token: string;
-  slack_app_token: string;
-  slack_allowed_channel_ids: string[];
-  github_enabled: boolean;
-  github_token: string;
-  github_poll_interval_seconds: number;
-  github_allowed_users: string[];
 }
 
 export interface ConnectorConfigField {

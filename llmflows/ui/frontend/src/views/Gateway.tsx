@@ -31,32 +31,6 @@ const CHANNELS: ChannelDef[] = [
       { key: "telegram_allowed_chat_ids", label: "Chat IDs", type: "tags-number", placeholder: "Chat ID", description: "Allowed chat IDs (empty = all)" },
     ],
   },
-  {
-    id: "slack",
-    name: "Slack",
-    description: "Receive run notifications and respond to human steps via Slack (Socket Mode)",
-    enabledKey: "slack_enabled",
-    fields: [
-      { key: "slack_bot_token", label: "Bot token", type: "secret", placeholder: "xoxb-...", description: "Slack Bot User OAuth Token" },
-      { key: "slack_app_token", label: "App token", type: "secret", placeholder: "xapp-...", description: "Slack App-Level Token for Socket Mode" },
-      { key: "slack_allowed_channel_ids", label: "Channel IDs", type: "tags-string", placeholder: "C0123456789", description: "Allowed channel IDs (empty = all)" },
-    ],
-  },
-  {
-    id: "github",
-    name: "GitHub",
-    description: "Trigger flows from /llmflows:flow-name mentions on issues and PRs. Repos auto-detected from spaces.",
-    enabledKey: "github_enabled",
-    fields: [
-      { key: "github_token", label: "Personal access token", type: "secret", placeholder: "ghp_... or github_pat_...", description: "Classic token with repo scope, or fine-grained with permissions below" },
-      { key: "github_allowed_users", label: "Allowed users", type: "tags-string", placeholder: "username", description: "GitHub usernames allowed to trigger flows (required)" },
-    ],
-    help: [
-      "Post `/llmflows:flow-name` as a comment on any issue or PR to trigger a flow.",
-      "**Classic token** — select the `repo` scope.",
-      "**Fine-grained token** — select repository permissions: Issues (read & write), Pull requests (read & write), Contents (read-only).",
-    ],
-  },
 ];
 
 /* ---------- Modal shell ---------- */

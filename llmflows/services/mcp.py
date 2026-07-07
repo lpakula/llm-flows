@@ -15,11 +15,12 @@ import subprocess
 from pathlib import Path
 
 from ..config import SYSTEM_DIR
+from ..utils.node_modules import resolve_node_modules
+from .browser_host import expand_env_path
 
 logger = logging.getLogger("llmflows.mcp")
 
 _LLMFLOWS_DIR = SYSTEM_DIR
-_NODE_MODULES = SYSTEM_DIR / "node_modules"
 _TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
 BUILTIN_COMMANDS: dict[str, str] = {
@@ -34,23 +35,34 @@ def get_mcp_servers(connector_ids: list[str] | None = None) -> list[dict]:
     If connector_ids is provided, only include those connectors (must also be
     enabled in DB).  None means include all enabled connectors.
 
+    ``browser-host`` is an alias for the browser connector in host mode.
+
     Returns a list of dicts: [{server_id, command, args, env}, ...]
     """
     from ..db.database import get_session
     from ..db.models import McpConnector
+
+    force_host_browser = False
+    normalized_ids = connector_ids
+    if connector_ids is not None:
+        force_host_browser = "browser-host" in connector_ids
+        normalized_ids = [
+            "browser" if cid == "browser-host" else cid
+            for cid in connector_ids
+        ]
 
     session = get_session()
     try:
         query = session.query(McpConnector).filter_by(enabled=True)
         connectors = query.all()
 
-        if connector_ids is not None:
-            filter_set = set(connector_ids)
+        if normalized_ids is not None:
+            filter_set = set(normalized_ids)
             connectors = [c for c in connectors if c.server_id in filter_set]
 
         result = []
         for c in connectors:
-            entry = _build_entry(c)
+            entry = _build_entry(c, force_host_browser=force_host_browser)
             if entry:
                 result.append(entry)
         return result
@@ -58,27 +70,35 @@ def get_mcp_servers(connector_ids: list[str] | None = None) -> list[dict]:
         session.close()
 
 
-def _build_entry(connector) -> dict | None:
+def _build_entry(connector, *, force_host_browser: bool = False) -> dict | None:
     """Build a single MCP_SERVERS entry from a connector record."""
     server_id = connector.server_id
 
     env_vars: dict[str, str] = {}
     for k, v in connector.get_env().items():
-        val = str(v)
-        if val.startswith("~"):
-            val = os.path.expanduser(val)
-        env_vars[k] = val
+        env_vars[k] = expand_env_path(str(v))
     for k, v in connector.get_credentials().items():
         env_vars[k] = str(v)
 
-    env_vars["NODE_PATH"] = str(_NODE_MODULES)
+    node_modules = resolve_node_modules()
+    env_vars["NODE_PATH"] = str(node_modules)
 
     if server_id == "browser":
         env_vars.setdefault("BROWSER_USER_DATA_DIR", str(_LLMFLOWS_DIR / "browser-profile"))
+        headless = env_vars.get("BROWSER_HEADLESS", "false").lower() == "true"
+        if force_host_browser or (os.environ.get("LLMFLOWS_RUNNER") and not headless):
+            env_vars["BROWSER_MODE"] = "host"
+
+    if os.environ.get("LLMFLOWS_RUNNER"):
+        if server_id == "google_workspace":
+            # Browser OAuth cannot open from inside the container; device flow works.
+            env_vars.setdefault("GOOGLE_WORKSPACE_MCP_AUTH_FLOW", "device")
+        elif server_id == "youtube":
+            env_vars.setdefault("HOME", "/root")
 
     if server_id in BUILTIN_COMMANDS:
         script = _TOOLS_DIR / BUILTIN_COMMANDS[server_id]
-        tsx_bin = _NODE_MODULES / ".bin" / "tsx"
+        tsx_bin = node_modules / ".bin" / "tsx"
         return {
             "server_id": server_id,
             "command": str(tsx_bin),
@@ -150,7 +170,8 @@ def check_connector_health(server_id: str) -> dict:
 
     if server_id in BUILTIN_COMMANDS:
         script = _TOOLS_DIR / BUILTIN_COMMANDS[server_id]
-        tsx_bin = _NODE_MODULES / ".bin" / "tsx"
+        node_modules = resolve_node_modules()
+        tsx_bin = node_modules / ".bin" / "tsx"
         binary_path = str(tsx_bin) if tsx_bin.exists() else None
         return {"ok": tsx_bin.exists() and script.exists(), "binary_found": tsx_bin.exists(),
                 "server_responsive": script.exists(), "binary_path": binary_path,

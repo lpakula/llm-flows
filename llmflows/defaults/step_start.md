@@ -102,21 +102,15 @@ This file will be shown to the user in a UI card. The user can type a response a
 You **must** also write a `_result.md` file to: `{{ step.dir }}/_result.md`
 
 This file passes context to subsequent steps. Include what was done and any relevant state.
-{%- elif step_type == "code" %}
-
-## Output
-
-You **must** write a `_result.md` file to: `{{ step.dir }}/_result.md`
-
-This file is passed as context to subsequent steps. Include:
-- What was done and key decisions made
-- Files created or modified
-- Any state the next step needs to continue
 {%- else %}
 
 ## Output
 
-You **must** write your output to: `{{ step.dir }}/_result.md`
+When the step instructions above specify output file paths, write files to those **exact** paths (they may be under `{{ run.dir }}` or elsewhere).
+
+If the step instructions do not say where to write `_result.md`, write it to `{{ step.dir }}/_result.md`.
+
+When both apply, follow the step instructions for primary deliverables and still write `{{ step.dir }}/_result.md` with a concise summary for downstream steps.
 
 This file is passed as context to subsequent steps. Focus on the data, results, and state that the next step needs to continue the workflow. Do not optimize for human readability — structure for machine consumption.
 {%- endif %}

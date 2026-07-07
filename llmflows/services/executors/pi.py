@@ -1,8 +1,6 @@
-"""Pi executor -- runs default and hitl steps via the Pi coding agent.
+"""Pi executor -- runs agent and hitl steps via the Pi agent.
 
 Pi provides tool-use (read/write/edit/bash) on top of any LLM provider.
-This executor reuses AgentService to spawn Pi as a subprocess, identical
-to how CodeExecutor works for Cursor/Claude Code.
 
 All external tools (web search, browser, third-party connectors) are
 provided via MCP servers.  When the daemon passes MCP_SERVERS in
@@ -16,12 +14,12 @@ from typing import Optional
 
 from .base import LaunchResult, StepContext, StepExecutor
 from ..agent import AgentService
-from ...config import SYSTEM_DIR
+from ...utils.node_modules import resolve_node_modules
+from ...utils.paths import resolve_existing_path
 
 logger = logging.getLogger("llmflows.executor.pi")
 
 _TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
-_NODE_MODULES = SYSTEM_DIR / "node_modules"
 MCP_BRIDGE_TOOL = _TOOLS_DIR / "mcp-bridge.ts"
 
 
@@ -38,7 +36,7 @@ class PiExecutor(StepExecutor):
 
         if extra_env.get("MCP_SERVERS"):
             extensions.append(str(MCP_BRIDGE_TOOL))
-            extra_env["NODE_PATH"] = str(_NODE_MODULES)
+            extra_env["NODE_PATH"] = str(resolve_node_modules())
 
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=ctx.run_id,
@@ -82,8 +80,10 @@ class PiExecutor(StepExecutor):
         # (it embeds the full conversation), so we read a generous tail.
         if ctx.log_path:
             try:
-                log = Path(ctx.log_path)
-                if log.exists() and log.stat().st_size > 0:
+                log = resolve_existing_path(
+                    ctx.log_path, space_host_path=str(ctx.working_path),
+                )
+                if log and log.exists() and log.stat().st_size > 0:
                     size = log.stat().st_size
                     # Read last 1MB to handle large agent_end events
                     tail = log.read_bytes()[-1_048_576:]

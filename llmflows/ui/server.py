@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from starlette.websockets import WebSocket as _StarletteWebSocket
 
 from .. import __version__
-from ..config import AGENT_REGISTRY, KNOWN_AGENTS, KNOWN_MODELS, SYSTEM_DIR, load_system_config, save_system_config
+from ..config import AGENT_REGISTRY, KNOWN_MODELS, SYSTEM_DIR, load_system_config, save_system_config
 from ..db.database import get_session, init_db, reset_engine
 from ..services.agent import AgentService
 from ..services.chat import (
@@ -130,14 +130,6 @@ class GatewayConfigBody(BaseModel):
     telegram_enabled: Optional[bool] = None
     telegram_bot_token: Optional[str] = None
     telegram_allowed_chat_ids: Optional[list[int]] = None
-    slack_enabled: Optional[bool] = None
-    slack_bot_token: Optional[str] = None
-    slack_app_token: Optional[str] = None
-    slack_allowed_channel_ids: Optional[list[str]] = None
-    github_enabled: Optional[bool] = None
-    github_token: Optional[str] = None
-    github_poll_interval_seconds: Optional[int] = None
-    github_allowed_users: Optional[list[str]] = None
 
 
 class ConnectorCreateBody(BaseModel):
@@ -235,20 +227,10 @@ async def get_gateway_config():
     config = load_system_config()
     channels = config.get("channels", {})
     tg = channels.get("telegram", {})
-    sl = channels.get("slack", {})
-    gh = channels.get("github", {})
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
         "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
-        "slack_enabled": sl.get("enabled", False),
-        "slack_bot_token": sl.get("bot_token", ""),
-        "slack_app_token": sl.get("app_token", ""),
-        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
-        "github_enabled": gh.get("enabled", False),
-        "github_token": gh.get("token", ""),
-        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
-        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
@@ -259,8 +241,9 @@ async def update_gateway_config(body: GatewayConfigBody):
         config["channels"] = {}
     if "telegram" not in config["channels"]:
         config["channels"]["telegram"] = {}
-    if "slack" not in config["channels"]:
-        config["channels"]["slack"] = {}
+
+    config["channels"].pop("slack", None)
+    config["channels"].pop("github", None)
 
     tg = config["channels"]["telegram"]
     if body.telegram_enabled is not None:
@@ -270,42 +253,12 @@ async def update_gateway_config(body: GatewayConfigBody):
     if body.telegram_allowed_chat_ids is not None:
         tg["allowed_chat_ids"] = body.telegram_allowed_chat_ids
 
-    sl = config["channels"]["slack"]
-    if body.slack_enabled is not None:
-        sl["enabled"] = body.slack_enabled
-    if body.slack_bot_token is not None:
-        sl["bot_token"] = body.slack_bot_token
-    if body.slack_app_token is not None:
-        sl["app_token"] = body.slack_app_token
-    if body.slack_allowed_channel_ids is not None:
-        sl["allowed_channel_ids"] = body.slack_allowed_channel_ids
-
-    if "github" not in config["channels"]:
-        config["channels"]["github"] = {}
-    gh = config["channels"]["github"]
-    if body.github_enabled is not None:
-        gh["enabled"] = body.github_enabled
-    if body.github_token is not None:
-        gh["token"] = body.github_token
-    if body.github_poll_interval_seconds is not None:
-        gh["poll_interval_seconds"] = body.github_poll_interval_seconds
-    if body.github_allowed_users is not None:
-        gh["allowed_users"] = body.github_allowed_users
-
     save_system_config(config)
     _signal_gateway_restart()
     return {
         "telegram_enabled": tg.get("enabled", False),
         "telegram_bot_token": tg.get("bot_token", ""),
         "telegram_allowed_chat_ids": tg.get("allowed_chat_ids", []),
-        "slack_enabled": sl.get("enabled", False),
-        "slack_bot_token": sl.get("bot_token", ""),
-        "slack_app_token": sl.get("app_token", ""),
-        "slack_allowed_channel_ids": sl.get("allowed_channel_ids", []),
-        "github_enabled": gh.get("enabled", False),
-        "github_token": gh.get("token", ""),
-        "github_poll_interval_seconds": gh.get("poll_interval_seconds", 60),
-        "github_allowed_users": gh.get("allowed_users", []),
     }
 
 
@@ -499,18 +452,16 @@ MCP_CATALOG: list[dict] = [
 ]
 
 
-_GWS_CREDENTIALS = Path.home() / ".google-workspace-mcp" / "credentials.json"
+from ..services.google_host import google_connector_status
 
 _GOOGLE_CONNECTOR_IDS = {"google_workspace", "youtube"}
 
 
 def _google_connector_info(server_id: str) -> list[dict]:
     """Return setup status checks for Google connectors."""
-    if server_id != "google_workspace":
+    if server_id not in _GOOGLE_CONNECTOR_IDS:
         return []
-    if _GWS_CREDENTIALS.exists():
-        return [{"text": "credentials.json found", "status": "ok"}]
-    return [{"text": f"credentials.json not found at {_GWS_CREDENTIALS}", "status": "error"}]
+    return google_connector_status(server_id)
 
 
 def _connector_response(connector, meta: dict | None = None) -> dict:
@@ -1325,16 +1276,37 @@ async def get_run_steps(run_id: str):
                 })
 
         from ..services.context import ContextService
+        from ..utils.paths import normalize_gate_failures_for_display
         space = run.space
+        space_host = space.path if space else None
 
         for position, step_src in enumerate(step_sources):
             step_name = step_src["name"]
             has_ifs = bool(step_src.get("ifs"))
             sr = step_run_map.get(step_name)
             attempts = [s.to_dict() for s in sorted(step_runs_by_name.get(step_name, []), key=lambda s: s.attempt or 0)]
+            if space_host:
+                for att in attempts:
+                    if att.get("gate_failures"):
+                        att["gate_failures"] = normalize_gate_failures_for_display(
+                            att["gate_failures"], space_host_path=space_host,
+                        )
+                    if att.get("prev_gate_failures"):
+                        att["prev_gate_failures"] = normalize_gate_failures_for_display(
+                            att["prev_gate_failures"], space_host_path=space_host,
+                        )
             if sr:
                 status = sr.status
                 step_data = sr.to_dict()
+                if space_host:
+                    if step_data.get("gate_failures"):
+                        step_data["gate_failures"] = normalize_gate_failures_for_display(
+                            step_data["gate_failures"], space_host_path=space_host,
+                        )
+                    if step_data.get("prev_gate_failures"):
+                        step_data["prev_gate_failures"] = normalize_gate_failures_for_display(
+                            step_data["prev_gate_failures"], space_host_path=space_host,
+                        )
                 if space:
                     try:
                         artifacts_dir = ContextService.get_artifacts_dir(
@@ -1468,12 +1440,19 @@ async def stream_step_run_logs(step_run_id: str, request: Request):
             raise HTTPException(status_code=404, detail="StepRun not found")
         if not sr.log_path:
             raise HTTPException(status_code=404, detail="No log path set for this step run")
-        log_path = Path(sr.log_path)
+        from ..db.models import Space
+        from ..utils.paths import resolve_existing_path
+        run = run_svc.get(sr.flow_run_id)
+        space = session.query(Space).filter_by(id=run.space_id).first() if run else None
+        log_path = resolve_existing_path(
+            sr.log_path,
+            space_host_path=space.path if space else None,
+        )
         is_completed = sr.completed_at is not None
     finally:
         session.close()
 
-    if not log_path.exists():
+    if not log_path:
         raise HTTPException(status_code=404, detail="Log file not found on disk")
 
     def _read_all_events():
@@ -1558,16 +1537,26 @@ async def stream_run_logs(run_id: str, request: Request):
         if not run:
             raise HTTPException(status_code=404, detail="Run not found")
 
-        log_path = Path(run.log_path) if run.log_path else None
+        from ..db.models import Space
+        from ..utils.paths import resolve_existing_path
 
-        if not log_path or not log_path.exists():
+        log_path = resolve_existing_path(run.log_path) if run.log_path else None
+
+        if not log_path:
             step_runs = run_svc.list_step_runs(run_id)
-            step_logs = [Path(sr.log_path) for sr in step_runs if sr.log_path and Path(sr.log_path).exists()]
-            log_path = step_logs[0] if step_logs else None
+            space = session.query(Space).filter_by(id=run.space_id).first()
+            space_path = space.path if space else None
+            for sr in step_runs:
+                if not sr.log_path:
+                    continue
+                resolved = resolve_existing_path(sr.log_path, space_host_path=space_path)
+                if resolved:
+                    log_path = resolved
+                    break
     finally:
         session.close()
 
-    if not log_path or not log_path.exists():
+    if not log_path:
         raise HTTPException(status_code=404, detail="No log found for this run")
 
     async def tail_log():
@@ -1864,7 +1853,7 @@ async def get_inbox():
                         for s in snap.get("steps", []):
                             if s["name"] == sr.step_name:
                                 raw = s.get("step_type", "")
-                                step_type = raw if raw in ("agent", "code", "hitl") else "agent"
+                                step_type = raw if raw in ("agent", "hitl") else "agent"
                                 break
                     except (ValueError, KeyError, TypeError):
                         pass
@@ -2195,7 +2184,9 @@ async def list_space_flows(space_id: str):
         duration_q = (
             session.query(
                 FlowRun.flow_id,
-                func.sum(func.julianday(FlowRun.completed_at) - func.julianday(FlowRun.started_at)).label("total_days"),
+                func.sum(
+                    func.extract("epoch", FlowRun.completed_at) - func.extract("epoch", FlowRun.started_at)
+                ).label("total_seconds"),
             )
             .filter(FlowRun.space_id == space_id)
             .filter(FlowRun.started_at.isnot(None))
@@ -2203,7 +2194,7 @@ async def list_space_flows(space_id: str):
             .group_by(FlowRun.flow_id)
             .all()
         )
-        duration_map = {row.flow_id: round(row.total_days * 86400, 1) if row.total_days else None for row in duration_q}
+        duration_map = {row.flow_id: round(row.total_seconds, 1) if row.total_seconds else None for row in duration_q}
 
         active_q = (
             session.query(
@@ -2932,9 +2923,11 @@ async def search_skills(q: str = "", limit: int = 20):
 
 @app.get("/api/agents")
 async def list_agents():
-    """Return only agents whose binary is found in PATH (ready to use)."""
+    """Return Pi if its binary is found in PATH."""
     import shutil
-    return [name for name in KNOWN_AGENTS if shutil.which(AGENT_REGISTRY[name]["binary"])]
+    if shutil.which("pi"):
+        return ["pi"]
+    return []
 
 
 _cli_auth_cache: dict[str, tuple[float, dict | None]] = {}
@@ -2976,49 +2969,22 @@ def _check_cli_auth(binary: str) -> dict | None:
 
 @app.get("/api/agents/status")
 async def agents_status():
-    """Return availability status for all known agents (CLI agents only)."""
+    """Return availability status for the Pi executor."""
     import shutil
-    import os
-    from ..db.models import AgentConfig
-    session, _ = _get_services()
-    try:
-        result = {}
-        auth_futures: dict[str, tuple[str, asyncio.Task]] = {}
-        loop = asyncio.get_event_loop()
-
-        for name, reg in AGENT_REGISTRY.items():
-            if reg.get("type") != "code":
-                continue
-            binary_path = shutil.which(reg["binary"])
-            api_key_env = reg.get("api_key_env", "")
-            has_key = False
-            if api_key_env:
-                has_key = bool(os.environ.get(api_key_env))
-                if not has_key:
-                    cfg = session.query(AgentConfig).filter_by(agent=name, key=api_key_env).first()
-                    has_key = bool(cfg and cfg.value)
-            if binary_path and not has_key:
-                auth_futures[name] = loop.run_in_executor(None, _check_cli_auth, reg["binary"])
-            result[name] = {
-                "label": reg["label"],
-                "available": binary_path is not None,
-                "binary": reg["binary"],
-                "binary_path": binary_path,
-                "command": reg["command"],
-                "api_key_env": api_key_env,
-                "configured": has_key,
-                "auth": None,
-            }
-
-        for name, future in auth_futures.items():
-            auth_info = await future
-            if auth_info:
-                result[name]["auth"] = auth_info
-                result[name]["configured"] = True
-
-        return result
-    finally:
-        session.close()
+    reg = AGENT_REGISTRY.get("pi", {})
+    binary_path = shutil.which(reg.get("binary", "pi"))
+    return {
+        "pi": {
+            "label": reg.get("label", "Pi"),
+            "available": binary_path is not None,
+            "binary": reg.get("binary", "pi"),
+            "binary_path": binary_path,
+            "command": reg.get("command", ""),
+            "api_key_env": "",
+            "configured": True,
+            "auth": None,
+        }
+    }
 
 
 
@@ -3199,11 +3165,8 @@ class ChatBody(BaseModel):
 @app.post("/api/chat")
 async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
-    import shutil as _shutil
     from ..services.chat import build_pi_command
-
-    if not _shutil.which("pi"):
-        raise HTTPException(status_code=503, detail="Pi binary not found in PATH")
+    from ..services.container import IMAGE_NAME, dev_volume_args
 
     session_id = body.session_id or uuid.uuid4().hex[:10]
     session_dir = CHAT_SESSIONS_DIR / session_id
@@ -3225,7 +3188,7 @@ async def chat(body: ChatBody):
 
     chat_model = _resolve_chat_model(body.tier or "max")
 
-    cmd = build_pi_command(
+    pi_cmd = build_pi_command(
         message=body.message,
         session_file=session_file,
         system_file=system_file,
@@ -3236,14 +3199,37 @@ async def chat(body: ChatBody):
 
     env = _build_pi_env()
 
+    workspace_path = space.path if space else "/workspace"
+    host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
+    from ..services.network import ensure_network
+    try:
+        network_name = ensure_network()
+    except Exception:
+        network_name = "bridge"
+    docker_cmd = [
+        "docker", "run", "-i", "--rm",
+        "--name", f"llmflows-chat-{session_id[:8]}",
+        "--entrypoint", "",
+        "-w", "/workspace",
+        "-v", f"{workspace_path}:/workspace",
+        "-v", f"{host_home}:/root/.llmflows",
+        *dev_volume_args(),
+        "--network", network_name,
+    ]
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        docker_cmd.extend(["-e", f"DATABASE_URL={db_url}"])
+    for k, v in env.items():
+        docker_cmd.extend(["-e", f"{k}={v}"])
+    docker_cmd.append(IMAGE_NAME)
+    docker_cmd.extend(pi_cmd)
+
     _chat_stderr = (CHAT_SESSIONS_DIR / session_id / "stderr.log").open("w")
-    logging.getLogger("llmflows.chat").info("Chat command: %s", " ".join(cmd))
+    logging.getLogger("llmflows.chat").info("Chat container: %s", " ".join(docker_cmd))
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
+        *docker_cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=_chat_stderr,
-        env=env,
-        cwd=space.path if space else str(Path.home()),
     )
 
     async def stream():

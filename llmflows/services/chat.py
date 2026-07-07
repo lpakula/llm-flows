@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from ..config import SYSTEM_DIR
+from ..utils.node_modules import resolve_node_modules
 
 logger = logging.getLogger("llmflows.chat")
 
 CHAT_SESSIONS_DIR = SYSTEM_DIR / "chat-sessions"
 _BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent / "defaults" / "skills"
-_NODE_MODULES = SYSTEM_DIR / "node_modules"
 CHAT_SKILLS = ["flows", "overview", "cli", "skills", "connectors"]
 
 SYSTEM_PROMPT = """\
@@ -161,10 +161,10 @@ CONNECTOR_TOOL_HINTS: dict[str, str] = {
 }
 
 _NO_TOOLS_SECTION = """\
-No tools are enabled for this chat session. \
-Do NOT attempt to use any tool calls (browser, web search, etc.) or shell commands \
-like `open` to open URLs. If the user asks for something that requires tools, \
-tell them to add tools using the + tool button next to the Agent selector.\
+You have your built-in tools available: bash, read, write, edit. \
+Use bash to run CLI commands like `llmflows flow list`, `llmflows run list`, etc. \
+No external connectors (browser, web search) are enabled for this session — \
+if the user needs those, tell them to add tools using the + tool button next to the Agent selector.\
 """
 
 
@@ -406,7 +406,7 @@ def build_pi_command(
 def build_pi_env() -> dict[str, str]:
     """Build the full environment for Pi, including MCP server URLs."""
     env = resolve_chat_env()
-    env["NODE_PATH"] = str(_NODE_MODULES)
+    env["NODE_PATH"] = str(resolve_node_modules())
     if env.get("GEMINI_API_KEY"):
         env.pop("GOOGLE_API_KEY", None)
 

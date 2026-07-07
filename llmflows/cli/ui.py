@@ -128,8 +128,14 @@ def _ensure_daemon_running() -> None:
     if existing_pid:
         try:
             os.kill(existing_pid, 0)
-            click.echo(f"  Daemon:          already running (pid {existing_pid})")
-            return
+            if "LLMFLOWS_DEV_HOME" in os.environ:
+                from .daemon import _stop_pid
+                click.echo(f"  Daemon:          restarting for dev (pid {existing_pid})…")
+                _stop_pid(existing_pid)
+                remove_pid_file()
+            else:
+                click.echo(f"  Daemon:          already running (pid {existing_pid})")
+                return
         except ProcessLookupError:
             click.echo("  Daemon:          stale PID found, restarting…")
             remove_pid_file()
@@ -152,6 +158,7 @@ def _ensure_daemon_running() -> None:
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
+        env=os.environ.copy(),
     )
 
     for _ in range(40):  # up to ~10s
@@ -200,7 +207,9 @@ def _maybe_reexec_for_dev(dev: bool) -> None:
         exe = sys.executable
         argv = [exe, *sys.argv]
 
-    env = {**os.environ, "LLMFLOWS_HOME": str(dev_home), "LLMFLOWS_DEV_HOME": str(dev_home)}
+    env = {**os.environ, "LLMFLOWS_HOME": str(dev_home), "LLMFLOWS_DEV_HOME": str(dev_home),
+           "LLMFLOWS_HOST_HOME": str(dev_home.resolve()),
+           "LLMFLOWS_USER_HOME": str(Path.home())}
     os.execve(exe, argv, env)
 
 
