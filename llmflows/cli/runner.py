@@ -14,18 +14,13 @@ def runner():
 @click.option("--no-cache", is_flag=True, help="Build without Docker cache")
 def build(tag, no_cache):
     """Build the llmflows Docker image."""
-    import subprocess
     import sys
-    from .. import __version__
+    from ..services.container import build_image, image_name
 
-    image_tag = tag or f"llmflows:{__version__}"
-    cmd = ["docker", "build", "-t", image_tag, "."]
-    if no_cache:
-        cmd.insert(2, "--no-cache")
-
-    click.echo(f"Building image {image_tag}...")
-    result = subprocess.run(cmd, cwd=str(_find_project_root()))
-    sys.exit(result.returncode)
+    image_tag = tag or image_name()
+    click.echo(f"Building image {image_tag}…")
+    ok = build_image(image_tag, no_cache=no_cache)
+    sys.exit(0 if ok else 1)
 
 
 @click.command("run-daemon")
@@ -49,15 +44,3 @@ def run_daemon_cmd(run_id):
     daemon = RunDaemon(run_id)
     exit_code = daemon.run()
     sys.exit(exit_code)
-
-
-def _find_project_root():
-    """Find the llmflows project root (where Dockerfile lives)."""
-    from pathlib import Path
-
-    current = Path(__file__).resolve().parent
-    while current != current.parent:
-        if (current / "Dockerfile").exists():
-            return current
-        current = current.parent
-    return Path.cwd()

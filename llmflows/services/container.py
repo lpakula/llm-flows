@@ -7,9 +7,10 @@ Each flow run gets its own container running `llmflows run-daemon --run-id <id>`
 import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .. import __version__
 from ..config import SYSTEM_DIR
@@ -21,7 +22,96 @@ from .google_host import flow_google_connectors, google_oauth_volume_args, youtu
 
 logger = logging.getLogger("llmflows.container")
 
-IMAGE_NAME = os.environ.get("LLMFLOWS_IMAGE", "llmflows:latest")
+
+def image_name() -> str:
+    """Docker image tag for runner/chat containers (matches release version)."""
+    return os.environ.get("LLMFLOWS_IMAGE") or f"llmflows:{__version__}"
+
+
+def find_project_root() -> Path:
+    """Find the llmflows project root (where Dockerfile lives)."""
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / "Dockerfile").exists():
+            return current
+        current = current.parent
+    return Path.cwd()
+
+
+def image_exists(name: str) -> bool:
+    """Return True if a Docker image with this tag is present locally."""
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def build_image(tag: str | None = None, *, no_cache: bool = False) -> bool:
+    """Build the llmflows Docker image. Returns True on success."""
+    tag = tag or image_name()
+    root = find_project_root()
+    if not (root / "Dockerfile").is_file():
+        logger.error("Dockerfile not found at %s — cannot build %s", root, tag)
+        return False
+
+    cmd = ["docker", "build", "-t", tag, "."]
+    if no_cache:
+        cmd.insert(2, "--no-cache")
+
+    logger.info("Building Docker image %s from %s", tag, root)
+    try:
+        result = subprocess.run(cmd, cwd=str(root), timeout=1800)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_image(*, on_status: Optional[Callable[[str], None]] = None) -> bool:
+    """Ensure the runner Docker image exists, building it when missing.
+
+    Skipped inside runner containers (``LLMFLOWS_RUNNER=1``).
+    """
+    if os.environ.get("LLMFLOWS_RUNNER"):
+        return True
+
+    tag = image_name()
+    if image_exists(tag):
+        return True
+
+    msg = f"Docker image {tag} not found, building…"
+    if on_status:
+        on_status(msg)
+    else:
+        logger.info(msg)
+
+    if not shutil.which("docker"):
+        err = "Docker CLI not found — install Docker or build the image manually"
+        if on_status:
+            on_status(err)
+        else:
+            logger.error(err)
+        return False
+
+    if build_image(tag):
+        done = f"Docker image {tag} ready"
+        if on_status:
+            on_status(done)
+        else:
+            logger.info(done)
+        return True
+
+    err = f"Failed to build Docker image {tag} — run: llmflows runner build"
+    if on_status:
+        on_status(err)
+    else:
+        logger.error(err)
+    return False
 
 
 def dev_volume_args() -> list[str]:
@@ -71,6 +161,13 @@ def launch_run_container(
 
     Returns the container ID on success, None on failure.
     """
+    if not ensure_image():
+        logger.error(
+            "Cannot launch run %s — Docker image %s is not available",
+            run_id, image_name(),
+        )
+        return None
+
     needs_browser_host = _needs_host_browser(flow_snapshot)
     google_connectors = flow_google_connectors(flow_snapshot)
     if needs_browser_host:
@@ -99,7 +196,7 @@ def launch_run_container(
         *env_args,
         "--label", f"llmflows.run_id={run_id}",
         "--label", f"llmflows.version={__version__}",
-        IMAGE_NAME,
+        image_name(),
         "run-daemon", "--run-id", run_id,
     ]
 
@@ -217,7 +314,7 @@ def launch_chat_container(
     for k, v in env_vars.items():
         cmd.extend(["-e", f"{k}={v}"])
 
-    cmd.append(IMAGE_NAME)
+    cmd.append(image_name())
     cmd.extend(pi_command)
 
     try:

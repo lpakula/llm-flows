@@ -111,6 +111,15 @@ def daemon_start(foreground):
 
     init_db()
 
+    from ..services.container import ensure_image, image_name
+
+    if not ensure_image(on_status=click.echo):
+        click.echo(
+            f"Cannot start daemon without Docker image {image_name()}.",
+            err=True,
+        )
+        raise SystemExit(1)
+
     from ..config import SYSTEM_DIR
     log_file = str(SYSTEM_DIR / "daemon.log")
     open(log_file, "w").close()
@@ -221,6 +230,15 @@ def daemon_tick(verbose):
     from ..db.database import init_db
 
     init_db()
+
+    from ..services.container import ensure_image, image_name
+
+    if not ensure_image(on_status=click.echo):
+        click.echo(
+            f"Cannot run daemon tick without Docker image {image_name()}.",
+            err=True,
+        )
+        raise SystemExit(1)
 
     if verbose:
         import logging

@@ -3168,7 +3168,7 @@ class ChatBody(BaseModel):
 async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
     from ..services.chat import build_pi_command
-    from ..services.container import IMAGE_NAME, dev_volume_args
+    from ..services.container import image_name, dev_volume_args, ensure_image
 
     session_id = body.session_id or uuid.uuid4().hex[:10]
     session_dir = CHAT_SESSIONS_DIR / session_id
@@ -3241,7 +3241,10 @@ async def chat(body: ChatBody):
         docker_cmd.extend(["-e", f"DATABASE_URL={db_url}"])
     for k, v in env.items():
         docker_cmd.extend(["-e", f"{k}={v}"])
-    docker_cmd.append(IMAGE_NAME)
+    if not ensure_image():
+        raise HTTPException(status_code=503, detail=f"Docker image {image_name()} is not available")
+
+    docker_cmd.append(image_name())
     docker_cmd.extend(pi_cmd)
 
     async def stream():
