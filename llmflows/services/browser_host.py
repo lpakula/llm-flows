@@ -22,6 +22,7 @@ logger = logging.getLogger("llmflows.browser_host")
 
 CDP_PORT = 9222
 CDP_VERSION_URL = f"http://127.0.0.1:{CDP_PORT}/json/version"
+CHROME_PID_FILE = SYSTEM_DIR / "browser-chrome.pid"
 
 CHROME_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -50,7 +51,12 @@ def default_profile_dir() -> Path:
 
 
 def browser_connector_uses_host(session) -> bool:
-    """Return True when the browser connector is configured for headed/host mode."""
+    """Return True when the browser connector is configured for headed/host mode.
+
+    Default is headless Chromium inside the runner container — host Chrome is
+    opt-in (``BROWSER_MODE=host`` or explicit ``BROWSER_HEADLESS=false``),
+    so flows don't touch the user's machine unless asked to.
+    """
     from ..db.models import McpConnector
 
     connector = session.query(McpConnector).filter_by(server_id="browser").first()
@@ -59,7 +65,7 @@ def browser_connector_uses_host(session) -> bool:
     env = connector.get_env()
     if env.get("BROWSER_MODE", "").lower() == "host":
         return True
-    return env.get("BROWSER_HEADLESS", "false").lower() != "true"
+    return env.get("BROWSER_HEADLESS", "true").lower() != "true"
 
 
 def flow_needs_host_browser(flow_snapshot: Optional[str], session) -> bool:
@@ -118,12 +124,17 @@ def ensure_host_chrome(
     if headless:
         args.append("--headless=new")
 
-    subprocess.Popen(
+    proc = subprocess.Popen(
         args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    try:
+        CHROME_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CHROME_PID_FILE.write_text(str(proc.pid))
+    except OSError:
+        logger.debug("Could not write Chrome pid file", exc_info=True)
 
     for _ in range(40):
         if is_cdp_available():
@@ -135,22 +146,27 @@ def ensure_host_chrome(
 
 
 def stop_host_chrome() -> None:
-    """Kill the Chrome process listening on the CDP port."""
+    """Stop the Chrome process that llmflows itself spawned.
+
+    Only the PID recorded at spawn time is killed — a user's own Chrome that
+    happens to listen on the CDP port is never touched.
+    """
+    if not CHROME_PID_FILE.is_file():
+        return
     try:
-        out = subprocess.check_output(
-            ["lsof", "-ti", f"tcp:{CDP_PORT}"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        pid = int(CHROME_PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        CHROME_PID_FILE.unlink(missing_ok=True)
         return
 
-    for pid in out.splitlines():
-        pid = pid.strip()
-        if pid:
-            subprocess.call(["kill", pid], stderr=subprocess.DEVNULL)
-    if out:
-        logger.debug("Stopped host Chrome (pids: %s)", out.replace("\n", ", "))
+    import os
+    import signal as _signal
+    try:
+        os.kill(pid, _signal.SIGTERM)
+        logger.debug("Stopped host Chrome (pid %d)", pid)
+    except (ProcessLookupError, PermissionError):
+        pass
+    CHROME_PID_FILE.unlink(missing_ok=True)
 
 
 def prepare_host_browser_for_run(flow_snapshot: Optional[str], session) -> bool:

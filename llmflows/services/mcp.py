@@ -85,9 +85,13 @@ def _build_entry(connector, *, force_host_browser: bool = False) -> dict | None:
 
     if server_id == "browser":
         env_vars.setdefault("BROWSER_USER_DATA_DIR", str(_LLMFLOWS_DIR / "browser-profile"))
-        headless = env_vars.get("BROWSER_HEADLESS", "false").lower() == "true"
+        # Default to headless in-container Chromium; host Chrome is opt-in
+        # (explicit BROWSER_HEADLESS=false / BROWSER_MODE=host, or the
+        # dedicated browser-host connector).
+        headless = env_vars.setdefault("BROWSER_HEADLESS", "true").lower() == "true"
         if force_host_browser or (os.environ.get("LLMFLOWS_RUNNER") and not headless):
             env_vars["BROWSER_MODE"] = "host"
+            env_vars["BROWSER_HEADLESS"] = "false"
 
     if os.environ.get("LLMFLOWS_RUNNER"):
         if server_id == "google_workspace":

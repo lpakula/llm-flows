@@ -36,6 +36,7 @@ def tg_bot(tg_db):
         bot.allowed_ids = set()
         bot._active_chats = set()
         bot._awaiting_response = {}
+        bot._awaiting_improvement = {}
         bot._notification_photos = {}
         bot._pending_run_vars = {}
         bot._muted = False
@@ -131,8 +132,9 @@ class TestNotificationButtons:
         assert markup is not None
         buttons = markup.inline_keyboard[0]
         texts = [b.text for b in buttons]
-        assert "Accept" in texts
+        assert "Respond" in texts
         assert "Decline" in texts
+        assert "Discard" in texts
         assert "Dismiss" not in texts
 
     def test_run_completed_has_dismiss(self, tg_bot):
@@ -157,7 +159,7 @@ class TestNotificationButtons:
 
 
 class TestAcceptImprovement:
-    """_cb_accept_improvement applies the flow proposal and archives the inbox item."""
+    """The Respond button prompts for a selection; the follow-up message applies the proposal."""
 
     def _run(self, coro):
         loop = asyncio.new_event_loop()
@@ -165,6 +167,18 @@ class TestAcceptImprovement:
             return loop.run_until_complete(coro)
         finally:
             loop.close()
+
+    def test_respond_button_prompts_for_selection(self, tg_bot):
+        query = MagicMock()
+        query.message.chat_id = 123
+        query.edit_message_reply_markup = AsyncMock()
+        query.message.reply_text = AsyncMock()
+
+        self._run(tg_bot._cb_accept_improvement(query, "inbox-1"))
+
+        assert tg_bot._awaiting_improvement[123] == "inbox-1"
+        query.message.reply_text.assert_called_once()
+        assert "improvements" in query.message.reply_text.call_args[0][0].lower()
 
     def test_accept_applies_proposal(self, tg_bot, tg_db, space_and_flow, tmp_path):
         space, flow, run = space_and_flow
@@ -175,27 +189,29 @@ class TestAcceptImprovement:
 
         artifacts_dir = tmp_path / ".llmflows" / "my-flow" / "runs" / run.id / "artifacts"
         artifacts_dir.mkdir(parents=True)
-        flow_json = {
-            "name": "my-flow",
-            "steps": [{"name": "improved-step", "type": "agent", "content": "better"}],
-        }
-        (artifacts_dir / "flow.json").write_text(json.dumps(flow_json))
         (artifacts_dir / "improvement.md").write_text("Made it better")
 
-        query = MagicMock()
-        query.edit_message_text = AsyncMock()
+        flow_json = {
+            "name": "my-flow",
+            "steps": [{"name": "improved-step", "step_type": "agent", "content": "better", "position": 0}],
+        }
 
-        from llmflows.services.audit import AuditResult
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
+
+        from llmflows.services.audit import AuditResult, FlowAuditService
         safe = AuditResult(status="safe", summary="ok", audited_at="2025-01-01T00:00:00+00:00")
-        with patch("llmflows.services.audit.FlowAuditService") as mock_audit:
-            mock_audit.run_audit.return_value = safe
-            self._run(tg_bot._cb_accept_improvement(query, inbox.id))
+        with patch("llmflows.services.context.generate_flow_from_improvements", return_value=flow_json), \
+             patch.object(FlowAuditService, "run_audit", return_value=safe), \
+             patch.object(FlowAuditService, "save_audit"):
+            self._run(tg_bot._process_improvement_response(update, inbox.id, ""))
 
-        query.edit_message_text.assert_called_once()
-        call_text = query.edit_message_text.call_args[0][0]
-        assert "Accepted" in call_text
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "Applied improvements" in call_text
         assert "my-flow" in call_text
         assert "v" in call_text
+        # Accepted proposals are removed from the inbox.
+        assert tg_db.query(InboxItem).filter_by(id=inbox.id).first() is None
 
     def test_accept_blocked_by_audit(self, tg_bot, tg_db, space_and_flow, tmp_path):
         space, flow, run = space_and_flow
@@ -206,34 +222,34 @@ class TestAcceptImprovement:
 
         artifacts_dir = tmp_path / ".llmflows" / "my-flow" / "runs" / run.id / "artifacts"
         artifacts_dir.mkdir(parents=True)
+        (artifacts_dir / "improvement.md").write_text("Do something destructive")
+
         flow_json = {
             "name": "my-flow",
-            "steps": [{"name": "bad-step", "type": "agent", "content": "rm -rf /"}],
+            "steps": [{"name": "bad-step", "step_type": "agent", "content": "rm -rf /", "position": 0}],
         }
-        (artifacts_dir / "flow.json").write_text(json.dumps(flow_json))
 
-        query = MagicMock()
-        query.edit_message_text = AsyncMock()
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
 
-        from llmflows.services.audit import AuditResult
+        from llmflows.services.audit import AuditResult, FlowAuditService
         unsafe = AuditResult(status="unsafe", summary="Destructive command", audited_at="2025-01-01T00:00:00+00:00")
-        with patch("llmflows.services.audit.FlowAuditService") as mock_audit:
-            mock_audit.run_audit.return_value = unsafe
-            self._run(tg_bot._cb_accept_improvement(query, inbox.id))
+        with patch("llmflows.services.context.generate_flow_from_improvements", return_value=flow_json), \
+             patch.object(FlowAuditService, "run_audit", return_value=unsafe):
+            self._run(tg_bot._process_improvement_response(update, inbox.id, ""))
 
-        query.edit_message_text.assert_called_once()
-        call_text = query.edit_message_text.call_args[0][0]
+        call_text = update.message.reply_text.call_args[0][0]
         assert "audit failed" in call_text.lower()
         assert inbox.archived_at is None
 
     def test_accept_not_found(self, tg_bot, tg_db):
-        query = MagicMock()
-        query.edit_message_text = AsyncMock()
+        update = MagicMock()
+        update.message.reply_text = AsyncMock()
 
-        self._run(tg_bot._cb_accept_improvement(query, "nonexistent"))
+        self._run(tg_bot._process_improvement_response(update, "nonexistent", ""))
 
-        query.edit_message_text.assert_called_once()
-        assert "not found" in query.edit_message_text.call_args[0][0]
+        update.message.reply_text.assert_called_once()
+        assert "not found" in update.message.reply_text.call_args[0][0]
 
 
 class TestDeclineImprovement:
@@ -327,8 +343,9 @@ class TestInboxDetailFlowImprovement:
         assert last_markup is not None
         buttons = last_markup.inline_keyboard[0]
         texts = [b.text for b in buttons]
-        assert "Accept" in texts
+        assert "Respond" in texts
         assert "Decline" in texts
+        assert "Discard" in texts
 
 
 class TestFormatRunCard:

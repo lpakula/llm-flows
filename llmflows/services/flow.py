@@ -47,12 +47,17 @@ class FlowService:
         steps: Optional[list[dict]] = None,
         requirements: Optional[dict] = None,
         variables: Optional[dict] = None,
+        setup_script: str = "",
+        apt_packages: str = "",
     ) -> Flow:
         existing = self.get_by_name(name, space_id)
         if existing:
             raise ValueError(f"Flow '{name}' already exists in this space")
 
-        flow = Flow(name=name, space_id=space_id, description=description)
+        flow = Flow(
+            name=name, space_id=space_id, description=description,
+            setup_script=setup_script or "", apt_packages=apt_packages or "",
+        )
         if requirements:
             flow.requirements = json.dumps(requirements)
         if variables:
@@ -239,6 +244,8 @@ class FlowService:
             description=source.description,
             steps=steps_data,
             requirements=source.get_requirements(),
+            setup_script=source.setup_script or "",
+            apt_packages=source.apt_packages or "",
         )
 
     def build_flow_snapshot(self, flow_name: str, space_id: Optional[str] = None) -> Optional[dict]:
@@ -253,6 +260,8 @@ class FlowService:
             "description": source.description or "",
             "requirements": source.get_requirements(),
             "variables": source.get_variables(),
+            "setup_script": source.setup_script or "",
+            "apt_packages": source.apt_packages or "",
             "steps": [
                 {
                     "name": s.name,
@@ -289,6 +298,10 @@ class FlowService:
         flow_variables = flow.get_variables()
         if flow_variables:
             flow_data["variables"] = flow_variables
+        if flow.setup_script:
+            flow_data["setup_script"] = flow.setup_script
+        if flow.apt_packages:
+            flow_data["apt_packages"] = flow.apt_packages
         if flow.schedule_cron:
             flow_data["schedule_cron"] = flow.schedule_cron
             flow_data["schedule_timezone"] = flow.schedule_timezone or "UTC"
@@ -362,6 +375,10 @@ class FlowService:
             flow_variables = flow.get_variables()
             if flow_variables:
                 flow_data["variables"] = flow_variables
+            if flow.setup_script:
+                flow_data["setup_script"] = flow.setup_script
+            if flow.apt_packages:
+                flow_data["apt_packages"] = flow.apt_packages
             if flow.schedule_cron:
                 flow_data["schedule_cron"] = flow.schedule_cron
                 flow_data["schedule_timezone"] = flow.schedule_timezone or "UTC"
@@ -465,6 +482,10 @@ class FlowService:
                         else:
                             merged[k] = v
                     existing.variables = json.dumps(merged)
+                if "setup_script" in flow_data:
+                    existing.setup_script = flow_data["setup_script"] or ""
+                if "apt_packages" in flow_data:
+                    existing.apt_packages = flow_data["apt_packages"] or ""
                 if "schedule_cron" in flow_data:
                     existing.schedule_cron = flow_data["schedule_cron"] or None
                     existing.schedule_timezone = flow_data.get("schedule_timezone") or "UTC"
@@ -502,6 +523,8 @@ class FlowService:
                     steps=flow_data.get("steps", []),
                     requirements=flow_data.get("requirements"),
                     variables=flow_data.get("variables"),
+                    setup_script=flow_data.get("setup_script", ""),
+                    apt_packages=flow_data.get("apt_packages", ""),
                 )
                 if import_version is not None:
                     flow.version = import_version
@@ -688,6 +711,8 @@ class FlowService:
         snap_vars = snapshot.get("variables")
         if snap_vars:
             flow.variables = json.dumps(snap_vars)
+        flow.setup_script = snapshot.get("setup_script", "") or ""
+        flow.apt_packages = snapshot.get("apt_packages", "") or ""
         flow.version = max_version + 1
         flow.updated_at = datetime.now(timezone.utc)
 

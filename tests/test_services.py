@@ -22,7 +22,8 @@ class TestSpaceService:
         svc = SpaceService(test_db)
         space = svc.register("test", "/tmp/test")
         assert space.name == "test"
-        assert space.path == "/tmp/test"
+        # Paths are normalized on registration (e.g. /tmp → /private/tmp on macOS).
+        assert space.path == str(Path("/tmp/test").resolve())
 
     def test_register_idempotent(self, test_db):
         svc = SpaceService(test_db)
@@ -235,6 +236,36 @@ class TestFlowService:
         assert reimported is not None
         assert len(reimported.steps) == 2
 
+        path.unlink()
+
+    def test_setup_fields_round_trip(self, test_db, test_space):
+        """setup_script and apt_packages survive export → import and snapshots."""
+        svc = FlowService(test_db)
+        svc.create(
+            "setup-flow", space_id=test_space.id,
+            steps=[{"name": "s1", "position": 0, "content": "# S1"}],
+            setup_script="pip install --user yt-dlp",
+            apt_packages="ffmpeg imagemagick",
+        )
+
+        snapshot = svc.build_flow_snapshot("setup-flow", space_id=test_space.id)
+        assert snapshot["setup_script"] == "pip install --user yt-dlp"
+        assert snapshot["apt_packages"] == "ffmpeg imagemagick"
+
+        exported = svc.export_flow_dict(svc.get_by_name("setup-flow", test_space.id).id)
+        assert exported["setup_script"] == "pip install --user yt-dlp"
+        assert exported["apt_packages"] == "ffmpeg imagemagick"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        exported["version"] = 2
+        path.write_text(json.dumps(exported))
+
+        count = svc.import_flows(path, test_space.id)
+        assert count == 1
+        reimported = svc.get_by_name("setup-flow", test_space.id)
+        assert reimported.setup_script == "pip install --user yt-dlp"
+        assert reimported.apt_packages == "ffmpeg imagemagick"
         path.unlink()
 
     def test_create_flow_with_gates(self, test_db, test_space):
@@ -1095,8 +1126,8 @@ class TestGateRetryExhaustion:
     """When max gate retries are exhausted, the last step_run should reflect the failure."""
 
     def test_last_retry_gets_gate_failed_outcome(self, test_db, test_space, temp_dir):
-        from unittest.mock import MagicMock, patch as _patch
-        from llmflows.services.daemon import Daemon
+        from unittest.mock import patch as _patch
+        from llmflows.services.run_daemon import RunDaemon
         from llmflows.services.context import ContextService
 
         space_path = Path(test_space.path)
@@ -1136,14 +1167,14 @@ class TestGateRetryExhaustion:
         test_db.commit()
         run_svc.mark_step_completed(sr2.id, outcome="completed")
 
-        daemon = Daemon.__new__(Daemon)
-        daemon._browser_active_runs = set()
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon._cost_offsets = {}
         daemon.max_log_size_bytes = 500 * 1024 * 1024
-        daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
-        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
+        with _patch("llmflows.services.run_daemon.load_system_config", return_value=config), \
              _patch.object(daemon, "_launch_post_run_step"):
             daemon._post_step_completion(
                 run, test_space, sr2, space_path, run_svc, flow_svc,
@@ -1203,7 +1234,7 @@ class TestGateRetryExhaustion:
         """When _launch_step is called with gate_failures, they should be stored
         in prev_gate_failures on the new step_run, not in gate_failures."""
         from unittest.mock import MagicMock, patch as _patch
-        from llmflows.services.daemon import Daemon
+        from llmflows.services.run_daemon import RunDaemon
         from llmflows.services.context import ContextService
 
         space_path = Path(test_space.path)
@@ -1227,11 +1258,11 @@ class TestGateRetryExhaustion:
         run.flow_snapshot = json.dumps(snapshot)
         test_db.commit()
 
-        daemon = Daemon.__new__(Daemon)
-        daemon._browser_active_runs = set()
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon._cost_offsets = {}
         daemon.max_log_size_bytes = 500 * 1024 * 1024
-        daemon.notifications = MagicMock()
 
         gate_failures_input = [
             {"command": "false", "message": "Always fails", "output": ""},
@@ -1246,9 +1277,10 @@ class TestGateRetryExhaustion:
             return result
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
-        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
-             _patch("llmflows.services.daemon.resolve_alias", return_value=("pi", "anthropic/claude-sonnet-4-6")), \
-             _patch("llmflows.services.daemon.get_executor") as mock_get_exec:
+        with _patch("llmflows.services.run_daemon.load_system_config", return_value=config), \
+             _patch("llmflows.services.run_daemon.resolve_alias", return_value=("pi", "anthropic/claude-sonnet-4-6")), \
+             _patch.object(RunDaemon, "_get_space", return_value=test_space), \
+             _patch("llmflows.services.run_daemon.get_executor") as mock_get_exec:
             mock_executor = MagicMock()
             mock_executor.launch = fake_executor_launch
             mock_get_exec.return_value = mock_executor
@@ -1269,8 +1301,8 @@ class TestGateRetryExhaustion:
 
     def test_unlimited_retries_do_not_exhaust(self, test_db, test_space, temp_dir):
         """When max_gate_retries is 0 (unlimited), the daemon should always retry."""
-        from unittest.mock import MagicMock, patch as _patch
-        from llmflows.services.daemon import Daemon
+        from unittest.mock import patch as _patch
+        from llmflows.services.run_daemon import RunDaemon
         from llmflows.services.context import ContextService
 
         space_path = Path(test_space.path)
@@ -1310,14 +1342,14 @@ class TestGateRetryExhaustion:
         test_db.commit()
         run_svc.mark_step_completed(last_sr.id, outcome="completed")
 
-        daemon = Daemon.__new__(Daemon)
-        daemon._browser_active_runs = set()
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon._cost_offsets = {}
         daemon.max_log_size_bytes = 500 * 1024 * 1024
-        daemon.notifications = MagicMock()
 
         config = {"daemon": {"gate_timeout_seconds": 60}}
-        with _patch("llmflows.services.daemon.load_system_config", return_value=config), \
+        with _patch("llmflows.services.run_daemon.load_system_config", return_value=config), \
              _patch.object(daemon, "_launch_step") as mock_launch:
             daemon._post_step_completion(
                 run, test_space, last_sr, space_path, run_svc, flow_svc,
@@ -1354,25 +1386,24 @@ class TestDaemonTimeout:
 
     def test_timeout_marks_run_completed(self, test_db, test_space):
         """When a step times out, the run should be marked completed before post-run launch."""
-        from llmflows.services.daemon import Daemon
-        from llmflows.db.models import FlowRun
+        from llmflows.services.run_daemon import RunDaemon
 
         run, sr, flow = self._setup_run_with_step(test_db, test_space)
 
-        daemon = Daemon.__new__(Daemon)
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon.run_timeout_minutes = 60
         daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon._cost_offsets = {}
-        daemon._browser_active_runs = set()
-        daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
 
-        with patch.object(Daemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
-             patch("llmflows.services.daemon.get_executor") as mock_exec, \
+        with patch.object(RunDaemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
+             patch("llmflows.services.run_daemon.get_executor") as mock_exec, \
              patch("llmflows.services.agent.AgentService.kill_agent"), \
-             patch.object(Daemon, '_launch_post_run_step'):
+             patch.object(RunDaemon, '_launch_post_run_step'):
             mock_executor = mock_exec.return_value
             mock_executor.is_running.return_value = True
 
@@ -1388,25 +1419,25 @@ class TestDaemonTimeout:
 
     def test_timeout_skips_post_run_step(self, test_db, test_space):
         """Timeout check should not apply to __post_run__ steps."""
-        from llmflows.services.daemon import Daemon
+        from llmflows.services.run_daemon import RunDaemon
 
         run, _, flow = self._setup_run_with_step(
             test_db, test_space, step_name="__post_run__", step_position=2,
         )
         sr = run.step_runs[0]
 
-        daemon = Daemon.__new__(Daemon)
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon.run_timeout_minutes = 1
         daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon._cost_offsets = {}
-        daemon._browser_active_runs = set()
-        daemon.notifications = type("Noop", (), {"notify": lambda *a, **k: None})()
 
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)
 
-        with patch.object(Daemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
-             patch("llmflows.services.daemon.get_executor") as mock_exec, \
+        with patch.object(RunDaemon, '_get_snapshot_step', return_value={"step_type": "agent"}), \
+             patch("llmflows.services.run_daemon.get_executor") as mock_exec, \
              patch("llmflows.services.agent.AgentService.kill_agent") as mock_kill:
             mock_executor = mock_exec.return_value
             mock_executor.is_running.return_value = True
@@ -1423,8 +1454,7 @@ class TestDaemonTimeout:
 
     def test_max_spend_skips_post_run_step(self, test_db, test_space):
         """Max spend check should not apply to __post_run__ steps."""
-        from llmflows.services.daemon import Daemon
-        from llmflows.db.models import Flow
+        from llmflows.services.run_daemon import RunDaemon
 
         run, sr, flow = self._setup_run_with_step(
             test_db, test_space, step_name="__post_run__", step_position=2,
@@ -1432,11 +1462,12 @@ class TestDaemonTimeout:
         flow.max_spend_usd = 0.01
         test_db.commit()
 
-        daemon = Daemon.__new__(Daemon)
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
         daemon.run_timeout_minutes = 0
         daemon.max_log_size_bytes = 500 * 1024 * 1024
         daemon._cost_offsets = {}
-        daemon._browser_active_runs = set()
 
         run_svc = RunService(test_db)
         flow_svc = FlowService(test_db)

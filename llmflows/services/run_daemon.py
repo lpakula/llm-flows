@@ -20,11 +20,12 @@ from typing import Optional
 from ..config import load_system_config, resolve_alias, KNOWN_LLM_PROVIDERS, SYSTEM_DIR
 from ..db.database import get_session, reset_engine
 from ..db.models import Space
+from ..utils.paths import space_execution_root
 from .agent import AgentService
 from .context import ContextService
 from .executors import get_executor, StepContext
 from .flow import FlowService, _normalize_step_type
-from .gate import evaluate_gates, evaluate_ifs
+from .gate import build_step_vars, evaluate_gates, evaluate_ifs
 from .mcp import get_mcp_servers
 from .run import RunService
 
@@ -100,15 +101,15 @@ class RunDaemon:
         self._space_id: Optional[str] = None
 
     def _get_space(self, session) -> "Space":
-        """Get the space with path overridden to the container workspace.
+        """Get the run's space.
 
-        Returns a detached (expunged) Space object so the path change
-        doesn't get flushed to the DB.
+        ``space.path`` keeps the stored host path — all filesystem access must
+        go through :func:`space_execution_root` / ``space_local_path`` which
+        map it to the ``/workspace`` mount inside the container. (Overriding
+        the attribute doesn't work: the model's path validator normalizes
+        ``/workspace`` straight back to the host path.)
         """
-        space = session.query(Space).filter_by(id=self._space_id).first()
-        session.expunge(space)
-        space.path = self.CONTAINER_WORKSPACE
-        return space
+        return session.query(Space).filter_by(id=self._space_id).first()
 
     def run(self) -> int:
         """Block until the run completes. Returns 0 on success, 1 on error."""
@@ -133,12 +134,13 @@ class RunDaemon:
                 return 1
             self._space_id = space.id
 
-            working_path = Path(self.CONTAINER_WORKSPACE)
-            session.expunge(space)
-            space.path = self.CONTAINER_WORKSPACE
+            working_path = space_execution_root(space.path)
 
             if not run.started_at:
                 run_svc.mark_started(self.run_id)
+
+            if not self._prepare_flow_tools(run, working_path, run_svc):
+                return 1
 
             while self._running:
                 session.close()
@@ -157,7 +159,7 @@ class RunDaemon:
                     continue
 
                 space = self._get_space(session)
-                working_path = Path(self.CONTAINER_WORKSPACE)
+                working_path = space_execution_root(space.path)
 
                 active_step = run_svc.get_active_step(run.id)
 
@@ -215,6 +217,39 @@ class RunDaemon:
         logger.info("RunDaemon received signal %d, stopping", signum)
         self._running = False
 
+    def _prepare_flow_tools(self, run, working_path: Path, run_svc: RunService) -> bool:
+        """Set up the per-flow tools dir and run the flow's setup script.
+
+        The tools dir lives on the space mount, so installed tools persist
+        across runs of the same flow without touching the runner image or the
+        host system. Returns False (and errors the run) when setup fails.
+        """
+        from .flow_setup import (
+            apply_flow_tools_env, ensure_flow_setup, flow_tools_dir,
+            DEFAULT_SETUP_TIMEOUT,
+        )
+
+        tools_dir = flow_tools_dir(working_path, run.flow_name or "")
+        try:
+            apply_flow_tools_env(tools_dir)
+        except OSError:
+            logger.warning("Could not prepare flow tools dir %s", tools_dir, exc_info=True)
+            return True
+
+        snap = self._get_snapshot(run)
+        setup_script = (snap or {}).get("setup_script", "")
+        if not setup_script:
+            return True
+
+        timeout = self.config["daemon"].get("setup_timeout_seconds", DEFAULT_SETUP_TIMEOUT)
+        ok, error = ensure_flow_setup(setup_script, tools_dir, working_path, timeout=timeout)
+        if ok:
+            return True
+
+        logger.error("Flow setup failed for run %s: %s", self.run_id, error)
+        run_svc.mark_completed(self.run_id, outcome="error", summary=error)
+        return False
+
     # ── Snapshot helpers ──────────────────────────────────────────────────────
 
     @staticmethod
@@ -257,16 +292,7 @@ class RunDaemon:
 
     @staticmethod
     def _build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
-        merged = dict(base_vars)
-        if space and hasattr(space, "path"):
-            merged["space.dir"] = space.path
-        flow_vars = {}
-        if flow_snapshot and isinstance(flow_snapshot, dict):
-            flow_vars = flow_snapshot.get("variables", {})
-        for k, v in flow_vars.items():
-            merged[f"flow.{k}"] = v["value"]
-            merged[f"space.{k}"] = v["value"]
-        return merged
+        return build_step_vars(base_vars, space, flow_snapshot=flow_snapshot)
 
     # ── Cost tracking ─────────────────────────────────────────────────────────
 
@@ -312,7 +338,7 @@ class RunDaemon:
         step_type = _normalize_step_type((snap_step_def or {}).get("step_type"))
         executor = get_executor(step_type)
 
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = StepContext(
             run_id=run.id,
@@ -324,7 +350,7 @@ class RunDaemon:
             model=step_run.model or "",
             step_type=step_type,
             working_path=working_path,
-            space_dir=Path(space.path) / ".llmflows",
+            space_dir=space_execution_root(space.path) / ".llmflows",
             artifacts_dir=artifacts_dir,
             log_path=step_run.log_path or "",
         )
@@ -359,7 +385,7 @@ class RunDaemon:
                             "Run %s step '%s' log exceeded size limit (%.0fMB > %.0fMB)",
                             run.id, step_run.step_name, size_mb, limit_mb,
                         )
-                        AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+                        AgentService.kill_agent(str(space_execution_root(space.path)), run_id=run.id, flow_name=run.flow_name or "")
                         run_svc.mark_step_completed(step_run.id, outcome="log_overflow")
                         run_svc.mark_completed(run.id, outcome="log_overflow")
                         self._launch_post_run_step(run, working_path, step_run.step_position + 1, run_svc, flow_svc, error_context={
@@ -385,7 +411,7 @@ class RunDaemon:
                 if elapsed > self.run_timeout_minutes * 60:
                     elapsed_mins = int(elapsed / 60)
                     logger.warning("Run %s timed out after %dm", run.id, elapsed_mins)
-                    AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+                    AgentService.kill_agent(str(space_execution_root(space.path)), run_id=run.id, flow_name=run.flow_name or "")
                     run_svc.mark_step_completed(step_run.id, outcome="timeout")
                     run_svc.mark_completed(run.id, outcome="timeout")
                     self._launch_post_run_step(run, working_path, step_run.step_position + 1, run_svc, flow_svc, error_context={
@@ -415,7 +441,7 @@ class RunDaemon:
         prompt_file = SYSTEM_DIR / "prompts" / f"{run.id}-{_step_dir_name(step_run.step_position, step_run.step_name)}.md"
         prompt_file.unlink(missing_ok=True)
 
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         step_artifacts = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "") / \
             _step_dir_name(step_run.step_position, step_run.step_name) / "attachments"
         if step_artifacts.is_dir():
@@ -482,7 +508,7 @@ class RunDaemon:
         if total_cost <= flow.max_spend_usd:
             return False
         logger.warning("Run %s exceeded max spend $%.4f (limit $%.2f)", run.id, total_cost, flow.max_spend_usd)
-        AgentService.kill_agent(space.path, run_id=run.id, flow_name=run.flow_name or "")
+        AgentService.kill_agent(str(space_execution_root(space.path)), run_id=run.id, flow_name=run.flow_name or "")
         run_svc.mark_step_completed(step_run.id, outcome="max_spend")
         run_svc.mark_completed(run.id, outcome="max_spend")
         self._launch_post_run_step(run, working_path, step_run.step_position + 1, run_svc, flow_svc, error_context={
@@ -496,7 +522,7 @@ class RunDaemon:
     def _post_step_completion(self, run, space, step_run, working_path, run_svc, flow_svc) -> None:
         """Run gate evaluation and advance after a step completes."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifact_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         step_artifact_dir = artifact_dir / _step_dir_name(step_run.step_position, step_run.step_name)
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
@@ -585,7 +611,7 @@ class RunDaemon:
         """Determine the next step and launch it, or complete the run."""
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
         space = self._get_space(run_svc.session)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         step_vars = self._build_step_vars({
@@ -664,7 +690,7 @@ class RunDaemon:
             run_svc.session.commit()
 
         gate_timeout = load_system_config().get("daemon", {}).get("gate_timeout_seconds", 60)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, flow_name)
         flow_dir = ContextService.get_flow_dir(space_root, flow_name)
         step_vars = self._build_step_vars({
@@ -713,7 +739,7 @@ class RunDaemon:
         step_content = ((snap_step or {}).get("content", "") or (step_obj.content if step_obj else "") or "").rstrip()
 
         space = self._get_space(run_svc.session)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         step_artifact_dir = artifacts_dir / _step_dir_name(step_position, step_name)
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
@@ -781,7 +807,7 @@ class RunDaemon:
         skill_refs: list[dict] = []
         if skill_names:
             from .skill import SkillService
-            for info in SkillService.resolve_skills(space.path, skill_names):
+            for info in SkillService.resolve_skills(str(space_execution_root(space.path)), skill_names):
                 skill_refs.append({"name": info.name, "description": info.description, "path": info.path})
 
         extra_env: dict[str, str] = {}
@@ -793,7 +819,7 @@ class RunDaemon:
                 extra_env["MCP_SERVERS"] = json.dumps(servers)
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
 
-        space_dir = Path(space.path) / ".llmflows"
+        space_dir = space_execution_root(space.path) / ".llmflows"
         executor = get_executor(step_type)
         ctx = StepContext(
             run_id=run.id, step_name=step_name, step_position=step_position,
@@ -838,7 +864,7 @@ class RunDaemon:
     def _complete_run(self, run, run_svc) -> None:
         """Mark run as completed, create inbox items, and launch post-run step."""
         space = self._get_space(run_svc.session)
-        working_path = Path(self.CONTAINER_WORKSPACE)
+        working_path = space_execution_root(space.path)
         space_root = working_path
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
 
@@ -873,7 +899,7 @@ class RunDaemon:
     def _launch_post_run_step(self, run, working_path, step_position, run_svc, flow_svc, error_context=None) -> None:
         """Launch the post-run analysis step."""
         space = self._get_space(run_svc.session)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
         ctx = ContextService(working_path / ".llmflows")
         daemon_config = load_system_config().get("daemon", {})
@@ -922,7 +948,7 @@ class RunDaemon:
         )
         run_svc.update_run_step(run.id, "__post_run__", run.flow_name or "default")
 
-        space_dir = Path(space.path) / ".llmflows"
+        space_dir = space_execution_root(space.path) / ".llmflows"
         agent_svc = AgentService(space_dir, working_path)
         launched, prompt_content, log_path = agent_svc.prepare_and_launch_step(
             run_id=run.id, step_name="__post_run__", step_position=step_position,
@@ -944,7 +970,7 @@ class RunDaemon:
     def _handle_post_run_completion(self, run, run_svc, flow_svc, working_path, step_position) -> None:
         """Handle post-run step finishing."""
         space = self._get_space(run_svc.session)
-        space_root = Path(space.path)
+        space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
 
         new_summary = ContextService.read_summary_artifact(artifacts_dir)

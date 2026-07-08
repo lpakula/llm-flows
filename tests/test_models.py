@@ -1,6 +1,7 @@
 """Tests for database models."""
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from llmflows.db.models import (
     Base,
@@ -28,7 +29,8 @@ def test_create_space(test_db):
 
     fetched = test_db.query(Space).first()
     assert fetched.name == "my-space"
-    assert fetched.path == "/tmp/my-space"
+    # Paths are normalized on assignment (e.g. /tmp → /private/tmp on macOS).
+    assert fetched.path == str(Path("/tmp/my-space").resolve())
     assert len(fetched.id) == 6
     assert fetched.created_at is not None
 
@@ -52,7 +54,7 @@ def test_space_to_dict(test_db):
 
     d = space.to_dict()
     assert d["name"] == "test"
-    assert d["path"] == "/tmp/test"
+    assert d["path"] == str(Path("/tmp/test").resolve())
     assert "id" in d
     assert "created_at" in d
 

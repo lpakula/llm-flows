@@ -5,7 +5,38 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..utils.paths import space_local_path
+
 logger = logging.getLogger(__name__)
+
+# Template variables that hold filesystem paths and must be localized for the
+# executing environment (host path → /workspace inside runner containers).
+_PATH_VAR_KEYS = ("run.dir", "flow.dir", "step.dir", "attachment.dir")
+
+
+def build_step_vars(base_vars: dict, space, flow_snapshot=None) -> dict:
+    """Build template variables for gates, IFs, and step content rendering.
+
+    Shared by the host orchestrator daemon and the in-container RunDaemon.
+    Path-valued variables (``run.dir``, ``flow.dir``, ``step.dir``,
+    ``attachment.dir``, ``space.dir``) are mapped through
+    :func:`space_local_path` so they resolve inside runner containers.
+    Flow snapshot variables never overwrite computed keys.
+    """
+    merged = dict(base_vars)
+    for key in _PATH_VAR_KEYS:
+        value = merged.get(key)
+        if value:
+            merged[key] = space_local_path(str(value))
+    if space is not None and getattr(space, "path", None):
+        merged["space.dir"] = space_local_path(str(space.path))
+    flow_vars = {}
+    if flow_snapshot and isinstance(flow_snapshot, dict):
+        flow_vars = flow_snapshot.get("variables", {})
+    for k, v in flow_vars.items():
+        merged.setdefault(f"flow.{k}", v["value"])
+        merged.setdefault(f"space.{k}", v["value"])
+    return merged
 
 
 def _interpolate(text: str, variables: dict) -> str:

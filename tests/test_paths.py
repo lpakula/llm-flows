@@ -10,6 +10,7 @@ from llmflows.utils.paths import (
     host_path_to_container_path,
     normalize_gate_failures_for_display,
     normalize_space_path_for_db,
+    space_execution_root,
     space_host_path,
     space_local_path,
 )
@@ -98,3 +99,79 @@ def test_space_local_path_maps_subpath_to_workspace(monkeypatch):
         space_local_path("/Users/me/proj/.llmflows/my-flow/.audit.json")
         == "/workspace/.llmflows/my-flow/.audit.json"
     )
+
+
+def test_space_execution_root_on_host(monkeypatch):
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    assert space_execution_root("/Users/me/proj") == Path("/Users/me/proj")
+
+
+def test_space_execution_root_in_container(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert space_execution_root("/Users/me/proj") == Path("/workspace")
+
+
+def test_space_execution_root_idempotent_on_workspace(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    assert space_execution_root("/workspace") == Path("/workspace")
+
+
+class _FakeSpace:
+    def __init__(self, path):
+        self.path = path
+
+
+def test_build_step_vars_localizes_paths_in_container(monkeypatch):
+    from llmflows.services.gate import build_step_vars
+
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
+    vars_ = build_step_vars({
+        "run.id": "abc123",
+        "flow.name": "my-flow",
+        "flow.dir": "/Users/me/proj/.llmflows/my-flow",
+        "run.dir": "/Users/me/proj/.llmflows/my-flow/runs/abc123/artifacts",
+        "step.dir": "/Users/me/proj/.llmflows/my-flow/runs/abc123/artifacts/00-step",
+    }, _FakeSpace("/Users/me/proj"))
+    assert vars_["flow.dir"] == "/workspace/.llmflows/my-flow"
+    assert vars_["run.dir"] == "/workspace/.llmflows/my-flow/runs/abc123/artifacts"
+    assert vars_["step.dir"] == "/workspace/.llmflows/my-flow/runs/abc123/artifacts/00-step"
+    assert vars_["space.dir"] == "/workspace"
+    assert vars_["run.id"] == "abc123"
+
+
+def test_build_step_vars_passthrough_on_host(monkeypatch):
+    from llmflows.services.gate import build_step_vars
+
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    vars_ = build_step_vars({
+        "flow.dir": "/Users/me/proj/.llmflows/my-flow",
+    }, _FakeSpace("/Users/me/proj"))
+    assert vars_["flow.dir"] == "/Users/me/proj/.llmflows/my-flow"
+    assert vars_["space.dir"] == "/Users/me/proj"
+
+
+def test_build_step_vars_flow_vars_do_not_overwrite_computed(monkeypatch):
+    from llmflows.services.gate import build_step_vars
+
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    snapshot = {"variables": {
+        "dir": {"value": "SHOULD-NOT-WIN"},
+        "name": {"value": "SHOULD-NOT-WIN"},
+        "ISSUE": {"value": "42"},
+    }}
+    vars_ = build_step_vars({
+        "flow.name": "my-flow",
+        "flow.dir": "/proj/.llmflows/my-flow",
+    }, _FakeSpace("/proj"), flow_snapshot=snapshot)
+    assert vars_["flow.dir"] == "/proj/.llmflows/my-flow"
+    assert vars_["flow.name"] == "my-flow"
+    assert vars_["flow.ISSUE"] == "42"
+    assert vars_["space.ISSUE"] == "42"
+
+
+def test_build_step_vars_handles_none_space(monkeypatch):
+    from llmflows.services.gate import build_step_vars
+
+    monkeypatch.delenv("LLMFLOWS_SPACE_HOST_PATH", raising=False)
+    vars_ = build_step_vars({"run.id": "x"}, None)
+    assert vars_ == {"run.id": "x"}

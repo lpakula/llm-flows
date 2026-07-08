@@ -65,6 +65,16 @@ def space_local_path(path: str) -> str:
         return str(resolved)
 
 
+def space_execution_root(path: str) -> Path:
+    """Local filesystem root for a space, as a ``Path``.
+
+    Inside a runner container this maps a stored host space path to the
+    ``/workspace`` mount; on the host it returns the path unchanged. Use this
+    everywhere container-side code derives file locations from ``space.path``.
+    """
+    return Path(space_local_path(str(path)))
+
+
 def resolve_existing_path(
     path: str,
     *,

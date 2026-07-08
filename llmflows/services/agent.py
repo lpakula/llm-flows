@@ -23,6 +23,7 @@ import re
 from ..config import AGENT_REGISTRY, KNOWN_LLM_PROVIDERS, SYSTEM_DIR
 from ..db.database import get_session
 from ..db.models import AgentConfig
+from ..utils.paths import space_execution_root
 from .context import ContextService
 
 logger = logging.getLogger("llmflows.agent")
@@ -63,7 +64,10 @@ class AgentService:
 
         Returns (success, prompt_content, log_path).
         """
-        space_root = self.space_dir.parent
+        # Derive the space root from the working path (not space_dir.parent):
+        # inside a runner container the working path is the /workspace mount,
+        # while space_dir may still carry a host path from the DB.
+        space_root = space_execution_root(str(self.working_path))
         if artifacts_dir is None:
             artifacts_dir = ContextService.get_artifacts_dir(
                 space_root, run_id, flow_name,
@@ -151,7 +155,7 @@ class AgentService:
     def _ensure_gitignore(llmflows_dir: Path) -> None:
         """Ensure .llmflows/ has a .gitignore for ephemeral files."""
         gi = llmflows_dir / ".gitignore"
-        entries = {"*/runs/"}
+        entries = {"*/runs/", "*/tools/"}
         if gi.exists():
             existing = gi.read_text()
             missing = [e for e in sorted(entries) if e not in existing]

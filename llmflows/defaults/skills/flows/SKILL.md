@@ -424,6 +424,30 @@ When using Telegram `/run`, if a flow has variables with empty values, the bot p
 
 ---
 
+## Flow Dependencies (setup_script / apt_packages)
+
+Runs execute inside Docker containers (Debian slim). Host tools like Homebrew are **not available**. Each flow declares its own dependencies — nothing is installed globally or baked into the shared runner image:
+
+- **`setup_script`** (flow-level string): shell commands run once per flow (re-run only when the script changes) before the first step. Installs land in the flow's private tools directory (`.llmflows/<flow>/tools/` inside the space), which is on `PATH` for every step. `pip install --user <pkg>` and `npm install -g <pkg>` automatically target it, and static binaries can be downloaded into `$LLMFLOWS_FLOW_TOOLS_DIR/bin/`. Tools persist across runs and are removed with the flow's `.llmflows` folder.
+- **`apt_packages`** (flow-level string, space-separated Debian package names, e.g. `"ffmpeg imagemagick"`): system packages installed into a derived per-flow Docker image (cached, rebuilt only when the package set or llmflows version changes). Use this for anything `pip`/`npm`/static binaries can't provide.
+
+```json
+{
+  "name": "video-digest",
+  "apt_packages": "ffmpeg",
+  "setup_script": "pip install --user yt-dlp",
+  "steps": [ ... ]
+}
+```
+
+Never instruct steps to `brew install` anything, and avoid `apt-get install` inside step content (it is lost when the container exits) — declare dependencies on the flow instead.
+
+## Scheduling child runs from a step
+
+When step content calls `llmflows run schedule` (e.g. a parent flow fanning out child runs), always pass the space explicitly: `llmflows run schedule --space <space-id> --flow <flow>`. Steps run inside containers where implicit space resolution depends on environment variables — the explicit flag is robust.
+
+---
+
 ## Step Fields Reference
 
 | Field | Type | Default | Purpose |

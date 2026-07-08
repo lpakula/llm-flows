@@ -9,6 +9,7 @@ orchestrator host and publish the YouTube callback port.
 import json
 import logging
 import os
+import socket
 from pathlib import Path
 from typing import Optional
 
@@ -55,6 +56,11 @@ def google_oauth_volume_args(needed: set[str]) -> list[str]:
         gws_dir = user_home / GWS_CONFIG_DIR
         gws_dir.mkdir(parents=True, exist_ok=True)
         args.extend(["-v", f"{gws_dir}:/root/{GWS_CONFIG_DIR}"])
+        # Shadow the OAuth client secret read-only so a runner can refresh
+        # token.json but never tamper with the credentials themselves.
+        creds = gws_dir / "credentials.json"
+        if creds.is_file():
+            args.extend(["-v", f"{creds}:/root/{GWS_CONFIG_DIR}/credentials.json:ro"])
         logger.info("Mounting Google Workspace config from %s", gws_dir)
 
     if "youtube" in needed:
@@ -67,9 +73,37 @@ def google_oauth_volume_args(needed: set[str]) -> list[str]:
     return args
 
 
+def _port_in_use(port: int) -> bool:
+    """Check whether a TCP port is already bound on the host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+            return False
+        except OSError:
+            return True
+
+
 def youtube_port_args(needed: set[str]) -> list[str]:
-    """Publish YouTube OAuth callback port to the orchestrator host."""
+    """Publish YouTube OAuth callback port to the orchestrator host.
+
+    Only one container can bind the host port, so publishing it
+    unconditionally breaks concurrent runs (``docker run`` fails with "port is
+    already allocated" and the container is left in ``Created`` state). The
+    port is only needed for the interactive OAuth sign-in flow, so skip it
+    when a token already exists or when another container holds the port.
+    """
     if "youtube" not in needed:
+        return []
+    token = host_user_home() / YOUTUBE_TOKEN_FILE
+    if token.is_file() and token.stat().st_size > 2:
+        return []
+    if _port_in_use(YOUTUBE_OAUTH_PORT):
+        logger.warning(
+            "YouTube OAuth port %d already in use — launching container without "
+            "the callback port (interactive sign-in unavailable for this run)",
+            YOUTUBE_OAUTH_PORT,
+        )
         return []
     return ["-p", f"{YOUTUBE_OAUTH_PORT}:{YOUTUBE_OAUTH_PORT}"]
 

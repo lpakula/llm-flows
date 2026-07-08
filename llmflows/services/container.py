@@ -4,9 +4,11 @@ Handles launching, monitoring, and cleaning up runner containers.
 Each flow run gets its own container running `llmflows run-daemon --run-id <id>`.
 """
 
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -302,6 +304,74 @@ def ensure_image(
     return False
 
 
+_APT_PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]*$")
+
+
+def parse_apt_packages(raw: Optional[str]) -> tuple[list[str], str]:
+    """Parse and validate a flow's apt package list.
+
+    Accepts whitespace/comma separated Debian package names. Names are
+    strictly validated because they are interpolated into a Dockerfile RUN
+    line. Returns ``(packages, error)``.
+    """
+    if not raw:
+        return [], ""
+    packages = [p for p in re.split(r"[\s,]+", raw.strip()) if p]
+    invalid = [p for p in packages if not _APT_PACKAGE_RE.match(p)]
+    if invalid:
+        return [], f"Invalid apt package name(s): {', '.join(invalid)}"
+    return sorted(set(packages)), ""
+
+
+def flow_image_name(packages: list[str]) -> str:
+    """Derived image tag for a package set (shared across flows, per version)."""
+    digest = hashlib.sha256(" ".join(packages).encode()).hexdigest()[:12]
+    return f"llmflows-apt:{__version__}-{digest}"
+
+
+def ensure_flow_image(apt_packages_raw: Optional[str]) -> tuple[Optional[str], str]:
+    """Ensure a derived runner image with the flow's apt packages exists.
+
+    Builds ``FROM <base image>`` + one apt-get layer, cached by package-set
+    hash. Flows without apt packages get the base image. Returns
+    ``(image_tag, error)``.
+    """
+    packages, error = parse_apt_packages(apt_packages_raw)
+    if error:
+        return None, error
+    if not packages:
+        return image_name(), ""
+
+    tag = flow_image_name(packages)
+    if image_exists(tag):
+        return tag, ""
+
+    if not ensure_image():
+        return None, f"Base Docker image {image_name()} is not available — run: llmflows runner build"
+
+    dockerfile = (
+        f"FROM {image_name()}\n"
+        "RUN apt-get update && apt-get install -y --no-install-recommends "
+        f"{' '.join(packages)} && rm -rf /var/lib/apt/lists/*\n"
+    )
+    logger.info("Building flow image %s (apt: %s)", tag, ", ".join(packages))
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Dockerfile").write_text(dockerfile)
+            result = subprocess.run(
+                ["docker", "build", "-t", tag, "."],
+                cwd=tmp, capture_output=True, text=True, timeout=900,
+            )
+        if result.returncode != 0:
+            tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-10:])
+            return None, f"Failed to build flow image with apt packages ({', '.join(packages)}):\n{tail}"
+        return tag, ""
+    except subprocess.TimeoutExpired:
+        return None, "Timeout building flow image (apt package install took >15min)"
+    except FileNotFoundError:
+        return None, "Docker CLI not found — cannot build flow image"
+
+
 def dev_volume_args() -> list[str]:
     """Bind-mount project source in dev mode so containers pick up code changes."""
     dev_home = os.environ.get("LLMFLOWS_DEV_HOME")
@@ -324,6 +394,29 @@ def dev_volume_args() -> list[str]:
     return args
 
 
+def _home_volume_args(host_home: str) -> list[str]:
+    """Volume mounts for ~/.llmflows inside a runner/chat container.
+
+    With SQLite (the default) the whole home dir must be shared because the
+    central DB lives there. When an external ``DATABASE_URL`` is configured,
+    only the run-facing subdirs are mounted so runners cannot touch the
+    orchestrator DB, credentials, or other spaces' data.
+    """
+    if not os.environ.get("DATABASE_URL"):
+        return ["-v", f"{host_home}:/root/.llmflows"]
+
+    home = Path(host_home)
+    args: list[str] = []
+    for sub in ("attachments", "prompts", "chat-sessions"):
+        sub_dir = home / sub
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        args.extend(["-v", f"{sub_dir}:/root/.llmflows/{sub}"])
+    config_file = home / "config.toml"
+    if config_file.is_file():
+        args.extend(["-v", f"{config_file}:/root/.llmflows/config.toml:ro"])
+    return args
+
+
 def _build_volume_args(
     space_path: str,
     host_home: str,
@@ -332,10 +425,87 @@ def _build_volume_args(
     """Standard volume mounts shared by runner and chat containers."""
     return [
         "-v", f"{space_path}:/workspace",
-        "-v", f"{host_home}:/root/.llmflows",
+        *_home_volume_args(host_home),
         *google_oauth_volume_args(google_connectors or set()),
         *dev_volume_args(),
     ]
+
+
+def _hardening_args() -> list[str]:
+    """Docker resource limits and security options for runner containers.
+
+    Configurable via the ``[runner]`` section in config.toml:
+    ``memory``, ``cpus``, ``pids_limit``, ``drop_capabilities``.
+    """
+    from ..config import load_system_config
+
+    cfg = load_system_config().get("runner", {})
+    args: list[str] = []
+
+    memory = cfg.get("memory", "4g")
+    if memory:
+        args.extend(["--memory", str(memory)])
+    cpus = cfg.get("cpus", 0)
+    if cpus:
+        args.extend(["--cpus", str(cpus)])
+    pids_limit = cfg.get("pids_limit", 2048)
+    if pids_limit:
+        args.extend(["--pids-limit", str(pids_limit)])
+
+    # Opt-in: may break steps that rely on apt-get or sandboxed Chromium.
+    if cfg.get("drop_capabilities", False):
+        args.extend([
+            "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL",
+            "--cap-add", "CHOWN",
+            "--cap-add", "SETUID",
+            "--cap-add", "SETGID",
+            "--cap-add", "DAC_OVERRIDE",
+            "--cap-add", "FOWNER",
+            "--cap-add", "KILL",
+        ])
+    return args
+
+
+def _proxy_env_args() -> list[str]:
+    """Inject egress proxy env vars when ``[network] proxy_url`` is configured.
+
+    On macOS Docker Desktop the iptables-based network isolation is a no-op,
+    so routing runner traffic through a user-provided filtering proxy is the
+    portable way to control egress.
+    """
+    from ..config import load_system_config
+
+    proxy_url = load_system_config().get("network", {}).get("proxy_url", "")
+    if not proxy_url:
+        return []
+    no_proxy = "localhost,127.0.0.1,host.docker.internal"
+    args: list[str] = []
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        args.extend(["-e", f"{key}={proxy_url}"])
+    for key in ("NO_PROXY", "no_proxy"):
+        args.extend(["-e", f"{key}={no_proxy}"])
+    return args
+
+
+def run_container_name(run_id: str) -> str:
+    """Deterministic container name for a flow run."""
+    return f"llmflows-run-{run_id[:8]}"
+
+
+def _remove_named_container(name: str) -> None:
+    """Remove any leftover container with this name (stopped or ``Created``).
+
+    ``docker run --name`` fails on a name collision, so a container left
+    behind by a previous failed launch would block every retry.
+    """
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
 
 
 def launch_run_container(
@@ -344,17 +514,24 @@ def launch_run_container(
     flow_snapshot: Optional[str] = None,
     space_id: Optional[str] = None,
     host_home: Optional[str] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], str]:
     """Launch a runner container for a flow run.
 
-    Returns the container ID on success, None on failure.
+    Returns ``(container_id, error_message)`` — container ID on success,
+    ``(None, <reason>)`` on failure so callers can surface the error.
     """
     if not ensure_image():
-        logger.error(
-            "Cannot launch run %s — Docker image %s is not available",
-            run_id, image_name(),
-        )
-        return None
+        error = f"Docker image {image_name()} is not available — run: llmflows runner build"
+        logger.error("Cannot launch run %s — %s", run_id, error)
+        return None, error
+
+    run_image = image_name()
+    apt_packages = _snapshot_apt_packages(flow_snapshot)
+    if apt_packages:
+        run_image, error = ensure_flow_image(apt_packages)
+        if not run_image:
+            logger.error("Cannot launch run %s — %s", run_id, error)
+            return None, error
 
     needs_browser_host = _needs_host_browser(flow_snapshot)
     google_connectors = flow_google_connectors(flow_snapshot)
@@ -363,48 +540,55 @@ def launch_run_container(
         try:
             prepare_host_browser_for_run(flow_snapshot, session)
         except Exception as exc:
+            error = f"Failed to prepare host Chrome: {exc}"
             logger.error("Failed to prepare host Chrome for run %s: %s", run_id, exc)
-            return None
+            return None, error
         finally:
             session.close()
 
     network_args = get_network_args(needs_browser_host=needs_browser_host)
-    env_args = _build_env_args(space_id)
+    env_args = _build_env_args(flow_snapshot)
     env_args.extend(["-e", "LLMFLOWS_RUNNER=1"])
     env_args.extend(["-e", f"LLMFLOWS_SPACE_HOST_PATH={space_path}"])
+    env_args.extend(_proxy_env_args())
     llmflows_host = host_home or os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
+
+    name = run_container_name(run_id)
+    _remove_named_container(name)
 
     cmd = [
         "docker", "run", "-d",
-        "--name", f"llmflows-run-{run_id[:8]}",
+        "--name", name,
         "-w", "/workspace",
         *_build_volume_args(space_path, llmflows_host, google_connectors),
         *youtube_port_args(google_connectors),
         *network_args,
+        *_hardening_args(),
         *env_args,
         "--label", f"llmflows.run_id={run_id}",
         "--label", f"llmflows.version={__version__}",
-        image_name(),
+        run_image,
         "run-daemon", "--run-id", run_id,
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            logger.error(
-                "Failed to launch container for run %s: %s",
-                run_id, result.stderr.strip(),
-            )
-            return None
+            error = result.stderr.strip()
+            logger.error("Failed to launch container for run %s: %s", run_id, error)
+            # docker run may leave a Created container behind (e.g. failed
+            # port bind) — remove it so it doesn't block the next attempt.
+            _remove_named_container(name)
+            return None, f"Container launch failed: {error}"
         container_id = result.stdout.strip()
         logger.info("Launched runner container %s for run %s", container_id[:12], run_id)
-        return container_id
+        return container_id, ""
     except subprocess.TimeoutExpired:
         logger.error("Timeout launching container for run %s", run_id)
-        return None
+        return None, "Timeout launching container (docker run took >30s)"
     except FileNotFoundError:
         logger.error("Docker CLI not found — cannot launch containers")
-        return None
+        return None, "Docker CLI not found — install Docker to run flows"
 
 
 def is_container_alive(container_id: str) -> bool:
@@ -503,6 +687,8 @@ def launch_chat_container(
     cmd = [
         "docker", "run", "-i", "--rm",
         "--name", name,
+        "--label", "llmflows.chat=1",
+        "--label", f"llmflows.version={__version__}",
         *_build_volume_args(space_path, str(SYSTEM_DIR)),
         *network_args,
     ]
@@ -525,21 +711,39 @@ def launch_chat_container(
         return None
 
 
-def cleanup_orphan_containers() -> int:
-    """Remove any stopped llmflows runner containers. Returns count removed."""
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "label=llmflows.run_id",
-             "--filter", "status=exited", "-q"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return 0
+def cleanup_orphan_containers(skip: Optional[set[str]] = None) -> int:
+    """Remove stopped or never-started llmflows runner containers.
 
-        container_ids = result.stdout.strip().split("\n")
+    ``Created`` containers are left behind when ``docker run`` fails after
+    creating the container object (e.g. port bind or name conflict) and
+    would otherwise accumulate and block future launches with the same name.
+
+    ``skip`` holds container IDs still tracked by active runs (any prefix
+    length) — those are left for the daemon to inspect and remove itself.
+    Returns count removed.
+    """
+    skip = skip or set()
+
+    def _is_tracked(cid: str) -> bool:
+        return any(tracked.startswith(cid) or cid.startswith(tracked) for tracked in skip if tracked)
+
+    container_ids: set[str] = set()
+    try:
+        for status in ("exited", "created"):
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--filter", "label=llmflows.run_id",
+                 "--filter", f"status={status}", "-q"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                container_ids.update(result.stdout.strip().split("\n"))
+
         removed = 0
         for cid in container_ids:
-            if remove_container(cid.strip()):
+            cid = cid.strip()
+            if not cid or _is_tracked(cid):
+                continue
+            if remove_container(cid):
                 removed += 1
         if removed:
             logger.info("Cleaned up %d orphan runner containers", removed)
@@ -557,8 +761,55 @@ def _needs_host_browser(flow_snapshot: Optional[str]) -> bool:
         session.close()
 
 
-def _build_env_args(space_id: Optional[str] = None) -> list[str]:
-    """Build --env arguments for API keys, provider credentials, and DATABASE_URL."""
+def _snapshot_apt_packages(flow_snapshot: Optional[str]) -> str:
+    """Extract the flow-level apt_packages string from a snapshot."""
+    if not flow_snapshot:
+        return ""
+    try:
+        snap = json.loads(flow_snapshot)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    return (snap.get("apt_packages") or "").strip()
+
+
+def _flow_providers(flow_snapshot: Optional[str], session) -> Optional[set[str]]:
+    """Provider names a flow's steps can reach through their agent aliases.
+
+    Returns None when the snapshot is missing/unreadable (caller falls back
+    to passing all credentials). Always includes the ``mini`` (post-run) and
+    ``max`` (gate-retry escalation) aliases since the runner may use them.
+    """
+    if not flow_snapshot:
+        return None
+    try:
+        snap = json.loads(flow_snapshot)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    alias_names = {
+        s.get("agent_alias") or "normal"
+        for s in snap.get("steps", [])
+    }
+    alias_names.update({"normal", "mini", "max"})
+
+    from ..db.models import AgentAlias
+
+    providers = {"pi"}
+    aliases = session.query(AgentAlias).filter(AgentAlias.name.in_(alias_names)).all()
+    for alias in aliases:
+        if alias.agent:
+            providers.add(alias.agent)
+        if alias.model and "/" in alias.model:
+            providers.add(alias.model.split("/", 1)[0])
+    return providers
+
+
+def _build_env_args(flow_snapshot: Optional[str] = None) -> list[str]:
+    """Build --env arguments for API keys, provider credentials, and DATABASE_URL.
+
+    Only credentials for providers the flow can actually use are passed in —
+    a runner never sees API keys for unrelated providers.
+    """
     args = []
     db_url = os.environ.get("DATABASE_URL")
     if db_url:
@@ -568,7 +819,10 @@ def _build_env_args(space_id: Optional[str] = None) -> list[str]:
         args.extend(["-e", f"LLMFLOWS_DEV_HOME={dev_home}"])
     session = get_session()
     try:
+        providers = _flow_providers(flow_snapshot, session)
         for cfg in session.query(AgentConfig).all():
+            if providers is not None and cfg.agent not in providers:
+                continue
             args.extend(["-e", f"{cfg.key}={cfg.value}"])
     finally:
         session.close()

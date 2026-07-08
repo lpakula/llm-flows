@@ -195,6 +195,8 @@ class Flow(Base):
     description: str = Column(Text, default="")
     requirements: str = Column(Text, default="{}")
     variables: str = Column(Text, default="{}")
+    setup_script: str = Column(Text, default="")
+    apt_packages: str = Column(Text, default="")
     version: int = Column(Integer, nullable=False, default=1)
     max_concurrent_runs: int = Column(Integer, default=1)
     max_spend_usd: float = Column(Float, nullable=True)
@@ -251,6 +253,8 @@ class Flow(Base):
             "description": self.description,
             "requirements": self.get_requirements(),
             "variables": self.get_variables(),
+            "setup_script": self.setup_script or "",
+            "apt_packages": self.apt_packages or "",
             "version": self.version or 1,
             "max_concurrent_runs": self.max_concurrent_runs if self.max_concurrent_runs is not None else 1,
             "max_spend_usd": self.max_spend_usd,

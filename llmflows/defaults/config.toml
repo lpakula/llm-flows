@@ -6,6 +6,20 @@ max_log_size_mb = 500
 summarizer_language = "English"
 inbox_muted = false
 keep_awake = false
+setup_timeout_seconds = 900
+[runner]
+# Resource limits for runner containers. Set a value to 0/"" to disable.
+memory = "4g"
+cpus = 0
+pids_limit = 2048
+# Stricter isolation (cap-drop + no-new-privileges). May break steps that
+# rely on apt-get or sandboxed Chromium inside the container.
+drop_capabilities = false
+[network]
+# Route all runner traffic through an egress proxy (e.g. http://host.docker.internal:3128).
+# On macOS Docker Desktop the iptables-based isolation is unavailable, so a
+# filtering proxy is the portable way to control what runners can reach.
+proxy_url = ""
 [ui]
 port = 4300
 host = "localhost"

@@ -59,8 +59,23 @@ class SpaceService:
         return self.session.query(Space).filter_by(id=space_id).first()
 
     def get_by_path(self, path: str) -> Optional[Space]:
-        """Get a space by its root path."""
-        return self.session.query(Space).filter_by(path=path).first()
+        """Get a space by its root path.
+
+        Stored paths are normalized (symlinks resolved — e.g. ``/tmp`` →
+        ``/private/tmp`` on macOS), so retry the lookup with the normalized
+        form when the raw path doesn't match.
+        """
+        space = self.session.query(Space).filter_by(path=path).first()
+        if space:
+            return space
+        from ..utils.paths import coerce_space_path_for_db
+        try:
+            normalized = coerce_space_path_for_db(path)
+        except ValueError:
+            return None
+        if normalized != path:
+            return self.session.query(Space).filter_by(path=normalized).first()
+        return None
 
     def resolve_current(self) -> Optional[Space]:
         """Resolve the current space from the git root or working directory."""
