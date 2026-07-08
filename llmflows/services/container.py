@@ -337,7 +337,8 @@ def resolve_run_image(flow_id: Optional[str] = None) -> tuple[Optional[str], str
     """Pick the Docker image for a flow run.
 
     Uses the flow's committed image when present; otherwise the base llmflows
-    runner image. Returns ``(image_tag, error)``.
+    runner image. Builds the base image on demand when it is missing.
+    Returns ``(image_tag, error)``.
     """
     if not ensure_image():
         return None, f"Docker image {image_name()} is not available — run: llmflows runner build"

@@ -146,7 +146,7 @@ class Daemon:
         signal.signal(signal.SIGUSR2, self._handle_reexec)
 
         self._start_keep_awake()
-        self._check_runner_image()
+        self._warn_if_runner_image_missing()
 
         for ch in self._build_channels():
             self.notifications.register(ch)
@@ -176,20 +176,16 @@ class Daemon:
         logger.info("Daemon stopped")
 
     @staticmethod
-    def _check_runner_image() -> None:
-        """Ensure the runner image for the current version exists at startup.
-
-        Catches version drift after `llmflows upgrade` — otherwise the first
-        scheduled run would fail (or run stale code from an old image).
-        """
-        from .container import ensure_image, image_name
+    def _warn_if_runner_image_missing() -> None:
+        """Log when the runner image is missing (built lazily on first flow run)."""
+        from .container import image_exists, image_name
 
         try:
-            if not ensure_image():
-                logger.error(
-                    "Runner image %s is not available — runs will fail until "
-                    "`llmflows runner build` succeeds",
-                    image_name(),
+            tag = image_name()
+            if not image_exists(tag):
+                logger.warning(
+                    "Runner image %s not found — it will be built when the next flow run starts",
+                    tag,
                 )
         except Exception:
             logger.exception("Runner image check failed (ignoring)")

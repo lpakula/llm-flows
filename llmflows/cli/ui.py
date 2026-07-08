@@ -113,23 +113,6 @@ def _kill_other_ui_instances() -> None:
         _stop_pid(pid)
 
 
-def _ensure_docker_image() -> bool:
-    """Build the runner Docker image when missing. Returns True if ready."""
-    from ..services.container import ensure_image, image_exists, image_name
-
-    tag = image_name()
-    if image_exists(tag):
-        return True
-
-    if not ensure_image(on_status=lambda msg: click.echo(f"  Docker:          {msg}")):
-        click.echo(
-            f"  Docker:          image {tag} unavailable — flow runs and chat will fail.",
-            err=True,
-        )
-        return False
-    return True
-
-
 def _ensure_daemon_running() -> None:
     """Start the daemon if it is not already running (or restart if stale).
 
@@ -170,7 +153,6 @@ def _ensure_daemon_running() -> None:
     cmd = [_llmflows_bin(), "daemon", "start"]
 
     env = os.environ.copy()
-    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
 
     subprocess.Popen(
         cmd,
@@ -441,9 +423,6 @@ def ui(port, host, reload, dev, no_daemon):
 
     _kill_other_ui_instances()
     init_db()
-
-    if not _ensure_docker_image():
-        sys.exit(1)
 
     config = load_system_config()
     port = port or config["ui"]["port"]

@@ -121,7 +121,6 @@ def start_ui_background(no_daemon: bool = False) -> int | None:
     if no_daemon:
         cmd.append("--no-daemon")
     env = os.environ.copy()
-    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
     try:
         proc = subprocess.Popen(
             cmd,
@@ -145,17 +144,9 @@ def restart_daemon_via_cli(
     """Stop and start the daemon (for CLI use). Returns ``(success, message)``."""
     import time
 
-    from ..services.container import ensure_image, image_name
     from ..services.daemon import read_pid_file
 
     llmflows = _llmflows_bin()
-    tag = image_name()
-
-    if not ensure_image(
-        on_status=(lambda msg: on_status(f"Docker: {msg}") if on_status else None),
-        quiet=on_status is None,
-    ):
-        return False, f"Docker image {tag} is not available"
 
     try:
         subprocess.run(
@@ -169,7 +160,6 @@ def restart_daemon_via_cli(
     time.sleep(0.5)
 
     env = os.environ.copy()
-    env["LLMFLOWS_IMAGE_ENSURED"] = "1"
 
     try:
         subprocess.Popen(
