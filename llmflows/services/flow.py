@@ -113,11 +113,12 @@ class FlowService:
         if not flow:
             return None
         for key, value in kwargs.items():
-            if hasattr(flow, key) and key not in ("id", "created_at"):
+            if hasattr(flow, key) and key not in ("id", "created_at", "version"):
                 setattr(flow, key, value)
         flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
-        return flow
+        self._bump_flow_version(flow_id, "Flow updated")
+        return self.get(flow_id)
 
     def delete(self, flow_id: str) -> bool:
         flow = self.get(flow_id)
@@ -157,7 +158,8 @@ class FlowService:
         self.session.add(step)
         flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
-        return step
+        self._bump_flow_version(flow_id, f"Added step '{name}'")
+        return self.session.query(FlowStep).filter_by(id=step.id).first()
 
     def update_step(self, step_id: str, **kwargs) -> Optional[FlowStep]:
         step = self.session.query(FlowStep).filter_by(id=step_id).first()
@@ -171,6 +173,7 @@ class FlowService:
         if flow:
             flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
+        self._bump_flow_version(step.flow_id, f"Updated step '{step.name}'")
         return step
 
     def remove_step(self, step_id: str) -> bool:
@@ -178,10 +181,13 @@ class FlowService:
         if not step:
             return False
         flow = self.get(step.flow_id)
+        step_name = step.name
         self.session.delete(step)
         if flow:
             flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
+        if flow:
+            self._bump_flow_version(flow.id, f"Removed step '{step_name}'")
         return True
 
     def reorder_steps(self, flow_id: str, step_ids: list[str]) -> bool:
@@ -194,6 +200,7 @@ class FlowService:
                 step_map[sid].position = i
         flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
+        self._bump_flow_version(flow_id, "Reordered steps")
         return True
 
     def get_step_obj(self, flow_name: str, step_name: str, space_id: Optional[str] = None) -> Optional[FlowStep]:
@@ -621,6 +628,10 @@ class FlowService:
 
     # ── Flow Versioning ────────────────────────────────────────────────────────
 
+    def _bump_flow_version(self, flow_id: str, description: str) -> None:
+        """Snapshot the flow and bump its version after a definition change."""
+        self.save_version(flow_id, description=description)
+
     def save_version(self, flow_id: str, description: str = "") -> Optional[FlowVersion]:
         """Snapshot the current flow state into a FlowVersion record."""
         flow = self.get(flow_id)
@@ -639,6 +650,10 @@ class FlowService:
         flow.version = (flow.version or 1) + 1
         flow.updated_at = datetime.now(timezone.utc)
         self.session.commit()
+
+        from .container import invalidate_flow_runner_images
+        invalidate_flow_runner_images(flow_id)
+
         return version
 
     def list_versions(self, flow_id: str) -> list[FlowVersion]:
@@ -711,6 +726,10 @@ class FlowService:
             self.session.add(step)
 
         self.session.commit()
+
+        from .container import invalidate_flow_runner_images
+        invalidate_flow_runner_images(flow_id)
+
         return flow
 
     def apply_flow_proposal(self, flow_id: str, proposal: dict) -> Optional[Flow]:

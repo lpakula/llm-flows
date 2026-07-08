@@ -252,7 +252,6 @@ class Daemon:
         tracked = {
             cid for (cid,) in session.query(FlowRunModel.container_id)
             .filter(FlowRunModel.container_id.isnot(None))
-            .filter(FlowRunModel.completed_at.is_(None))
             .all()
             if cid
         }
@@ -331,7 +330,64 @@ class Daemon:
         from .container import (
             is_container_alive, get_container_exit_code,
             get_container_logs, remove_container, commit_container_to_flow_image,
+            flow_version_from_snapshot,
         )
+
+        for run in run_svc.get_runs_with_container(space.id):
+            if is_container_alive(run.container_id):
+                continue
+
+            run_id = run.id
+            container_id = run.container_id
+            exit_code = get_container_exit_code(container_id)
+
+            run = run_svc.get(run_id)
+            if not run or not run.container_id:
+                continue
+
+            if not run.completed_at:
+                logger.warning(
+                    "Runner container for run %s exited (code=%s) but run not completed — marking error",
+                    run.id, exit_code,
+                )
+                log_tail = get_container_logs(container_id, tail=20).strip()
+                summary = f"Runner container exited unexpectedly (exit code {exit_code})."
+                if log_tail:
+                    summary += f"\n\nContainer log tail:\n{log_tail[-2000:]}"
+                run_svc.mark_completed(run.id, outcome="error", summary=summary)
+
+            if run.completed_at and run.outcome == "completed" and run.flow_id:
+                if exit_code not in (None, 0):
+                    logger.warning(
+                        "Run %s completed in DB but container exit code was %s — "
+                        "committing runner image anyway",
+                        run.id, exit_code,
+                    )
+                flow_version = flow_version_from_snapshot(run.flow_snapshot)
+                ok, commit_err = commit_container_to_flow_image(
+                    container_id, run.flow_id, flow_version,
+                )
+                if ok:
+                    logger.info(
+                        "Saved runner image for flow %s after run %s",
+                        run.flow_id, run.id,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to save runner image for flow %s: %s",
+                        run.flow_id, commit_err,
+                    )
+
+            remove_container(container_id)
+            run.container_id = None
+            run_svc.session.commit()
+
+            self._close_open_steps(run, run_svc)
+
+            if run.completed_at:
+                self._handle_completed_run_notifications(run, space, run_svc)
+                self._maybe_create_improvement_inbox(run, space, run_svc)
+                self._finalize_run(run.id)
 
         active_runs = run_svc.get_active_by_space(space.id)
 
@@ -340,59 +396,13 @@ class Daemon:
                 continue
 
             if run.container_id:
-                if is_container_alive(run.container_id):
-                    continue
+                continue
 
-                exit_code = get_container_exit_code(run.container_id)
-                run_svc.session.refresh(run)
-
-                if not run.completed_at:
-                    logger.warning(
-                        "Runner container for run %s exited (code=%s) but run not completed — marking error",
-                        run.id, exit_code,
-                    )
-                    log_tail = get_container_logs(run.container_id, tail=20).strip()
-                    summary = f"Runner container exited unexpectedly (exit code {exit_code})."
-                    if log_tail:
-                        summary += f"\n\nContainer log tail:\n{log_tail[-2000:]}"
-                    run_svc.mark_completed(run.id, outcome="error", summary=summary)
-
-                if (
-                    run.completed_at
-                    and run.outcome == "completed"
-                    and exit_code == 0
-                    and run.flow_id
-                ):
-                    ok, commit_err = commit_container_to_flow_image(
-                        run.container_id, run.flow_id,
-                    )
-                    if ok:
-                        logger.info(
-                            "Saved runner image for flow %s after run %s",
-                            run.flow_id, run.id,
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to save runner image for flow %s: %s",
-                            run.flow_id, commit_err,
-                        )
-
-                remove_container(run.container_id)
-                run.container_id = None
-                run_svc.session.commit()
-
-                self._close_open_steps(run, run_svc)
-
-                if run.completed_at:
-                    self._handle_completed_run_notifications(run, space, run_svc)
-                    self._maybe_create_improvement_inbox(run, space, run_svc)
-                    self._finalize_run(run.id)
-            else:
-                active_step = run_svc.get_active_step(run.id)
-                if active_step and active_step.awaiting_user_at and not active_step.completed_at:
-                    continue
-                if not run.container_id and run.started_at and not run.completed_at:
-                    self._launch_run_container(run, space, run_svc, flow_svc)
+            active_step = run_svc.get_active_step(run.id)
+            if active_step and active_step.awaiting_user_at and not active_step.completed_at:
+                continue
+            if not run.container_id and run.started_at and not run.completed_at:
+                self._launch_run_container(run, space, run_svc, flow_svc)
 
         active_by_flow: dict[str, int] = {}
         for r in active_runs:

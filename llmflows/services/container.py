@@ -302,72 +302,75 @@ def ensure_image(
     return False
 
 
-def per_flow_image_tag(flow_id: str, version: str | None = None) -> str:
-    """Tag for a flow's committed runner image at a given llmflows version."""
-    return f"{version or __version__}-{flow_id}"
+def per_flow_image_tag(flow_id: str, flow_version: int, llmflows_version: str | None = None) -> str:
+    """Tag for a flow's committed runner image at a given flow + llmflows version."""
+    return f"{llmflows_version or __version__}-{flow_id}-fv{flow_version}"
 
 
-def per_flow_image_name(flow_id: str, version: str | None = None) -> str:
+def per_flow_image_name(flow_id: str, flow_version: int, llmflows_version: str | None = None) -> str:
     """Docker reference for a flow's committed runner image."""
-    return f"llmflows-flow:{per_flow_image_tag(flow_id, version)}"
+    return f"llmflows-flow:{per_flow_image_tag(flow_id, flow_version, llmflows_version)}"
 
 
-def flow_image_info(flow_id: str) -> dict:
-    """Metadata about the committed runner image for a flow."""
-    tag = per_flow_image_name(flow_id)
-    info: dict = {"tag": tag, "exists": False, "created": None, "size_bytes": None}
-    if not image_exists(tag):
-        return info
-    info["exists"] = True
+def flow_version_from_snapshot(flow_snapshot: Optional[str]) -> int:
+    """Read the flow definition version baked into a run snapshot."""
+    if not flow_snapshot:
+        return 1
     try:
-        result = subprocess.run(
-            ["docker", "image", "inspect", tag, "--format", "{{.Created}}\t{{.Size}}"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            created, size = result.stdout.strip().split("\t", 1)
-            info["created"] = created
-            info["size_bytes"] = int(size)
-    except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
-        pass
-    return info
+        snap = json.loads(flow_snapshot)
+        return int(snap.get("version") or 1)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return 1
 
 
-def resolve_run_image(flow_id: Optional[str] = None) -> tuple[Optional[str], str]:
+def resolve_run_image(
+    flow_id: Optional[str] = None,
+    flow_version: int = 1,
+) -> tuple[Optional[str], str]:
     """Pick the Docker image for a flow run.
 
-    Uses the flow's committed image when present; otherwise the base llmflows
+    Uses the flow-version snapshot when present; otherwise the base llmflows
     runner image. Builds the base image on demand when it is missing.
-    Returns ``(image_tag, error)``.
     """
     if not ensure_image():
         return None, f"Docker image {image_name()} is not available — run: llmflows runner build"
 
-    if flow_id and image_exists(per_flow_image_name(flow_id)):
-        tag = per_flow_image_name(flow_id)
-        logger.info("Using committed flow runner image %s", tag)
-        return tag, ""
+    if flow_id:
+        tag = per_flow_image_name(flow_id, flow_version)
+        if image_exists(tag):
+            logger.info("Using committed flow runner image %s", tag)
+            return tag, ""
 
     return image_name(), ""
 
 
-def commit_container_to_flow_image(container_id: str, flow_id: str) -> tuple[bool, str]:
-    """Save a stopped run container as the flow's runner image.
+def commit_container_to_flow_image(
+    container_id: str, flow_id: str, flow_version: int,
+) -> tuple[bool, str]:
+    """Save a stopped run container as the flow's runner image for this version.
 
-    Packages installed during the run (apt, pip, binaries, etc.) are captured
-    in the image layer and reused on the next run of the same flow.
+    Only the first successful run at a given flow version creates the image;
+    later runs at the same version reuse it.
     """
     if not container_id:
         return False, "No container ID"
     if not flow_id:
         return False, "No flow ID"
 
-    tag = per_flow_image_name(flow_id)
+    tag = per_flow_image_name(flow_id, flow_version)
+    if image_exists(tag):
+        logger.info(
+            "Runner image %s already exists for flow %s v%s — skipping commit",
+            tag, flow_id, flow_version,
+        )
+        return True, ""
+
     try:
         result = subprocess.run(
             [
                 "docker", "commit",
                 "--change", f"LABEL llmflows.flow_id={flow_id}",
+                "--change", f"LABEL llmflows.flow_version={flow_version}",
                 "--change", f"LABEL llmflows.version={__version__}",
                 container_id, tag,
             ],
@@ -376,7 +379,10 @@ def commit_container_to_flow_image(container_id: str, flow_id: str) -> tuple[boo
         if result.returncode != 0:
             msg = (result.stderr or result.stdout or "docker commit failed").strip()
             return False, msg
-        logger.info("Committed runner container %s to flow image %s", container_id[:12], tag)
+        logger.info(
+            "Committed runner container %s to flow image %s (flow v%s)",
+            container_id[:12], tag, flow_version,
+        )
         return True, ""
     except subprocess.TimeoutExpired:
         return False, "Timeout committing flow runner image (>120s)"
@@ -384,27 +390,30 @@ def commit_container_to_flow_image(container_id: str, flow_id: str) -> tuple[boo
         return False, "Docker CLI not found — cannot commit flow runner image"
 
 
-def reset_flow_image(flow_id: str) -> tuple[bool, str]:
-    """Remove a flow's committed runner image so the next run starts fresh."""
+def invalidate_flow_runner_images(flow_id: str) -> int:
+    """Remove all committed runner images for a flow (e.g. after a definition change)."""
     if not flow_id:
-        return False, "No flow ID"
-    tag = per_flow_image_name(flow_id)
-    if not image_exists(tag):
-        return True, "No custom runner image — already using base image"
+        return 0
+    refs: list[str] = []
     try:
         result = subprocess.run(
-            ["docker", "rmi", "-f", tag],
-            capture_output=True, text=True, timeout=30,
+            [
+                "docker", "images",
+                "--filter", f"label=llmflows.flow_id={flow_id}",
+                "-q",
+            ],
+            capture_output=True, text=True, timeout=10,
         )
-        if result.returncode != 0:
-            msg = (result.stderr or result.stdout or "docker rmi failed").strip()
-            return False, msg
-        logger.info("Removed flow runner image %s", tag)
-        return True, f"Removed runner image {tag}"
-    except subprocess.TimeoutExpired:
-        return False, "Timeout removing flow runner image"
-    except FileNotFoundError:
-        return False, "Docker CLI not found — cannot remove flow runner image"
+        if result.returncode == 0 and result.stdout.strip():
+            refs.extend(line.strip() for line in result.stdout.strip().splitlines() if line.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    removed = 0
+    for ref in dict.fromkeys(refs):
+        if _remove_image(ref):
+            removed += 1
+            logger.info("Invalidated flow runner image %s for flow %s", ref[:12], flow_id)
+    return removed
 
 
 def _remove_image(image_ref: str) -> bool:
@@ -649,7 +658,8 @@ def launch_run_container(
         except (json.JSONDecodeError, TypeError):
             pass
 
-    run_image, error = resolve_run_image(flow_id)
+    flow_version = flow_version_from_snapshot(flow_snapshot)
+    run_image, error = resolve_run_image(flow_id, flow_version)
     if not run_image:
         logger.error("Cannot launch run %s — %s", run_id, error)
         return None, error
@@ -689,6 +699,7 @@ def launch_run_container(
         "--label", f"llmflows.run_id={run_id}",
         "--label", f"llmflows.version={__version__}",
         *([ "--label", f"llmflows.flow_id={flow_id}"] if flow_id else []),
+        *([ "--label", f"llmflows.flow_version={flow_version}"] if flow_id else []),
         run_image,
         "run-daemon", "--run-id", run_id,
     ]

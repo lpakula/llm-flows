@@ -676,19 +676,29 @@ class TestFlowVersioning:
         test_db.refresh(flow)
         assert flow.version == 2
 
+    def test_add_step_bumps_flow_version(self, test_db, test_space):
+        svc = FlowService(test_db)
+        flow = svc.create("bump-add", space_id=test_space.id)
+        assert flow.version == 1
+        svc.add_step(flow.id, "research", "# Research")
+        test_db.refresh(flow)
+        assert flow.version == 2
+        versions = svc.list_versions(flow.id)
+        assert len(versions) == 1
+        assert versions[0].version == 1
+
     def test_list_versions(self, test_db, test_space):
         svc = FlowService(test_db)
         flow = svc.create("multi-ver", space_id=test_space.id, steps=[
             {"name": "step1", "position": 0},
         ])
-        svc.save_version(flow.id, "v1 save")
         svc.update_step(flow.steps[0].id, content="updated content")
-        svc.save_version(flow.id, "v2 save")
 
         versions = svc.list_versions(flow.id)
-        assert len(versions) == 2
-        assert versions[0].version == 2
-        assert versions[1].version == 1
+        assert len(versions) == 1
+        assert versions[0].version == 1
+        test_db.refresh(flow)
+        assert flow.version == 2
 
     def test_rollback_to_version(self, test_db, test_space):
         svc = FlowService(test_db)
@@ -1679,3 +1689,75 @@ class TestKeepAwake:
         daemon._keep_awake_proc = None
         daemon._stop_keep_awake()
         assert daemon._keep_awake_proc is None
+
+
+class TestDaemonContainerCommit:
+    def test_commits_runner_image_for_completed_run_with_container(self, test_db, test_space):
+        """RunDaemon marks runs completed before the container exits."""
+        from unittest.mock import patch
+
+        from llmflows.services.daemon import Daemon
+        from llmflows.services.flow import FlowService
+        from llmflows.services.run import RunService
+
+        flow_svc = FlowService(test_db)
+        flow = flow_svc.create("news", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "# Step"},
+        ])
+        run_svc = RunService(test_db)
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.mark_started(run.id)
+        run_svc.mark_completed(run.id, outcome="completed")
+        run.container_id = "deadbeefcafe"
+        test_db.commit()
+
+        daemon = Daemon()
+        with patch("llmflows.services.container.is_container_alive", return_value=False), \
+             patch("llmflows.services.container.get_container_exit_code", return_value=0), \
+             patch("llmflows.services.container.commit_container_to_flow_image", return_value=(True, "")) as commit, \
+             patch("llmflows.services.container.remove_container", return_value=True), \
+             patch.object(daemon, "_handle_completed_run_notifications"), \
+             patch.object(daemon, "_maybe_create_improvement_inbox"), \
+             patch.object(daemon, "_finalize_run"):
+            daemon._process_space(test_space, run_svc, flow_svc)
+
+        commit.assert_called_once_with("deadbeefcafe", flow.id, 1)
+        test_db.refresh(run)
+        assert run.container_id is None
+
+    def test_processes_second_exited_container_after_first_commit(self, test_db, test_space):
+        """Re-fetching by ID must work after session commits from prior runs."""
+        from unittest.mock import patch
+
+        from llmflows.services.daemon import Daemon
+        from llmflows.services.flow import FlowService
+        from llmflows.services.run import RunService
+
+        flow_svc = FlowService(test_db)
+        flow = flow_svc.create("multi", space_id=test_space.id, steps=[
+            {"name": "step1", "position": 0, "content": "# Step"},
+        ])
+        run_svc = RunService(test_db)
+        run1 = run_svc.enqueue(test_space.id, flow.id)
+        run2 = run_svc.enqueue(test_space.id, flow.id)
+        for run in (run1, run2):
+            run_svc.mark_started(run.id)
+            run_svc.mark_completed(run.id, outcome="completed")
+            run.container_id = f"deadbeef{run.id[:4]}"
+        test_db.commit()
+
+        daemon = Daemon()
+        with patch("llmflows.services.container.is_container_alive", return_value=False), \
+             patch("llmflows.services.container.get_container_exit_code", return_value=0), \
+             patch("llmflows.services.container.commit_container_to_flow_image", return_value=(True, "")) as commit, \
+             patch("llmflows.services.container.remove_container", return_value=True), \
+             patch.object(daemon, "_handle_completed_run_notifications"), \
+             patch.object(daemon, "_maybe_create_improvement_inbox"), \
+             patch.object(daemon, "_finalize_run"):
+            daemon._process_space(test_space, run_svc, flow_svc)
+
+        assert commit.call_count == 2
+        test_db.refresh(run1)
+        test_db.refresh(run2)
+        assert run1.container_id is None
+        assert run2.container_id is None

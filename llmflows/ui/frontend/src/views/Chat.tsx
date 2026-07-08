@@ -604,15 +604,22 @@ interface FlowChatState {
   sessionId: string | null;
   tier: Tier;
   totalCost: number;
+  connectors: string[];
 }
 
 function loadFlowChat(flowId: string): FlowChatState {
   try {
     const raw = localStorage.getItem(FLOW_CHAT_KEY + flowId);
-    if (!raw) return { messages: [], sessionId: null, tier: "max", totalCost: 0 };
+    if (!raw) return { messages: [], sessionId: null, tier: "max", totalCost: 0, connectors: [] };
     const p = JSON.parse(raw);
-    return { messages: p.messages || [], sessionId: p.sessionId || null, tier: p.tier || "max", totalCost: p.totalCost || 0 };
-  } catch { return { messages: [], sessionId: null, tier: "max", totalCost: 0 }; }
+    return {
+      messages: p.messages || [],
+      sessionId: p.sessionId || null,
+      tier: p.tier || "max",
+      totalCost: p.totalCost || 0,
+      connectors: Array.isArray(p.connectors) ? p.connectors : [],
+    };
+  } catch { return { messages: [], sessionId: null, tier: "max", totalCost: 0, connectors: [] }; }
 }
 
 function saveFlowChat(flowId: string, state: FlowChatState) {
@@ -633,13 +640,29 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
   const [streamText, setStreamText] = useState("");
   const [thinkingText, setThinkingText] = useState("");
   const [totalCost, setTotalCost] = useState(initial.current.totalCost);
+  const [availableConnectors, setAvailableConnectors] = useState<ConnectorConfig[]>([]);
+  const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.current.connectors);
+  const connectorsLocked = messages.length > 0 || streaming;
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    saveFlowChat(flowId, { messages, sessionId, tier, totalCost });
-  }, [flowId, messages, sessionId, tier, totalCost]);
+    saveFlowChat(flowId, { messages, sessionId, tier, totalCost, connectors: selectedConnectors });
+  }, [flowId, messages, sessionId, tier, totalCost, selectedConnectors]);
+
+  useEffect(() => {
+    api.getConnectors().then((all) => setAvailableConnectors(all.filter((c) => c.enabled)));
+  }, []);
+
+  const toggleConnector = useCallback((id: string) => {
+    setSelectedConnectors((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }, []);
+  const removeConnector = useCallback((id: string) => {
+    setSelectedConnectors((prev) => prev.filter((x) => x !== id));
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -672,7 +695,14 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
       abortRef.current = abort;
 
       try {
-        const response = await api.sendChat(text.trim(), spaceId, sessionId, tier, flowName);
+        const response = await api.sendChat(
+          text.trim(),
+          spaceId,
+          sessionId,
+          tier,
+          flowName,
+          selectedConnectors.length > 0 ? selectedConnectors : undefined,
+        );
         if (!response.ok) {
           const errText = await response.text();
           setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${response.status} — ${errText}` }]);
@@ -713,7 +743,7 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
         setTimeout(() => inputRef.current?.focus(), 50);
       }
     },
-    [streaming, spaceId, sessionId, tier, flowName],
+    [streaming, spaceId, sessionId, tier, flowName, selectedConnectors],
   );
 
   const handleKeyDown = useCallback(
@@ -733,6 +763,7 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
     setThinkingText("");
     setInput("");
     setTotalCost(0);
+    setSelectedConnectors([]);
     localStorage.removeItem(FLOW_CHAT_KEY + flowId);
   }, [streaming, sessionId, flowId]);
 
@@ -807,8 +838,8 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
             {streaming ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
           </button>
         </div>
-        {/* Tier selector */}
-        <div className="relative mt-1.5 flex items-center gap-1.5">
+        {/* Tier + tools */}
+        <div className="relative mt-1.5 flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-gray-600">Agent</span>
           <button
             data-flow-tier
@@ -833,6 +864,20 @@ export function FlowChatWindow({ spaceId, flowId, flowName, open, onClose }: {
                 </button>
               ))}
             </div>
+          )}
+          <ConnectorPills
+            available={availableConnectors}
+            selected={selectedConnectors}
+            onRemove={removeConnector}
+            locked={connectorsLocked}
+          />
+          {availableConnectors.length > 0 && (
+            <ConnectorPicker
+              available={availableConnectors}
+              selected={selectedConnectors}
+              onToggle={toggleConnector}
+              disabled={connectorsLocked}
+            />
           )}
         </div>
       </div>

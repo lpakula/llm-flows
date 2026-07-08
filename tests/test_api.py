@@ -105,46 +105,6 @@ class TestFlowsAPI:
         response = client.get("/api/flows/nope")
         assert response.status_code == 404
 
-    def test_get_flow_includes_runner_info(self, client, api_db):
-        from unittest.mock import patch
-
-        flow_id = api_db["flow_id"]
-        with patch(
-            "llmflows.services.container.flow_image_info",
-            return_value={"tag": "llmflows-flow:0.52.0-abc123", "exists": False, "created": None, "size_bytes": None},
-        ):
-            response = client.get(f"/api/flows/{flow_id}")
-        assert response.status_code == 200
-        assert "0.52.0" in response.json()["runner"]["tag"]
-
-    def test_get_flow_runner(self, client, api_db):
-        from unittest.mock import patch
-
-        flow_id = api_db["flow_id"]
-        with patch(
-            "llmflows.services.container.flow_image_info",
-            return_value={"tag": "llmflows-flow:0.52.0-abc123", "exists": True, "created": "2026-01-01", "size_bytes": 123},
-        ):
-            response = client.get(f"/api/flows/{flow_id}/runner")
-        assert response.status_code == 200
-        assert response.json()["exists"] is True
-
-    def test_reset_flow_runner(self, client, api_db):
-        from unittest.mock import patch
-
-        flow_id = api_db["flow_id"]
-        with patch(
-            "llmflows.services.container.reset_flow_image",
-            return_value=(True, "Removed runner image llmflows-flow:0.52.0-abc123"),
-        ):
-            response = client.post(f"/api/flows/{flow_id}/runner/reset")
-        assert response.status_code == 200
-        assert response.json()["ok"] is True
-
-    def test_reset_flow_runner_not_found(self, client):
-        response = client.post("/api/flows/nope/runner/reset")
-        assert response.status_code == 404
-
 
 class TestDashboardAPI:
     def test_dashboard(self, client, api_db):

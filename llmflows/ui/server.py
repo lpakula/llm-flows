@@ -2354,61 +2354,12 @@ async def get_flow(flow_id: str):
             raise HTTPException(status_code=404, detail="Flow not found")
         result = flow.to_dict()
         result["warnings"] = flow_svc.validate_flow(flow_id)
-        from ..services.container import flow_image_info
-        result["runner"] = flow_image_info(flow_id)
         space_svc = SpaceService(session)
         space = space_svc.get(flow.space_id)
         if space:
             audit = FlowAuditService.get_audit(space.path, flow.name)
             result["audit"] = audit.to_dict() if audit else None
         return result
-    finally:
-        session.close()
-
-
-@app.get("/api/flows/{flow_id}/runner")
-async def get_flow_runner(flow_id: str):
-    """Return metadata about the flow's committed Docker runner image."""
-    session, _ = _get_services()
-    try:
-        flow_svc = FlowService(session)
-        if not flow_svc.get(flow_id):
-            raise HTTPException(status_code=404, detail="Flow not found")
-        from ..services.container import flow_image_info
-        return flow_image_info(flow_id)
-    finally:
-        session.close()
-
-
-@app.post("/api/flows/{flow_id}/runner/reset")
-async def reset_flow_runner(flow_id: str):
-    """Remove the flow's committed runner image so the next run starts fresh."""
-    session, _ = _get_services()
-    try:
-        from ..db.models import FlowRun
-        from ..services.container import reset_flow_image
-
-        flow_svc = FlowService(session)
-        if not flow_svc.get(flow_id):
-            raise HTTPException(status_code=404, detail="Flow not found")
-
-        active = (
-            session.query(FlowRun)
-            .filter_by(flow_id=flow_id)
-            .filter(FlowRun.completed_at.is_(None))
-            .filter(FlowRun.started_at.isnot(None))
-            .count()
-        )
-        if active:
-            raise HTTPException(
-                status_code=409,
-                detail="Cannot reset runner while the flow has active runs",
-            )
-
-        ok, message = reset_flow_image(flow_id)
-        if not ok:
-            raise HTTPException(status_code=500, detail=message)
-        return {"ok": True, "message": message}
     finally:
         session.close()
 

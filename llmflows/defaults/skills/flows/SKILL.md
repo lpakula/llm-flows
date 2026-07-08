@@ -181,12 +181,35 @@ Gates are shell commands attached to a step that **must exit 0** before the flow
 The daemon **automatically prepends** a gate to every step that checks the step's artifacts directory exists and is non-empty:
 
 ```bash
-test -d "<run.dir>" && test "$(ls -A "<run.dir>")"
+test -d "{{step.dir}}" && test "$(ls -A "{{step.dir}}")"
 ```
 
 This means every step must produce at least one file in `{{step.dir}}/`. If the agent finishes without writing any artifacts, this auto-gate fails and the agent is relaunched.
 
 Since the daemon already gates on the artifacts directory being non-empty, and the agent is always instructed to write `_result.md`, there is no need to add a gate like `test -f {{step.dir}}/_result.md` — it is redundant with the built-in gate.
+
+### Paths in gates and IFs
+
+Gates and IFs run as shell commands with **cwd = the space project root** (inside Docker runners this is `/workspace`).
+
+- **Always use template variables for artifact paths** — `{{step.dir}}`, `{{run.dir}}`, `{{flow.dir}}`, `{{attachment.dir}}`. Never hardcode host paths like `/Users/me/proj/...`.
+- **Relative paths** in gate commands (e.g. `test -f package.json`) resolve from the space root — fine for project files.
+- **Artifact paths** must use `{{step.dir}}/filename` or `{{run.dir}}/inbox.md`, not bare filenames (unless the file truly lives at the space root).
+- Path variables are **localized automatically** in runner containers — the same gate works on host and in Docker.
+
+**Good:**
+```json
+{"command": "test -f {{step.dir}}/report.md", "message": "Report must exist."}
+{"command": "test -f {{run.dir}}/inbox.md", "message": "Inbox notification required."}
+{"command": "npm test -- --watchAll=false", "message": "Tests must pass."}
+```
+
+**Bad:**
+```json
+{"command": "test -f /Users/me/proj/.llmflows/my-flow/runs/abc/artifacts/00-step/report.md", "message": "..."}
+{"command": "test -f report.md", "message": "..."}
+```
+(Second example only works if `report.md` is at the space root, not in step artifacts.)
 
 ### Gate retry behavior
 
@@ -328,6 +351,7 @@ Step content, gate commands, gate messages, and IF commands support `{{variable}
 | `{{step.dir}}` | This step's output directory within the run |
 | `{{attachment.dir}}` | Run attachments directory |
 | `{{space.KEY}}` | Space variable (set via Settings or CLI) |
+| `{{flow.KEY}}` | Flow variable (set on the flow page or via CLI) |
 | `{{hitl.response.N}}` | HITL response by index (0-based) |
 
 All variables are available in step content, gates, and IFs.
@@ -428,14 +452,9 @@ When using Telegram `/run`, if a flow has variables with empty values, the bot p
 
 Runs execute inside Docker containers (Debian slim). Host tools like Homebrew are **not available**.
 
-Each flow gets its own **committed runner image** (``llmflows-flow:<version>-<flow_id>``):
-
-1. **First run** (or after an llmflows upgrade) starts from the base ``llmflows:<version>`` image.
-2. **Agents install packages during steps** — `apt-get install`, `pip install`, downloading binaries, etc.
-3. **After a successful run**, the host daemon runs `docker commit` and saves the container filesystem as the flow's image.
-4. **Next runs** start from that saved image — no reinstall needed.
-5. **Reset** from the flow UI ("Reset environment") removes the saved image; the next run starts fresh from base.
-6. **Upgrades** — the image tag includes the llmflows version, so a new release starts from a fresh base image. The daemon periodically removes stale images and orphan containers from older versions.
+- **System packages** — use `apt-get install` in step content when needed; they persist for the current flow version across runs.
+- **Flow edits bump the flow version** — any step or metadata change invalidates the saved runner environment for that flow, so the next run starts fresh from the base image.
+- **Never use `brew install`** — it is not available in runners.
 
 ```json
 {
@@ -444,7 +463,7 @@ Each flow gets its own **committed runner image** (``llmflows-flow:<version>-<fl
 }
 ```
 
-Never instruct steps to `brew install` anything. Prefer `apt-get install` for system packages inside the container — they persist in the committed image after the run completes.
+Prefer `apt-get install` for system packages inside the container. If a user needs to reset installed packages without changing the flow, any trivial edit (e.g. add a whitespace change to a step) bumps the version and starts fresh.
 
 ## Scheduling child runs from a step
 

@@ -141,24 +141,24 @@ def test_launch_run_container_adds_flow_id_label():
 
 def test_per_flow_image_name():
     with patch.object(container_mod, "__version__", "0.52.0"):
-        assert container_mod.per_flow_image_name("abc123") == "llmflows-flow:0.52.0-abc123"
+        assert container_mod.per_flow_image_name("abc123", 3) == "llmflows-flow:0.52.0-abc123-fv3"
 
 
 def test_resolve_run_image_uses_committed_flow_image():
     with patch.object(container_mod, "ensure_image", return_value=True), \
          patch.object(container_mod, "__version__", "0.52.0"), \
-         patch.object(container_mod, "image_exists", side_effect=lambda tag: tag == "llmflows-flow:0.52.0-abc123"), \
+         patch.object(container_mod, "image_exists", side_effect=lambda tag: tag == "llmflows-flow:0.52.0-abc123-fv2"), \
          patch.object(container_mod, "image_name", return_value="llmflows:0.52.0"):
-        tag, error = container_mod.resolve_run_image("abc123")
+        tag, error = container_mod.resolve_run_image("abc123", 2)
     assert error == ""
-    assert tag == "llmflows-flow:0.52.0-abc123"
+    assert tag == "llmflows-flow:0.52.0-abc123-fv2"
 
 
 def test_resolve_run_image_falls_back_to_base():
     with patch.object(container_mod, "ensure_image", return_value=True), \
          patch.object(container_mod, "image_exists", return_value=False), \
          patch.object(container_mod, "image_name", return_value="llmflows:1.0.0"):
-        tag, error = container_mod.resolve_run_image("abc123")
+        tag, error = container_mod.resolve_run_image("abc123", 1)
     assert error == ""
     assert tag == "llmflows:1.0.0"
 
@@ -171,42 +171,29 @@ def test_commit_container_to_flow_image():
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod, "image_exists", return_value=False), \
          patch.object(container_mod.subprocess, "run", side_effect=fake_run):
-        ok, error = container_mod.commit_container_to_flow_image("container123", "abc123")
+        ok, error = container_mod.commit_container_to_flow_image("container123", "abc123", 2)
     assert ok is True
     assert error == ""
     assert calls[0][:2] == ["docker", "commit"]
-    assert calls[0][-1] == "llmflows-flow:0.52.0-abc123"
+    assert calls[0][-1] == "llmflows-flow:0.52.0-abc123-fv2"
 
 
-def test_reset_flow_image_when_missing():
-    with patch.object(container_mod, "image_exists", return_value=False):
-        ok, message = container_mod.reset_flow_image("abc123")
-    assert ok is True
-    assert "base image" in message
-
-
-def test_reset_flow_image_removes_tag():
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
+def test_commit_container_skips_when_image_exists():
     with patch.object(container_mod, "__version__", "0.52.0"), \
          patch.object(container_mod, "image_exists", return_value=True), \
-         patch.object(container_mod.subprocess, "run", side_effect=fake_run):
-        ok, message = container_mod.reset_flow_image("abc123")
+         patch.object(container_mod.subprocess, "run") as run:
+        ok, error = container_mod.commit_container_to_flow_image("container123", "abc123", 2)
     assert ok is True
-    assert calls[0] == ["docker", "rmi", "-f", "llmflows-flow:0.52.0-abc123"]
+    assert error == ""
+    run.assert_not_called()
 
 
-def test_flow_image_info_when_missing():
-    with patch.object(container_mod, "__version__", "0.52.0"), \
-         patch.object(container_mod, "image_exists", return_value=False):
-        info = container_mod.flow_image_info("abc123")
-    assert info["exists"] is False
-    assert info["tag"] == "llmflows-flow:0.52.0-abc123"
+def test_flow_version_from_snapshot():
+    snap = json.dumps({"id": "abc", "version": 4, "steps": []})
+    assert container_mod.flow_version_from_snapshot(snap) == 4
+    assert container_mod.flow_version_from_snapshot(None) == 1
 
 
 def test_cleanup_stale_runner_images_removes_old_versions():

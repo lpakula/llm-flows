@@ -94,6 +94,9 @@ produces artifacts. Adding this check is redundant and noisy.
 **`inbox.md` belongs in `{{run.dir}}/inbox.md`** — NOT in `{{step.dir}}`. The daemon looks for it at the \
 run artifacts root. If you want a gate to ensure it was written, use `test -f {{run.dir}}/inbox.md`.
 
+**Gate paths** — gates run with cwd = space project root. Use `{{step.dir}}/file`, `{{run.dir}}/file`, etc. \
+Never hardcode host paths. Relative paths like `test -f package.json` only work for files at the space root.
+
 ### How to create and update flows
 
 1. Write the flow JSON file to the `flows/` directory in the space root (create the directory if needed)
@@ -103,6 +106,10 @@ run artifacts root. If you want a gate to ensure it was written, use `test -f {{
 
 To iterate on a flow, edit the JSON file in `flows/` and re-import. \
 The import command upserts by name — it will update an existing flow if one with the same name exists.
+
+When the user is chatting from the flow page, they may prefer editing steps in the UI directly. \
+For JSON import, bump the `"version"` field when re-importing an existing flow (import rejects same/lower versions). \
+UI edits bump the flow version automatically.
 
 ### How to review and improve existing flows
 
@@ -237,7 +244,61 @@ def build_flow_context(flow_name: str, space_id: str) -> str:
     from .audit import FlowAuditService
     from .flow import FlowService
     from ..db.database import get_session as _gs
-    from ..db.models import FlowRun, Space as _SpaceModel
+    from ..db.models import FlowRun, StepRun, Space as _SpaceModel
+    from ..utils.paths import normalize_gate_failures_for_display
+
+    def _format_gate_failures(failures: list[dict], space_host_path: str | None) -> list[str]:
+        lines: list[str] = []
+        for failure in normalize_gate_failures_for_display(
+            failures, space_host_path=space_host_path,
+        ):
+            lines.append(f"- **{failure.get('message', 'Gate failed')}**")
+            if failure.get("command"):
+                lines.append(f"  - command: `{failure['command']}`")
+            stderr = failure.get("stderr") or failure.get("output") or ""
+            if stderr:
+                lines.append(f"  - stderr: `{stderr[:500]}`")
+        return lines
+
+    def _run_failure_lines(run: FlowRun, space_host_path: str | None, db) -> list[str]:
+        if run.outcome not in ("error", "interrupted", "cancelled"):
+            return []
+
+        lines = [f"#### Run `{run.id}` — {run.outcome}"]
+        step_runs = (
+            db.query(StepRun)
+            .filter_by(flow_run_id=run.id)
+            .order_by(StepRun.step_position.desc(), StepRun.started_at.desc())
+            .all()
+        )
+
+        failed_step = None
+        failures: list[dict] = []
+        for sr in step_runs:
+            if sr.outcome == "gate_failed" or sr.gate_failures:
+                failed_step = sr
+                if sr.gate_failures:
+                    try:
+                        parsed = json.loads(sr.gate_failures)
+                        if isinstance(parsed, list):
+                            failures = parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                break
+
+        if failed_step and failures:
+            lines.append(
+                f"Failed at step **{failed_step.step_name}** "
+                f"(attempt {failed_step.attempt}):"
+            )
+            lines.extend(_format_gate_failures(failures, space_host_path))
+        elif failed_step:
+            lines.append(f"Failed at step **{failed_step.step_name}** (gate_failed).")
+        elif run.summary:
+            preview = run.summary[:800].strip()
+            lines.append(f"Summary: {preview}")
+
+        return lines
 
     db = _gs()
     try:
@@ -287,6 +348,8 @@ def build_flow_context(flow_name: str, space_id: str) -> str:
         )
         if runs:
             parts.append("### Recent runs\n")
+            space_host = _space.path if _space else None
+            failure_blocks: list[str] = []
             for run in runs:
                 status = "completed" if run.completed_at else ("running" if run.started_at else "queued")
                 if run.outcome:
@@ -300,8 +363,24 @@ def build_flow_context(flow_name: str, space_id: str) -> str:
                     summary_preview = run.summary[:300].replace("\n", " ")
                     line += f"\n  > {summary_preview}"
                 parts.append(line)
+
+                diag = _run_failure_lines(run, space_host, db)
+                if diag:
+                    failure_blocks.append("\n".join(diag))
+
             parts.append("")
-            parts.append("For deeper investigation, use `llmflows run logs <run-id>` or `llmflows run show <run-id>`.\n")
+            if failure_blocks:
+                parts.append("### Failure details (for diagnosis)\n")
+                parts.append(
+                    "Use these gate failures and summaries when the user asks why a run failed "
+                    "or how to fix the flow.\n"
+                )
+                parts.extend(failure_blocks)
+                parts.append("")
+            parts.append(
+                "For deeper investigation, use `llmflows run logs <run-id>` "
+                "or `llmflows run show <run-id>`.\n"
+            )
 
         return "\n".join(parts)
     except Exception:

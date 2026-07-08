@@ -285,6 +285,21 @@ class RunService:
             .all()
         )
 
+    def get_runs_with_container(self, space_id: str) -> list[FlowRun]:
+        """Runs that still have a runner container attached (including completed).
+
+        RunDaemon marks runs completed inside the container before exit; the host
+        daemon must still process those containers for commit/cleanup.
+        """
+        return (
+            self.session.query(FlowRun)
+            .filter_by(space_id=space_id)
+            .filter(FlowRun.container_id.isnot(None))
+            .filter(FlowRun.started_at.isnot(None))
+            .order_by(FlowRun.created_at)
+            .all()
+        )
+
     def list_by_space(self, space_id: str) -> list[FlowRun]:
         """All runs for a space (active + history)."""
         return (
