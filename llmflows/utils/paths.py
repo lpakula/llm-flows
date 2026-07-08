@@ -75,6 +75,15 @@ def space_execution_root(path: str) -> Path:
     return Path(space_local_path(str(path)))
 
 
+def space_disk_root(path: str) -> Path:
+    """Host filesystem root for a space — orchestrator/UI reads and writes.
+
+    The DB stores the host project path. Unlike :func:`space_local_path`, this
+    never maps to ``/workspace`` (that mapping is only for runner/chat code).
+    """
+    return Path(normalize_space_path_for_db(path)).expanduser().resolve()
+
+
 def resolve_existing_path(
     path: str,
     *,

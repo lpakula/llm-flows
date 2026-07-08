@@ -125,6 +125,13 @@ def llm_audit(content: str, context: str = "") -> AuditResult:
             / ".llmflows"
             / "node_modules"
         )
+        for key in (
+            "LLMFLOWS_RUNNER",
+            "LLMFLOWS_SPACE_HOST_PATH",
+            "LLMFLOWS_DEV_HOME",
+            "LLMFLOWS_HOST_HOME",
+        ):
+            env.pop(key, None)
     except Exception:
         return AuditResult(status="error", summary="Could not resolve LLM model")
 
@@ -259,9 +266,9 @@ class SecurityAuditService:
 
     @staticmethod
     def get_audit_path(project_path: str, skill_name: str) -> Path:
-        from ..utils.paths import space_local_path
+        from ..utils.paths import space_disk_root
 
-        return Path(space_local_path(project_path)) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
+        return space_disk_root(project_path) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
 
     @staticmethod
     def get_audit(project_path: str, skill_name: str) -> AuditResult | None:
@@ -356,9 +363,9 @@ class FlowAuditService:
 
     @staticmethod
     def get_audit_path(project_path: str, flow_name: str) -> Path:
-        from ..utils.paths import space_local_path
+        from ..utils.paths import space_disk_root
 
-        return Path(space_local_path(project_path)) / ".llmflows" / flow_name / AUDIT_FILE
+        return space_disk_root(project_path) / ".llmflows" / flow_name / AUDIT_FILE
 
     @staticmethod
     def get_audit(project_path: str, flow_name: str) -> AuditResult | None:
@@ -406,8 +413,10 @@ class FlowAuditService:
     @staticmethod
     def _read_audit_memory(project_path: str, flow_name: str) -> str:
         """Read memory/audit.md from the flow directory, if it exists."""
+        from ..utils.paths import space_disk_root
         from .context import ContextService
-        flow_dir = ContextService.get_flow_dir(Path(project_path), flow_name)
+
+        flow_dir = ContextService.get_flow_dir(space_disk_root(project_path), flow_name)
         audit_mem = flow_dir / "memory" / "audit.md"
         if audit_mem.is_file():
             try:

@@ -111,6 +111,23 @@ def test_space_execution_root_in_container(monkeypatch):
     assert space_execution_root("/Users/me/proj") == Path("/workspace")
 
 
+def test_space_disk_root_ignores_container_mapping(monkeypatch, tmp_path):
+    from llmflows.utils.paths import space_disk_root
+
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", str(tmp_path))
+    assert space_disk_root(str(tmp_path)) == tmp_path.resolve()
+    assert space_disk_root(str(tmp_path / "sub")) == (tmp_path / "sub").resolve()
+
+
+def test_flow_audit_save_uses_host_path(monkeypatch, tmp_path):
+    from llmflows.services.audit import AuditResult, FlowAuditService
+
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", str(tmp_path))
+    FlowAuditService.save_audit(str(tmp_path), "my-flow", AuditResult(status="safe", summary="ok"))
+    audit_file = tmp_path / ".llmflows" / "my-flow" / ".audit.json"
+    assert audit_file.is_file()
+
+
 def test_space_execution_root_idempotent_on_workspace(monkeypatch):
     monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
     assert space_execution_root("/workspace") == Path("/workspace")
