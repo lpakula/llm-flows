@@ -238,36 +238,6 @@ class TestFlowService:
 
         path.unlink()
 
-    def test_setup_fields_round_trip(self, test_db, test_space):
-        """setup_script and apt_packages survive export → import and snapshots."""
-        svc = FlowService(test_db)
-        svc.create(
-            "setup-flow", space_id=test_space.id,
-            steps=[{"name": "s1", "position": 0, "content": "# S1"}],
-            setup_script="pip install --user yt-dlp",
-            apt_packages="ffmpeg imagemagick",
-        )
-
-        snapshot = svc.build_flow_snapshot("setup-flow", space_id=test_space.id)
-        assert snapshot["setup_script"] == "pip install --user yt-dlp"
-        assert snapshot["apt_packages"] == "ffmpeg imagemagick"
-
-        exported = svc.export_flow_dict(svc.get_by_name("setup-flow", test_space.id).id)
-        assert exported["setup_script"] == "pip install --user yt-dlp"
-        assert exported["apt_packages"] == "ffmpeg imagemagick"
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            path = Path(f.name)
-        exported["version"] = 2
-        path.write_text(json.dumps(exported))
-
-        count = svc.import_flows(path, test_space.id)
-        assert count == 1
-        reimported = svc.get_by_name("setup-flow", test_space.id)
-        assert reimported.setup_script == "pip install --user yt-dlp"
-        assert reimported.apt_packages == "ffmpeg imagemagick"
-        path.unlink()
-
     def test_create_flow_with_gates(self, test_db, test_space):
         svc = FlowService(test_db)
         flow = svc.create("gated-flow", space_id=test_space.id, steps=[

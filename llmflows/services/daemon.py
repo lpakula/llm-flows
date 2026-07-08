@@ -242,7 +242,7 @@ class Daemon:
             session.close()
 
     def _maybe_cleanup_containers(self, session) -> None:
-        """Periodically remove orphan runner containers (exited or Created)."""
+        """Periodically remove orphan containers and stale runner images."""
         import time as _time
 
         now = _time.monotonic()
@@ -251,7 +251,7 @@ class Daemon:
         self._last_container_cleanup = now
 
         from ..db.models import FlowRun as FlowRunModel
-        from .container import cleanup_orphan_containers
+        from .container import cleanup_runner_artifacts
 
         tracked = {
             cid for (cid,) in session.query(FlowRunModel.container_id)
@@ -261,9 +261,9 @@ class Daemon:
             if cid
         }
         try:
-            cleanup_orphan_containers(skip=tracked)
+            cleanup_runner_artifacts(skip=tracked)
         except Exception:
-            logger.exception("Orphan container cleanup failed (ignoring)")
+            logger.exception("Runner artifact cleanup failed (ignoring)")
 
     def _check_schedules(
         self, flow_svc: FlowService, run_svc: RunService, session,
@@ -334,7 +334,7 @@ class Daemon:
         """
         from .container import (
             is_container_alive, get_container_exit_code,
-            get_container_logs, remove_container,
+            get_container_logs, remove_container, commit_container_to_flow_image,
         )
 
         active_runs = run_svc.get_active_by_space(space.id)
@@ -360,6 +360,26 @@ class Daemon:
                     if log_tail:
                         summary += f"\n\nContainer log tail:\n{log_tail[-2000:]}"
                     run_svc.mark_completed(run.id, outcome="error", summary=summary)
+
+                if (
+                    run.completed_at
+                    and run.outcome == "completed"
+                    and exit_code == 0
+                    and run.flow_id
+                ):
+                    ok, commit_err = commit_container_to_flow_image(
+                        run.container_id, run.flow_id,
+                    )
+                    if ok:
+                        logger.info(
+                            "Saved runner image for flow %s after run %s",
+                            run.flow_id, run.id,
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to save runner image for flow %s: %s",
+                            run.flow_id, commit_err,
+                        )
 
                 remove_container(run.container_id)
                 run.container_id = None
@@ -468,6 +488,7 @@ class Daemon:
             space_path=space.path,
             flow_snapshot=run.flow_snapshot,
             host_home=host_home,
+            flow_id=run.flow_id,
         )
         if container_id:
             self._launch_failures.pop(run.id, None)
@@ -588,6 +609,7 @@ class Daemon:
             space_path=space.path,
             flow_snapshot=run.flow_snapshot,
             host_home=host_home,
+            flow_id=run.flow_id,
         )
         if container_id:
             self._launch_failures.pop(run.id, None)

@@ -139,9 +139,6 @@ class RunDaemon:
             if not run.started_at:
                 run_svc.mark_started(self.run_id)
 
-            if not self._prepare_flow_tools(run, working_path, run_svc):
-                return 1
-
             while self._running:
                 session.close()
                 session = get_session()
@@ -216,39 +213,6 @@ class RunDaemon:
     def _handle_signal(self, signum, frame):
         logger.info("RunDaemon received signal %d, stopping", signum)
         self._running = False
-
-    def _prepare_flow_tools(self, run, working_path: Path, run_svc: RunService) -> bool:
-        """Set up the per-flow tools dir and run the flow's setup script.
-
-        The tools dir lives on the space mount, so installed tools persist
-        across runs of the same flow without touching the runner image or the
-        host system. Returns False (and errors the run) when setup fails.
-        """
-        from .flow_setup import (
-            apply_flow_tools_env, ensure_flow_setup, flow_tools_dir,
-            DEFAULT_SETUP_TIMEOUT,
-        )
-
-        tools_dir = flow_tools_dir(working_path, run.flow_name or "")
-        try:
-            apply_flow_tools_env(tools_dir)
-        except OSError:
-            logger.warning("Could not prepare flow tools dir %s", tools_dir, exc_info=True)
-            return True
-
-        snap = self._get_snapshot(run)
-        setup_script = (snap or {}).get("setup_script", "")
-        if not setup_script:
-            return True
-
-        timeout = self.config["daemon"].get("setup_timeout_seconds", DEFAULT_SETUP_TIMEOUT)
-        ok, error = ensure_flow_setup(setup_script, tools_dir, working_path, timeout=timeout)
-        if ok:
-            return True
-
-        logger.error("Flow setup failed for run %s: %s", self.run_id, error)
-        run_svc.mark_completed(self.run_id, outcome="error", summary=error)
-        return False
 
     # ── Snapshot helpers ──────────────────────────────────────────────────────
 

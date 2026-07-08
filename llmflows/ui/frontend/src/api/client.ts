@@ -138,6 +138,9 @@ export const api = {
   // Flows (space-scoped)
   listFlows: (spaceId: string) => get<Flow[]>(`/api/spaces/${spaceId}/flows`),
   getFlow: (id: string) => get<Flow>(`/api/flows/${id}`),
+  getFlowRunner: (flowId: string) => get<import("./types").FlowRunnerImage>(`/api/flows/${flowId}/runner`),
+  resetFlowRunner: (flowId: string) =>
+    post<{ ok: boolean; message: string }>(`/api/flows/${flowId}/runner/reset`, {}),
   createFlow: (spaceId: string, body: { name: string; description?: string; copy_from?: string }) =>
     post<Flow>(`/api/spaces/${spaceId}/flows`, body),
   updateFlow: (id: string, body: Partial<{ name: string; description: string; requirements: { connectors: string[] }; max_concurrent_runs: number; max_spend_usd: number; starred: boolean; schedule_cron: string; schedule_timezone: string; schedule_enabled: boolean }>) =>

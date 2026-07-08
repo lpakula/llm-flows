@@ -4,11 +4,9 @@ Handles launching, monitoring, and cleaning up runner containers.
 Each flow run gets its own container running `llmflows run-daemon --run-id <id>`.
 """
 
-import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 import tarfile
@@ -304,72 +302,194 @@ def ensure_image(
     return False
 
 
-_APT_PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]*$")
+def per_flow_image_tag(flow_id: str, version: str | None = None) -> str:
+    """Tag for a flow's committed runner image at a given llmflows version."""
+    return f"{version or __version__}-{flow_id}"
 
 
-def parse_apt_packages(raw: Optional[str]) -> tuple[list[str], str]:
-    """Parse and validate a flow's apt package list.
-
-    Accepts whitespace/comma separated Debian package names. Names are
-    strictly validated because they are interpolated into a Dockerfile RUN
-    line. Returns ``(packages, error)``.
-    """
-    if not raw:
-        return [], ""
-    packages = [p for p in re.split(r"[\s,]+", raw.strip()) if p]
-    invalid = [p for p in packages if not _APT_PACKAGE_RE.match(p)]
-    if invalid:
-        return [], f"Invalid apt package name(s): {', '.join(invalid)}"
-    return sorted(set(packages)), ""
+def per_flow_image_name(flow_id: str, version: str | None = None) -> str:
+    """Docker reference for a flow's committed runner image."""
+    return f"llmflows-flow:{per_flow_image_tag(flow_id, version)}"
 
 
-def flow_image_name(packages: list[str]) -> str:
-    """Derived image tag for a package set (shared across flows, per version)."""
-    digest = hashlib.sha256(" ".join(packages).encode()).hexdigest()[:12]
-    return f"llmflows-apt:{__version__}-{digest}"
-
-
-def ensure_flow_image(apt_packages_raw: Optional[str]) -> tuple[Optional[str], str]:
-    """Ensure a derived runner image with the flow's apt packages exists.
-
-    Builds ``FROM <base image>`` + one apt-get layer, cached by package-set
-    hash. Flows without apt packages get the base image. Returns
-    ``(image_tag, error)``.
-    """
-    packages, error = parse_apt_packages(apt_packages_raw)
-    if error:
-        return None, error
-    if not packages:
-        return image_name(), ""
-
-    tag = flow_image_name(packages)
-    if image_exists(tag):
-        return tag, ""
-
-    if not ensure_image():
-        return None, f"Base Docker image {image_name()} is not available — run: llmflows runner build"
-
-    dockerfile = (
-        f"FROM {image_name()}\n"
-        "RUN apt-get update && apt-get install -y --no-install-recommends "
-        f"{' '.join(packages)} && rm -rf /var/lib/apt/lists/*\n"
-    )
-    logger.info("Building flow image %s (apt: %s)", tag, ", ".join(packages))
+def flow_image_info(flow_id: str) -> dict:
+    """Metadata about the committed runner image for a flow."""
+    tag = per_flow_image_name(flow_id)
+    info: dict = {"tag": tag, "exists": False, "created": None, "size_bytes": None}
+    if not image_exists(tag):
+        return info
+    info["exists"] = True
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "Dockerfile").write_text(dockerfile)
-            result = subprocess.run(
-                ["docker", "build", "-t", tag, "."],
-                cwd=tmp, capture_output=True, text=True, timeout=900,
-            )
-        if result.returncode != 0:
-            tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-10:])
-            return None, f"Failed to build flow image with apt packages ({', '.join(packages)}):\n{tail}"
+        result = subprocess.run(
+            ["docker", "image", "inspect", tag, "--format", "{{.Created}}\t{{.Size}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            created, size = result.stdout.strip().split("\t", 1)
+            info["created"] = created
+            info["size_bytes"] = int(size)
+    except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        pass
+    return info
+
+
+def resolve_run_image(flow_id: Optional[str] = None) -> tuple[Optional[str], str]:
+    """Pick the Docker image for a flow run.
+
+    Uses the flow's committed image when present; otherwise the base llmflows
+    runner image. Returns ``(image_tag, error)``.
+    """
+    if not ensure_image():
+        return None, f"Docker image {image_name()} is not available — run: llmflows runner build"
+
+    if flow_id and image_exists(per_flow_image_name(flow_id)):
+        tag = per_flow_image_name(flow_id)
+        logger.info("Using committed flow runner image %s", tag)
         return tag, ""
+
+    return image_name(), ""
+
+
+def commit_container_to_flow_image(container_id: str, flow_id: str) -> tuple[bool, str]:
+    """Save a stopped run container as the flow's runner image.
+
+    Packages installed during the run (apt, pip, binaries, etc.) are captured
+    in the image layer and reused on the next run of the same flow.
+    """
+    if not container_id:
+        return False, "No container ID"
+    if not flow_id:
+        return False, "No flow ID"
+
+    tag = per_flow_image_name(flow_id)
+    try:
+        result = subprocess.run(
+            [
+                "docker", "commit",
+                "--change", f"LABEL llmflows.flow_id={flow_id}",
+                "--change", f"LABEL llmflows.version={__version__}",
+                container_id, tag,
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            msg = (result.stderr or result.stdout or "docker commit failed").strip()
+            return False, msg
+        logger.info("Committed runner container %s to flow image %s", container_id[:12], tag)
+        return True, ""
     except subprocess.TimeoutExpired:
-        return None, "Timeout building flow image (apt package install took >15min)"
+        return False, "Timeout committing flow runner image (>120s)"
     except FileNotFoundError:
-        return None, "Docker CLI not found — cannot build flow image"
+        return False, "Docker CLI not found — cannot commit flow runner image"
+
+
+def reset_flow_image(flow_id: str) -> tuple[bool, str]:
+    """Remove a flow's committed runner image so the next run starts fresh."""
+    if not flow_id:
+        return False, "No flow ID"
+    tag = per_flow_image_name(flow_id)
+    if not image_exists(tag):
+        return True, "No custom runner image — already using base image"
+    try:
+        result = subprocess.run(
+            ["docker", "rmi", "-f", tag],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            msg = (result.stderr or result.stdout or "docker rmi failed").strip()
+            return False, msg
+        logger.info("Removed flow runner image %s", tag)
+        return True, f"Removed runner image {tag}"
+    except subprocess.TimeoutExpired:
+        return False, "Timeout removing flow runner image"
+    except FileNotFoundError:
+        return False, "Docker CLI not found — cannot remove flow runner image"
+
+
+def _remove_image(image_ref: str) -> bool:
+    """Force-remove a Docker image. Returns True when the image is gone."""
+    if not image_ref:
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "rmi", "-f", image_ref],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def cleanup_stale_runner_images() -> int:
+    """Remove flow runner and base images from other llmflows versions.
+
+    After an upgrade, committed flow images (``llmflows-flow:<version>-<flow>``)
+    from the previous version are unused. Legacy formats (``llmflows-flow:<flow>``,
+    ``llmflows-apt:*``) and old ``llmflows:<version>`` base images are removed too.
+    """
+    removed = 0
+    current = __version__
+    current_prefix = f"{current}-"
+
+    try:
+        result = subprocess.run(
+            ["docker", "images", "llmflows-flow", "--format", "{{.Tag}}\t{{.ID}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                parts = line.split("\t", 1)
+                if len(parts) != 2:
+                    continue
+                tag, img_id = parts[0].strip(), parts[1].strip()
+                if not tag or tag == "<none>" or not img_id:
+                    continue
+                if not tag.startswith(current_prefix):
+                    if _remove_image(img_id):
+                        removed += 1
+                        logger.info("Removed stale flow runner image llmflows-flow:%s", tag)
+
+        apt_result = subprocess.run(
+            ["docker", "images", "llmflows-apt", "-q"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if apt_result.returncode == 0 and apt_result.stdout.strip():
+            for img_id in apt_result.stdout.strip().splitlines():
+                img_id = img_id.strip()
+                if img_id and _remove_image(img_id):
+                    removed += 1
+                    logger.info("Removed legacy apt runner image %s", img_id[:12])
+
+        base_result = subprocess.run(
+            ["docker", "images", "llmflows", "--format", "{{.Tag}}\t{{.ID}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if base_result.returncode == 0 and base_result.stdout.strip():
+            for line in base_result.stdout.strip().splitlines():
+                parts = line.split("\t", 1)
+                if len(parts) != 2:
+                    continue
+                tag, img_id = parts[0].strip(), parts[1].strip()
+                if not tag or tag == "<none>" or not img_id:
+                    continue
+                if tag in (current, "latest"):
+                    continue
+                if _remove_image(img_id):
+                    removed += 1
+                    logger.info("Removed stale base runner image llmflows:%s", tag)
+
+        if removed:
+            logger.info("Cleaned up %d stale runner image(s)", removed)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return removed
+
+
+def cleanup_runner_artifacts(skip: Optional[set[str]] = None) -> dict[str, int]:
+    """Reclaim disk space from orphan containers and stale runner images."""
+    containers = cleanup_orphan_containers(skip=skip)
+    images = cleanup_stale_runner_images()
+    return {"containers": containers, "images": images}
 
 
 def dev_volume_args() -> list[str]:
@@ -514,24 +634,24 @@ def launch_run_container(
     flow_snapshot: Optional[str] = None,
     space_id: Optional[str] = None,
     host_home: Optional[str] = None,
+    flow_id: Optional[str] = None,
 ) -> tuple[Optional[str], str]:
     """Launch a runner container for a flow run.
 
     Returns ``(container_id, error_message)`` — container ID on success,
     ``(None, <reason>)`` on failure so callers can surface the error.
     """
-    if not ensure_image():
-        error = f"Docker image {image_name()} is not available — run: llmflows runner build"
+    if not flow_id and flow_snapshot:
+        try:
+            snap = json.loads(flow_snapshot)
+            flow_id = snap.get("id") or flow_id
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    run_image, error = resolve_run_image(flow_id)
+    if not run_image:
         logger.error("Cannot launch run %s — %s", run_id, error)
         return None, error
-
-    run_image = image_name()
-    apt_packages = _snapshot_apt_packages(flow_snapshot)
-    if apt_packages:
-        run_image, error = ensure_flow_image(apt_packages)
-        if not run_image:
-            logger.error("Cannot launch run %s — %s", run_id, error)
-            return None, error
 
     needs_browser_host = _needs_host_browser(flow_snapshot)
     google_connectors = flow_google_connectors(flow_snapshot)
@@ -567,6 +687,7 @@ def launch_run_container(
         *env_args,
         "--label", f"llmflows.run_id={run_id}",
         "--label", f"llmflows.version={__version__}",
+        *([ "--label", f"llmflows.flow_id={flow_id}"] if flow_id else []),
         run_image,
         "run-daemon", "--run-id", run_id,
     ]
@@ -718,6 +839,9 @@ def cleanup_orphan_containers(skip: Optional[set[str]] = None) -> int:
     creating the container object (e.g. port bind or name conflict) and
     would otherwise accumulate and block future launches with the same name.
 
+    Also removes exited chat containers and any stopped container whose name
+    starts with ``llmflows-run-`` or ``llmflows-chat-``.
+
     ``skip`` holds container IDs still tracked by active runs (any prefix
     length) — those are left for the daemon to inspect and remove itself.
     Returns count removed.
@@ -729,10 +853,16 @@ def cleanup_orphan_containers(skip: Optional[set[str]] = None) -> int:
 
     container_ids: set[str] = set()
     try:
+        queries: list[tuple[list[str], str]] = []
         for status in ("exited", "created"):
+            queries.append((["docker", "ps", "-a", "--filter", "label=llmflows.run_id"], status))
+        queries.append((["docker", "ps", "-a", "--filter", "label=llmflows.chat=1"], "exited"))
+        for status in ("exited", "created"):
+            queries.append((["docker", "ps", "-a", "--filter", "name=llmflows-run-"], status))
+        queries.append((["docker", "ps", "-a", "--filter", "name=llmflows-chat-"], "exited"))
+        for base_cmd, status in queries:
             result = subprocess.run(
-                ["docker", "ps", "-a", "--filter", "label=llmflows.run_id",
-                 "--filter", f"status={status}", "-q"],
+                [*base_cmd, "--filter", f"status={status}", "-q"],
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -759,17 +889,6 @@ def _needs_host_browser(flow_snapshot: Optional[str]) -> bool:
         return flow_needs_host_browser(flow_snapshot, session)
     finally:
         session.close()
-
-
-def _snapshot_apt_packages(flow_snapshot: Optional[str]) -> str:
-    """Extract the flow-level apt_packages string from a snapshot."""
-    if not flow_snapshot:
-        return ""
-    try:
-        snap = json.loads(flow_snapshot)
-    except (json.JSONDecodeError, TypeError):
-        return ""
-    return (snap.get("apt_packages") or "").strip()
 
 
 def _flow_providers(flow_snapshot: Optional[str], session) -> Optional[set[str]]:

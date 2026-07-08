@@ -424,23 +424,27 @@ When using Telegram `/run`, if a flow has variables with empty values, the bot p
 
 ---
 
-## Flow Dependencies (setup_script / apt_packages)
+## Flow Dependencies (runner environment)
 
-Runs execute inside Docker containers (Debian slim). Host tools like Homebrew are **not available**. Each flow declares its own dependencies — nothing is installed globally or baked into the shared runner image:
+Runs execute inside Docker containers (Debian slim). Host tools like Homebrew are **not available**.
 
-- **`setup_script`** (flow-level string): shell commands run once per flow (re-run only when the script changes) before the first step. Installs land in the flow's private tools directory (`.llmflows/<flow>/tools/` inside the space), which is on `PATH` for every step. `pip install --user <pkg>` and `npm install -g <pkg>` automatically target it, and static binaries can be downloaded into `$LLMFLOWS_FLOW_TOOLS_DIR/bin/`. Tools persist across runs and are removed with the flow's `.llmflows` folder.
-- **`apt_packages`** (flow-level string, space-separated Debian package names, e.g. `"ffmpeg imagemagick"`): system packages installed into a derived per-flow Docker image (cached, rebuilt only when the package set or llmflows version changes). Use this for anything `pip`/`npm`/static binaries can't provide.
+Each flow gets its own **committed runner image** (``llmflows-flow:<version>-<flow_id>``):
+
+1. **First run** (or after an llmflows upgrade) starts from the base ``llmflows:<version>`` image.
+2. **Agents install packages during steps** — `apt-get install`, `pip install`, downloading binaries, etc.
+3. **After a successful run**, the host daemon runs `docker commit` and saves the container filesystem as the flow's image.
+4. **Next runs** start from that saved image — no reinstall needed.
+5. **Reset** from the flow UI ("Reset environment") removes the saved image; the next run starts fresh from base.
+6. **Upgrades** — the image tag includes the llmflows version, so a new release starts from a fresh base image. The daemon periodically removes stale images and orphan containers from older versions.
 
 ```json
 {
   "name": "video-digest",
-  "apt_packages": "ffmpeg",
-  "setup_script": "pip install --user yt-dlp",
   "steps": [ ... ]
 }
 ```
 
-Never instruct steps to `brew install` anything, and avoid `apt-get install` inside step content (it is lost when the container exits) — declare dependencies on the flow instead.
+Never instruct steps to `brew install` anything. Prefer `apt-get install` for system packages inside the container — they persist in the committed image after the run completes.
 
 ## Scheduling child runs from a step
 

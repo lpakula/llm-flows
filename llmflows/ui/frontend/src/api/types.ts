@@ -59,6 +59,13 @@ export interface FlowRequirements {
   connectors: string[];
 }
 
+export interface FlowRunnerImage {
+  tag: string;
+  exists: boolean;
+  created: string | null;
+  size_bytes: number | null;
+}
+
 export interface Flow {
   id: string;
   space_id: string;
@@ -84,6 +91,7 @@ export interface Flow {
   active_run_count?: number;
   queued_run_count?: number;
   audit?: AuditResult | null;
+  runner?: FlowRunnerImage;
   created_at: string;
   updated_at: string;
 }

@@ -155,7 +155,7 @@ class AgentService:
     def _ensure_gitignore(llmflows_dir: Path) -> None:
         """Ensure .llmflows/ has a .gitignore for ephemeral files."""
         gi = llmflows_dir / ".gitignore"
-        entries = {"*/runs/", "*/tools/"}
+        entries = {"*/runs/"}
         if gi.exists():
             existing = gi.read_text()
             missing = [e for e in sorted(entries) if e not in existing]

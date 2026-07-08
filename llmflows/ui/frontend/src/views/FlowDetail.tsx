@@ -19,7 +19,7 @@ import {
   statusBadge, displayStatus, formatSeconds, formatCost,
   stepBoxClass, stepConnectorClass,
 } from "@/lib/format";
-import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2 } from "lucide-react";
+import { Play, UserCheck, Check, Circle, Clock, MessageCircle, RotateCcw, Brain, Trash2, Container } from "lucide-react";
 import { marked } from "marked";
 import { FlowChatWindow } from "@/views/Chat";
 
@@ -636,6 +636,62 @@ export function FlowDetailView() {
                 }}
                 className="w-20 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
               />
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-200 mb-1">Runner Environment</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Packages installed by agents during a run are saved to a Docker image when the run completes successfully.
+                The next run reuses that image. Reset to start fresh from the base runner image.
+              </p>
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  {flow.runner?.exists ? (
+                    <div className="text-xs text-gray-400 space-y-1">
+                      <div className="font-mono text-gray-300 truncate" title={flow.runner.tag}>
+                        {flow.runner.tag}
+                      </div>
+                      {flow.runner.created && (
+                        <div>Saved {shortDateTime(flow.runner.created)}</div>
+                      )}
+                      {flow.runner.size_bytes != null && flow.runner.size_bytes > 0 && (
+                        <div>{(flow.runner.size_bytes / (1024 * 1024)).toFixed(0)} MB</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">
+                      Using base runner image — no custom packages saved yet.
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={async () => {
+                    if (flow.active_run_count && flow.active_run_count > 0) {
+                      alert("Cannot reset while the flow has active runs.");
+                      return;
+                    }
+                    const msg = flow.runner?.exists
+                      ? "Reset the runner environment? Installed packages will be removed and the next run starts from the base image."
+                      : "Reset the runner environment? The next run will start from the base image.";
+                    if (!confirm(msg)) return;
+                    try {
+                      await api.resetFlowRunner(flow.id);
+                      load();
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : "Failed to reset runner environment");
+                    }
+                  }}
+                  disabled={!!flow.active_run_count && flow.active_run_count > 0}
+                  title={
+                    flow.active_run_count && flow.active_run_count > 0
+                      ? "Wait for active runs to finish"
+                      : "Remove saved runner image"
+                  }
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Container size={12} />
+                  Reset environment
+                </button>
+              </div>
             </div>
           </div>
         </div>

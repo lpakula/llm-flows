@@ -23,6 +23,17 @@ def build(tag, no_cache):
     sys.exit(0 if ok else 1)
 
 
+@runner.command("cleanup")
+def cleanup():
+    """Remove orphan containers and stale runner images from previous versions."""
+    from ..services.container import cleanup_runner_artifacts
+
+    result = cleanup_runner_artifacts()
+    click.echo(
+        f"Removed {result['containers']} container(s) and {result['images']} image(s)."
+    )
+
+
 @click.command("run-daemon")
 @click.option("--run-id", required=True, help="Flow run ID to execute")
 def run_daemon_cmd(run_id):

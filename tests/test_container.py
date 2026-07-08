@@ -103,7 +103,7 @@ def test_ensure_image_returns_true_when_present():
                 assert container_mod.ensure_image() is True
 
 
-def _launch_with_mocked_docker(docker_run_result):
+def _launch_with_mocked_docker(docker_run_result, flow_id=None):
     """Run launch_run_container with docker subprocess calls mocked."""
     calls: list[list[str]] = []
 
@@ -113,21 +113,139 @@ def _launch_with_mocked_docker(docker_run_result):
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return docker_run_result
 
-    with patch.object(container_mod, "ensure_image", return_value=True), \
+    with patch.object(container_mod, "resolve_run_image", return_value=("llmflows:9.9.9", "")), \
          patch.object(container_mod, "_needs_host_browser", return_value=False), \
          patch.object(container_mod, "get_network_args", return_value=[]), \
          patch.object(container_mod, "_build_env_args", return_value=[]), \
          patch.object(container_mod, "dev_volume_args", return_value=[]), \
          patch.object(container_mod.subprocess, "run", side_effect=fake_run):
-        result = container_mod.launch_run_container("run12345abc", "/space")
+        result = container_mod.launch_run_container(
+            "run12345abc", "/space", flow_id=flow_id,
+        )
     return result, calls
 
 
 def test_launch_run_container_returns_error_when_image_missing():
-    with patch.object(container_mod, "ensure_image", return_value=False):
+    with patch.object(container_mod, "resolve_run_image", return_value=(None, "Docker image missing")):
         cid, error = container_mod.launch_run_container("run12345abc", "/space")
     assert cid is None
-    assert "not available" in error
+    assert "missing" in error
+
+
+def test_launch_run_container_adds_flow_id_label():
+    ok = SimpleNamespace(returncode=0, stdout="deadbeef123\n", stderr="")
+    (_, _), calls = _launch_with_mocked_docker(ok, flow_id="abc123")
+    run_cmd = [c for c in calls if c[:2] == ["docker", "run"]][0]
+    assert "llmflows.flow_id=abc123" in run_cmd
+
+
+def test_per_flow_image_name():
+    with patch.object(container_mod, "__version__", "0.52.0"):
+        assert container_mod.per_flow_image_name("abc123") == "llmflows-flow:0.52.0-abc123"
+
+
+def test_resolve_run_image_uses_committed_flow_image():
+    with patch.object(container_mod, "ensure_image", return_value=True), \
+         patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod, "image_exists", side_effect=lambda tag: tag == "llmflows-flow:0.52.0-abc123"), \
+         patch.object(container_mod, "image_name", return_value="llmflows:0.52.0"):
+        tag, error = container_mod.resolve_run_image("abc123")
+    assert error == ""
+    assert tag == "llmflows-flow:0.52.0-abc123"
+
+
+def test_resolve_run_image_falls_back_to_base():
+    with patch.object(container_mod, "ensure_image", return_value=True), \
+         patch.object(container_mod, "image_exists", return_value=False), \
+         patch.object(container_mod, "image_name", return_value="llmflows:1.0.0"):
+        tag, error = container_mod.resolve_run_image("abc123")
+    assert error == ""
+    assert tag == "llmflows:1.0.0"
+
+
+def test_commit_container_to_flow_image():
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod.subprocess, "run", side_effect=fake_run):
+        ok, error = container_mod.commit_container_to_flow_image("container123", "abc123")
+    assert ok is True
+    assert error == ""
+    assert calls[0][:2] == ["docker", "commit"]
+    assert calls[0][-1] == "llmflows-flow:0.52.0-abc123"
+
+
+def test_reset_flow_image_when_missing():
+    with patch.object(container_mod, "image_exists", return_value=False):
+        ok, message = container_mod.reset_flow_image("abc123")
+    assert ok is True
+    assert "base image" in message
+
+
+def test_reset_flow_image_removes_tag():
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod, "image_exists", return_value=True), \
+         patch.object(container_mod.subprocess, "run", side_effect=fake_run):
+        ok, message = container_mod.reset_flow_image("abc123")
+    assert ok is True
+    assert calls[0] == ["docker", "rmi", "-f", "llmflows-flow:0.52.0-abc123"]
+
+
+def test_flow_image_info_when_missing():
+    with patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod, "image_exists", return_value=False):
+        info = container_mod.flow_image_info("abc123")
+    assert info["exists"] is False
+    assert info["tag"] == "llmflows-flow:0.52.0-abc123"
+
+
+def test_cleanup_stale_runner_images_removes_old_versions():
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "images", "llmflows-flow"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="0.51.0-abc123\timg-old\n0.52.0-def456\timg-current\n",
+                stderr="",
+            )
+        if cmd[:3] == ["docker", "images", "llmflows-apt"]:
+            return SimpleNamespace(returncode=0, stdout="apt-img\n", stderr="")
+        if cmd[:3] == ["docker", "images", "llmflows"]:
+            return SimpleNamespace(returncode=0, stdout="0.51.0\tbase-old\n", stderr="")
+        if cmd[:3] == ["docker", "rmi", "-f"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch.object(container_mod, "__version__", "0.52.0"), \
+         patch.object(container_mod.subprocess, "run", side_effect=fake_run):
+        removed = container_mod.cleanup_stale_runner_images()
+    assert removed == 3
+    rmi_targets = [c[3] for c in calls if c[:3] == ["docker", "rmi", "-f"]]
+    assert "img-old" in rmi_targets
+    assert "apt-img" in rmi_targets
+    assert "base-old" in rmi_targets
+    assert "img-current" not in rmi_targets
+
+
+def test_cleanup_runner_artifacts_combines_containers_and_images():
+    with patch.object(container_mod, "cleanup_orphan_containers", return_value=2) as containers, \
+         patch.object(container_mod, "cleanup_stale_runner_images", return_value=4) as images:
+        result = container_mod.cleanup_runner_artifacts(skip={"tracked"})
+    assert result == {"containers": 2, "images": 4}
+    containers.assert_called_once_with(skip={"tracked"})
+    images.assert_called_once()
 
 
 def test_launch_run_container_success_removes_stale_name_first():
@@ -171,44 +289,6 @@ def test_cleanup_orphan_containers_includes_created_and_skips_tracked():
 
     assert count == 2
     assert sorted(removed) == ["aaa111", "ccc333"]
-
-
-def test_parse_apt_packages_valid():
-    pkgs, error = container_mod.parse_apt_packages("ffmpeg, imagemagick libpq-dev")
-    assert error == ""
-    assert pkgs == ["ffmpeg", "imagemagick", "libpq-dev"]
-
-
-def test_parse_apt_packages_rejects_injection():
-    pkgs, error = container_mod.parse_apt_packages("ffmpeg; rm -rf /")
-    assert pkgs == []
-    assert "Invalid apt package" in error
-
-
-def test_parse_apt_packages_empty():
-    assert container_mod.parse_apt_packages("") == ([], "")
-    assert container_mod.parse_apt_packages(None) == ([], "")
-
-
-def test_ensure_flow_image_no_packages_uses_base():
-    with patch.object(container_mod, "image_name", return_value="llmflows:9.9.9"):
-        tag, error = container_mod.ensure_flow_image("")
-    assert tag == "llmflows:9.9.9"
-    assert error == ""
-
-
-def test_ensure_flow_image_invalid_packages():
-    tag, error = container_mod.ensure_flow_image("evil;pkg")
-    assert tag is None
-    assert "Invalid apt package" in error
-
-
-def test_ensure_flow_image_cached():
-    with patch.object(container_mod, "image_exists", return_value=True), \
-         patch.object(container_mod, "__version__", "9.9.9"):
-        tag, error = container_mod.ensure_flow_image("ffmpeg")
-    assert error == ""
-    assert tag.startswith("llmflows-apt:9.9.9-")
 
 
 def test_home_volume_args_full_mount_with_sqlite(monkeypatch):
@@ -275,13 +355,6 @@ def test_flow_providers_filters_by_step_aliases(test_db):
 def test_flow_providers_none_without_snapshot(test_db):
     assert container_mod._flow_providers(None, test_db) is None
     assert container_mod._flow_providers("not-json", test_db) is None
-
-
-def test_snapshot_apt_packages():
-    snap = json.dumps({"apt_packages": " ffmpeg ", "steps": []})
-    assert container_mod._snapshot_apt_packages(snap) == "ffmpeg"
-    assert container_mod._snapshot_apt_packages(None) == ""
-    assert container_mod._snapshot_apt_packages("{}") == ""
 
 
 def test_hardening_args_drop_capabilities_opt_in():

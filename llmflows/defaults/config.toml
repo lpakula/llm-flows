@@ -6,7 +6,6 @@ max_log_size_mb = 500
 summarizer_language = "English"
 inbox_muted = false
 keep_awake = false
-setup_timeout_seconds = 900
 [runner]
 # Resource limits for runner containers. Set a value to 0/"" to disable.
 memory = "4g"
