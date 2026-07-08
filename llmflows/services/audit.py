@@ -265,19 +265,35 @@ class SecurityAuditService:
     """Run LLM-powered security audits on skill content."""
 
     @staticmethod
-    def get_audit_path(project_path: str, skill_name: str) -> Path:
+    def get_audit_read_path(project_path: str, skill_name: str) -> Path:
+        from ..utils.paths import space_execution_root
+
+        return space_execution_root(project_path) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
+
+    @staticmethod
+    def get_audit_write_path(project_path: str, skill_name: str) -> Path:
         from ..utils.paths import space_disk_root
 
         return space_disk_root(project_path) / ".llmflows" / "skills" / skill_name / AUDIT_FILE
 
     @staticmethod
+    def get_audit_path(project_path: str, skill_name: str) -> Path:
+        return SecurityAuditService.get_audit_write_path(project_path, skill_name)
+
+    @staticmethod
     def get_audit(project_path: str, skill_name: str) -> AuditResult | None:
         """Read stored audit result for a skill. Returns None if no audit exists."""
-        audit_path = SecurityAuditService.get_audit_path(project_path, skill_name)
-        if not audit_path.is_file():
+        from ..utils.paths import resolve_existing_path, space_host_path as get_space_host_path
+
+        audit_path = SecurityAuditService.get_audit_read_path(project_path, skill_name)
+        resolved = resolve_existing_path(
+            str(audit_path),
+            space_host_path=get_space_host_path(),
+        )
+        if resolved is None or not resolved.is_file():
             return None
         try:
-            data = json.loads(audit_path.read_text())
+            data = json.loads(resolved.read_text())
             return AuditResult.from_dict(data)
         except (json.JSONDecodeError, OSError):
             return None
@@ -285,7 +301,7 @@ class SecurityAuditService:
     @staticmethod
     def save_audit(project_path: str, skill_name: str, result: AuditResult) -> None:
         """Persist an audit result to disk."""
-        audit_path = SecurityAuditService.get_audit_path(project_path, skill_name)
+        audit_path = SecurityAuditService.get_audit_write_path(project_path, skill_name)
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         audit_path.write_text(json.dumps(result.to_dict(), indent=2))
 
@@ -362,19 +378,35 @@ class FlowAuditService:
     """Run LLM-powered security audits on flow content."""
 
     @staticmethod
-    def get_audit_path(project_path: str, flow_name: str) -> Path:
+    def get_audit_read_path(project_path: str, flow_name: str) -> Path:
+        from ..utils.paths import space_execution_root
+
+        return space_execution_root(project_path) / ".llmflows" / flow_name / AUDIT_FILE
+
+    @staticmethod
+    def get_audit_write_path(project_path: str, flow_name: str) -> Path:
         from ..utils.paths import space_disk_root
 
         return space_disk_root(project_path) / ".llmflows" / flow_name / AUDIT_FILE
 
     @staticmethod
+    def get_audit_path(project_path: str, flow_name: str) -> Path:
+        return FlowAuditService.get_audit_write_path(project_path, flow_name)
+
+    @staticmethod
     def get_audit(project_path: str, flow_name: str) -> AuditResult | None:
         """Read stored audit result for a flow. Returns None if no audit exists."""
-        audit_path = FlowAuditService.get_audit_path(project_path, flow_name)
-        if not audit_path.is_file():
+        from ..utils.paths import resolve_existing_path, space_host_path as get_space_host_path
+
+        audit_path = FlowAuditService.get_audit_read_path(project_path, flow_name)
+        resolved = resolve_existing_path(
+            str(audit_path),
+            space_host_path=get_space_host_path(),
+        )
+        if resolved is None or not resolved.is_file():
             return None
         try:
-            data = json.loads(audit_path.read_text())
+            data = json.loads(resolved.read_text())
             return AuditResult.from_dict(data)
         except (json.JSONDecodeError, OSError):
             return None
@@ -382,16 +414,22 @@ class FlowAuditService:
     @staticmethod
     def save_audit(project_path: str, flow_name: str, result: AuditResult) -> None:
         """Persist an audit result to disk."""
-        audit_path = FlowAuditService.get_audit_path(project_path, flow_name)
+        audit_path = FlowAuditService.get_audit_write_path(project_path, flow_name)
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         audit_path.write_text(json.dumps(result.to_dict(), indent=2))
 
     @staticmethod
     def clear_audit(project_path: str, flow_name: str) -> None:
         """Remove stored audit result, reverting to unaudited."""
-        audit_path = FlowAuditService.get_audit_path(project_path, flow_name)
-        if audit_path.is_file():
-            audit_path.unlink()
+        from ..utils.paths import resolve_existing_path, space_host_path as get_space_host_path
+
+        audit_path = FlowAuditService.get_audit_read_path(project_path, flow_name)
+        resolved = resolve_existing_path(
+            str(audit_path),
+            space_host_path=get_space_host_path(),
+        )
+        if resolved is not None and resolved.is_file():
+            resolved.unlink()
 
     @staticmethod
     def _extract_flow_text(flow_dict: dict) -> str:
@@ -413,10 +451,10 @@ class FlowAuditService:
     @staticmethod
     def _read_audit_memory(project_path: str, flow_name: str) -> str:
         """Read memory/audit.md from the flow directory, if it exists."""
-        from ..utils.paths import space_disk_root
+        from ..utils.paths import space_execution_root
         from .context import ContextService
 
-        flow_dir = ContextService.get_flow_dir(space_disk_root(project_path), flow_name)
+        flow_dir = ContextService.get_flow_dir(space_execution_root(project_path), flow_name)
         audit_mem = flow_dir / "memory" / "audit.md"
         if audit_mem.is_file():
             try:

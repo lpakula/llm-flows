@@ -128,6 +128,42 @@ def test_flow_audit_save_uses_host_path(monkeypatch, tmp_path):
     assert audit_file.is_file()
 
 
+def test_flow_audit_read_in_container(monkeypatch, tmp_path):
+    import json
+
+    from llmflows.services.audit import AuditResult, FlowAuditService
+
+    host = tmp_path / "space"
+    host.mkdir()
+    audit_file = host / ".llmflows" / "my-flow" / ".audit.json"
+    audit_file.parent.mkdir(parents=True)
+    audit_file.write_text(json.dumps(AuditResult(status="safe", summary="ok").to_dict()))
+
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", str(host))
+    audit = FlowAuditService.get_audit(str(host), "my-flow")
+    assert audit is not None
+    assert audit.status == "safe"
+    assert FlowAuditService.is_safe(str(host), "my-flow")
+
+
+def test_skill_audit_read_in_container(monkeypatch, tmp_path):
+    import json
+
+    from llmflows.services.audit import AuditResult, SecurityAuditService
+
+    host = tmp_path / "space"
+    host.mkdir()
+    audit_file = host / ".llmflows" / "skills" / "my-skill" / ".audit.json"
+    audit_file.parent.mkdir(parents=True)
+    audit_file.write_text(json.dumps(AuditResult(status="safe", summary="ok").to_dict()))
+
+    monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", str(host))
+    audit = SecurityAuditService.get_audit(str(host), "my-skill")
+    assert audit is not None
+    assert audit.status == "safe"
+    assert SecurityAuditService.is_safe(str(host), "my-skill")
+
+
 def test_space_execution_root_idempotent_on_workspace(monkeypatch):
     monkeypatch.setenv("LLMFLOWS_SPACE_HOST_PATH", "/Users/me/proj")
     assert space_execution_root("/workspace") == Path("/workspace")
