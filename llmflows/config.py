@@ -12,7 +12,6 @@ from typing import Any, Optional
 
 
 SYSTEM_DIR = Path(os.environ["LLMFLOWS_HOME"]).expanduser() if "LLMFLOWS_HOME" in os.environ else Path.home() / ".llmflows"
-SYSTEM_DB = SYSTEM_DIR / "llmflows.db"
 SYSTEM_CONFIG = SYSTEM_DIR / "config.toml"
 
 SPACE_DIR = ".llmflows"

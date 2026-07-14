@@ -1,5 +1,5 @@
-# Local Postgres for llmflows (optional — `llmflows ui` starts this automatically).
-# Manual use: docker compose up -d
+# Bundled Postgres for llmflows (started automatically by `llmflows ui`).
+# The DB joins the runner network so containers reach it as llmflows-db:5432.
 
 services:
   db:

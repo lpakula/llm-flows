@@ -782,6 +782,11 @@ class RunDaemon:
             if servers:
                 extra_env["MCP_SERVERS"] = json.dumps(servers)
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)
+            else:
+                logger.warning(
+                    "Run %s step '%s' requires connectors %s but none are enabled in the database",
+                    run.id, step_name, needed_connectors,
+                )
 
         space_dir = space_execution_root(space.path) / ".llmflows"
         executor = get_executor(step_type)

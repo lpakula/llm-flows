@@ -1,7 +1,4 @@
-"""Database connection and initialization.
-
-Supports PostgreSQL (via DATABASE_URL env var) or SQLite (fallback).
-"""
+"""Database connection and initialization (PostgreSQL)."""
 
 import os
 from pathlib import Path
@@ -12,17 +9,29 @@ from alembic.config import Config as _AlembicConfig
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..config import AGENT_REGISTRY, SYSTEM_DB, ensure_system_dir
+from ..config import AGENT_REGISTRY, SYSTEM_DIR, ensure_system_dir
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def _get_database_url() -> str:
-    """Resolve the database URL from env or fall back to SQLite."""
+    """Resolve the database URL from env or start bundled Postgres."""
     url = os.environ.get("DATABASE_URL")
     if url:
         return url
-    return f"sqlite:///{SYSTEM_DB}"
+    from ..services.postgres import ensure_postgres
+
+    return ensure_postgres()
+
+
+def get_runner_database_url() -> str | None:
+    """DATABASE_URL as seen from inside runner/chat containers."""
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return None
+    from ..services.postgres import runner_database_url
+
+    return runner_database_url(url)
 
 
 def _alembic_cfg(url: str) -> _AlembicConfig:
@@ -36,8 +45,8 @@ _SessionLocal = None
 
 
 def get_db_path() -> Path:
-    """Return the path to the central database."""
-    return SYSTEM_DB
+    """Return the llmflows home directory (legacy name)."""
+    return SYSTEM_DIR
 
 
 def _seed_agent_aliases(session):
@@ -97,58 +106,6 @@ def _seed_mcp_connectors(session):
     session.commit()
 
 
-def _migrate_tool_config_to_mcp(session):
-    """One-time migration: copy [browser] and [web_search] TOML config into McpConnector rows."""
-    url = _get_database_url()
-    if not url.startswith("sqlite"):
-        return
-    import json
-    from ..config import load_system_config, save_system_config
-    from .models import McpConnector
-
-    config = load_system_config()
-    migrated = False
-
-    ws_toml = config.get("web_search", {})
-    if ws_toml and any(k != "enabled" for k in ws_toml):
-        row = session.query(McpConnector).filter_by(server_id="web_search").first()
-        if row:
-            env = row.get_env()
-            creds = row.get_credentials()
-            if ws_toml.get("provider"):
-                env["WEB_SEARCH_PROVIDER"] = ws_toml["provider"]
-            for key in ("brave_api_key", "perplexity_api_key", "serpapi_api_key"):
-                if ws_toml.get(key):
-                    creds[key.upper()] = ws_toml[key]
-            row.env = json.dumps(env)
-            row.credentials = json.dumps(creds)
-            if ws_toml.get("enabled") is not None:
-                row.enabled = ws_toml["enabled"]
-            migrated = True
-
-    br_toml = config.get("browser", {})
-    if br_toml and any(k != "enabled" for k in br_toml):
-        row = session.query(McpConnector).filter_by(server_id="browser").first()
-        if row:
-            env = row.get_env()
-            if br_toml.get("headless") is not None:
-                env["BROWSER_HEADLESS"] = str(br_toml["headless"]).lower()
-            if br_toml.get("user_data_dir"):
-                env["BROWSER_USER_DATA_DIR"] = br_toml["user_data_dir"]
-            row.env = json.dumps(env)
-            if br_toml.get("enabled") is not None:
-                row.enabled = br_toml["enabled"]
-            migrated = True
-
-    if migrated:
-        session.commit()
-        for old_key in ("web_search", "browser"):
-            config.pop(old_key, None)
-        if "mcp" not in config:
-            config["mcp"] = {"enabled": True, "port_range_start": 19100}
-        save_system_config(config)
-
-
 def init_db(*, seed: bool = True) -> Path:
     """Initialize the database and run any pending migrations."""
     ensure_system_dir()
@@ -161,12 +118,10 @@ def init_db(*, seed: bool = True) -> Path:
         if seed:
             _seed_agent_aliases(session)
         _seed_mcp_connectors(session)
-        if url.startswith("sqlite"):
-            _migrate_tool_config_to_mcp(session)
     finally:
         session.close()
 
-    return SYSTEM_DB
+    return SYSTEM_DIR
 
 
 def get_engine(db_path: Optional[Path] = None):
@@ -175,16 +130,7 @@ def get_engine(db_path: Optional[Path] = None):
     if _engine is not None:
         return _engine
 
-    url = _get_database_url()
-    if url.startswith("sqlite"):
-        path = db_path or SYSTEM_DB
-        if not path.exists():
-            raise FileNotFoundError(
-                "No llmflows database found. Run 'llmflows register' to register a space."
-            )
-        url = f"sqlite:///{path}"
-
-    _engine = create_engine(url, echo=False, pool_pre_ping=True)
+    _engine = create_engine(_get_database_url(), echo=False, pool_pre_ping=True)
     return _engine
 
 

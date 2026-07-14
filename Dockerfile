@@ -1,5 +1,4 @@
-# llmflows runner/orchestrator image.
-# BUILD_FRONTEND=1 npm-builds the React UI; default 0 uses committed static output.
+# llmflows runner image.
 
 ARG BUILD_FRONTEND=0
 
@@ -7,17 +6,6 @@ FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Docker CLI (orchestrator spawns runner containers)
-RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-       https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-       > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 22 (MCP servers, Pi, optional frontend build)
@@ -59,4 +47,4 @@ ENV LLMFLOWS_HOME=/root/.llmflows
 
 WORKDIR /workspace
 ENTRYPOINT ["llmflows"]
-CMD ["ui", "--host", "0.0.0.0"]
+CMD ["run-daemon", "--help"]

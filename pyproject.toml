@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmflows"
-version = "0.55.2"
+version = "0.56.0"
 description = "AI automations that run in the background"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -69,6 +69,7 @@ include = [
     "llmflows/**/*.md",
     "llmflows/**/*.html",
     "llmflows/**/*.toml",
+    "llmflows/**/*.yml",
     "llmflows/**/*.json",
     "llmflows/**/*.js",
     "llmflows/**/*.ts",

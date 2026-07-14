@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Flow, FlowStep, FlowVersion
+from ..db.models import Flow, FlowStep, FlowVersion, FlowRun
 
 VALID_STEP_TYPES = ("agent", "hitl")
 
@@ -124,6 +124,11 @@ class FlowService:
         flow = self.get(flow_id)
         if not flow:
             return False
+        # Runs keep their flow_snapshot; detach so Postgres FK allows flow delete.
+        self.session.query(FlowRun).filter_by(flow_id=flow_id).update(
+            {FlowRun.flow_id: None},
+            synchronize_session=False,
+        )
         self.session.delete(flow)
         self.session.commit()
         return True

@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from .. import __version__
 from ..config import SYSTEM_DIR
-from ..db.database import get_session
+from ..db.database import get_runner_database_url, get_session
 from ..db.models import AgentConfig
 from .network import get_network_args
 from .browser_host import flow_needs_host_browser, prepare_host_browser_for_run
@@ -527,14 +527,9 @@ def dev_volume_args() -> list[str]:
 def _home_volume_args(host_home: str) -> list[str]:
     """Volume mounts for ~/.llmflows inside a runner/chat container.
 
-    With SQLite (the default) the whole home dir must be shared because the
-    central DB lives there. When an external ``DATABASE_URL`` is configured,
-    only the run-facing subdirs are mounted so runners cannot touch the
+    Only run-facing subdirs are mounted so runners cannot touch the
     orchestrator DB, credentials, or other spaces' data.
     """
-    if not os.environ.get("DATABASE_URL"):
-        return ["-v", f"{host_home}:/root/.llmflows"]
-
     home = Path(host_home)
     args: list[str] = []
     for sub in ("attachments", "prompts", "chat-sessions"):
@@ -822,7 +817,9 @@ def launch_chat_container(
         "--name", name,
         "--label", "llmflows.chat=1",
         "--label", f"llmflows.version={__version__}",
-        *_build_volume_args(space_path, str(SYSTEM_DIR)),
+        "-w", "/workspace",
+        "-v", f"{space_path}:/workspace",
+        *_home_volume_args(str(SYSTEM_DIR)),
         *network_args,
     ]
     for k, v in env_vars.items():
@@ -942,7 +939,7 @@ def _build_env_args(flow_snapshot: Optional[str] = None) -> list[str]:
     a runner never sees API keys for unrelated providers.
     """
     args = []
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = get_runner_database_url() or os.environ.get("DATABASE_URL")
     if db_url:
         args.extend(["-e", f"DATABASE_URL={db_url}"])
     dev_home = os.environ.get("LLMFLOWS_DEV_HOME")

@@ -278,21 +278,13 @@ def test_cleanup_orphan_containers_includes_created_and_skips_tracked():
     assert sorted(removed) == ["aaa111", "ccc333"]
 
 
-def test_home_volume_args_full_mount_with_sqlite(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    args = container_mod._home_volume_args("/Users/me/.llmflows")
-    assert args == ["-v", "/Users/me/.llmflows:/root/.llmflows"]
-
-
-def test_home_volume_args_scoped_with_external_db(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/llmflows")
+def test_home_volume_args_scoped_mount(tmp_path):
     (tmp_path / "config.toml").write_text("[daemon]\n")
     args = container_mod._home_volume_args(str(tmp_path))
     joined = " ".join(args)
     assert f"{tmp_path}/attachments:/root/.llmflows/attachments" in joined
     assert f"{tmp_path}/prompts:/root/.llmflows/prompts" in joined
     assert f"{tmp_path}/config.toml:/root/.llmflows/config.toml:ro" in joined
-    # The full home (and thus the SQLite DB) must NOT be mounted.
     assert f"{tmp_path}:/root/.llmflows " not in joined + " "
 
 

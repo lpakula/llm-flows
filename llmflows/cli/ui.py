@@ -113,6 +113,14 @@ def _kill_other_ui_instances() -> None:
         _stop_pid(pid)
 
 
+def _ensure_database() -> None:
+    """Start bundled Postgres when DATABASE_URL is not configured."""
+    from ..services.postgres import ensure_postgres
+
+    url = ensure_postgres()
+    click.echo(f"  Database:        Postgres ({url.split('@')[-1]})")
+
+
 def _ensure_daemon_running() -> None:
     """Start the daemon if it is not already running (or restart if stale).
 
@@ -175,7 +183,7 @@ def _ensure_daemon_running() -> None:
 def _maybe_reexec_for_dev(dev: bool) -> None:
     """Re-exec with ``LLMFLOWS_HOME`` pointing at ``<cwd>/.llmflows``.
 
-    Module-level constants in ``config.py`` (``SYSTEM_DIR``, ``SYSTEM_DB``, …)
+    Module-level constants in ``config.py`` (``SYSTEM_DIR``, …)
     are frozen at import time.  The only way to redirect them for ``--dev`` is
     to set the env var *before* the Python interpreter imports the package, so
     we ``os.execve`` ourselves with the var already in the environment.
@@ -248,64 +256,6 @@ def _auto_register_dev_space() -> None:
         session.close()
 
 
-def _copy_prod_config_to_dev() -> None:
-    """Copy the OpenAI API key and agent aliases from production into the dev DB.
-
-    Aliases are matched by ``(type, name)`` (their unique constraint) and
-    upserted so the dev DB mirrors production configuration.
-    """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-    from ..db.database import get_session
-    from ..db.models import AgentConfig, AgentAlias
-
-    prod_db = Path.home() / ".llmflows" / "llmflows.db"
-    if not prod_db.exists():
-        return
-
-    dev_session = get_session()
-    try:
-        prod_engine = create_engine(f"sqlite:///{prod_db}")
-        prod_session = Session(prod_engine)
-        try:
-            copied_key = False
-            gemini = prod_session.query(AgentConfig).filter_by(agent="google", key="GEMINI_API_KEY").first()
-            if gemini:
-                exists = dev_session.query(AgentConfig).filter_by(agent=gemini.agent, key=gemini.key).first()
-                if not exists:
-                    dev_session.add(AgentConfig(agent=gemini.agent, key=gemini.key, value=gemini.value))
-                    copied_key = True
-
-            copied_aliases = 0
-            for alias in prod_session.query(AgentAlias).all():
-                exists = dev_session.query(AgentAlias).filter_by(type=alias.type, name=alias.name).first()
-                if exists:
-                    exists.agent = alias.agent
-                    exists.model = alias.model
-                    exists.position = alias.position
-                else:
-                    dev_session.add(AgentAlias(
-                        name=alias.name, type=alias.type,
-                        agent=alias.agent, model=alias.model,
-                        position=alias.position,
-                    ))
-                copied_aliases += 1
-
-            if copied_key or copied_aliases:
-                dev_session.commit()
-                parts = []
-                if copied_key:
-                    parts.append("Gemini key")
-                if copied_aliases:
-                    parts.append(f"{copied_aliases} alias(es)")
-                click.echo(f"  Config:          copied {', '.join(parts)} from production")
-        finally:
-            prod_session.close()
-            prod_engine.dispose()
-    finally:
-        dev_session.close()
-
-
 def _find_free_port(start: int) -> int:
     """Return the first free TCP port at or above *start*."""
     import socket
@@ -346,7 +296,7 @@ def _free_port(port: int) -> None:
         pass
 
 
-def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
+def _run_dev_mode(host: str, port: int, no_daemon: bool = False, no_db: bool = False):
     """Start Vite dev server + FastAPI backend concurrently.
 
     Vite runs as a subprocess; uvicorn runs in the main process so
@@ -374,7 +324,6 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
     click.echo(f"  API:             http://{host}:{api_port}")
 
     _auto_register_dev_space()
-    _copy_prod_config_to_dev()
 
     if not no_daemon:
         _ensure_daemon_running()
@@ -415,13 +364,26 @@ def _run_dev_mode(host: str, port: int, no_daemon: bool = False):
 @click.option("--dev", is_flag=True, default=False, help="Dev mode: Vite HMR + FastAPI")
 @click.option("--no-daemon", "no_daemon", is_flag=True, default=False,
               help="Skip starting the daemon (useful for testing/screenshots).")
-def ui(port, host, reload, dev, no_daemon):
+@click.option("--no-db", "no_db", is_flag=True, default=False,
+              help="Skip starting the bundled Postgres container (DATABASE_URL must be set).")
+def ui(port, host, reload, dev, no_daemon, no_db):
     """Launch web UI on localhost (Ctrl+C to stop)."""
     _maybe_reexec_for_dev(dev)
 
+    _kill_other_ui_instances()
+
+    if not no_db:
+        try:
+            _ensure_database()
+        except Exception as exc:
+            click.echo(f"  Database:        failed to start Postgres — {exc}", err=True)
+            sys.exit(1)
+    elif not os.environ.get("DATABASE_URL"):
+        click.echo("  Database:        --no-db requires DATABASE_URL to be set", err=True)
+        sys.exit(1)
+
     from ..db.database import init_db
 
-    _kill_other_ui_instances()
     init_db()
 
     config = load_system_config()
@@ -429,7 +391,7 @@ def ui(port, host, reload, dev, no_daemon):
     host = host or config["ui"]["host"]
 
     if dev:
-        _run_dev_mode(host, port, no_daemon=no_daemon)
+        _run_dev_mode(host, port, no_daemon=no_daemon, no_db=no_db)
         return
 
     import uvicorn

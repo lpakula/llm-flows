@@ -6,10 +6,23 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import click
 
 from ..services.daemon import Daemon, write_pid_file, read_pid_file, remove_pid_file
+
+
+def _llmflows_bin() -> str:
+    """Return the ``llmflows`` entry-point from the same venv as the running interpreter."""
+    venv_bin = Path(sys.prefix) / "bin" / "llmflows"
+    if venv_bin.is_file():
+        return str(venv_bin)
+    import shutil
+    found = shutil.which("llmflows")
+    if found:
+        return found
+    return str(venv_bin)
 
 
 def _find_orphan_daemon_pids(exclude_pid: int | None = None) -> list[int]:
@@ -109,6 +122,21 @@ def daemon_start(foreground):
         for pid in orphans:
             _stop_pid(pid)
 
+    if not foreground:
+        # Spawn a fresh process instead of os.fork().  Forking after init_db /
+        # logging setup leaves the child multi-threaded (SQLAlchemy, RotatingFileHandler)
+        # and the first psycopg2 connect in the daemon tick segfaults on macOS.
+        proc = subprocess.Popen(
+            [_llmflows_bin(), "daemon", "start", "--foreground"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=os.environ.copy(),
+        )
+        click.echo(f"Daemon started (pid {proc.pid})")
+        return
+
     init_db()
 
     from ..config import SYSTEM_DIR
@@ -126,36 +154,15 @@ def daemon_start(foreground):
     for noisy in ("httpx", "httpcore", "telegram", "telegram.ext"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    if foreground:
-        # Also mirror to stdout when running in foreground
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(logging.Formatter(fmt))
-        root_logger.addHandler(stream_handler)
-        write_pid_file(os.getpid())
-        try:
-            d = Daemon()
-            d.start()
-        finally:
-            remove_pid_file()
-    else:
-        pid = os.fork()
-        if pid > 0:
-            click.echo(f"Daemon started (pid {pid})")
-            return
-
-        os.setsid()
-        write_pid_file(os.getpid())
-        sys.stdin.close()
-        devnull = os.open(os.devnull, os.O_RDWR)
-        os.dup2(devnull, 1)
-        os.dup2(devnull, 2)
-        os.close(devnull)
-
-        try:
-            d = Daemon()
-            d.start()
-        finally:
-            remove_pid_file()
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter(fmt))
+    root_logger.addHandler(stream_handler)
+    write_pid_file(os.getpid())
+    try:
+        d = Daemon()
+        d.start()
+    finally:
+        remove_pid_file()
 
 
 @daemon.command("stop")

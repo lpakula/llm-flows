@@ -129,6 +129,21 @@ class TestFlowService:
         assert svc.delete(flow.id) is True
         assert svc.get(flow.id) is None
 
+    def test_delete_with_runs(self, test_db, test_space):
+        from llmflows.db.models import FlowRun
+
+        svc = FlowService(test_db)
+        flow = svc.create("delete-with-runs", space_id=test_space.id)
+        run = FlowRun(space_id=test_space.id, flow_id=flow.id, flow_snapshot='{"name":"delete-with-runs"}')
+        test_db.add(run)
+        test_db.commit()
+
+        assert svc.delete(flow.id) is True
+        assert svc.get(flow.id) is None
+        kept = test_db.query(FlowRun).filter_by(id=run.id).first()
+        assert kept is not None
+        assert kept.flow_id is None
+
     def test_add_step(self, test_db, test_space):
         svc = FlowService(test_db)
         flow = svc.create("step-test", space_id=test_space.id)

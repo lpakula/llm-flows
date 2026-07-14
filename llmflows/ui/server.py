@@ -3168,7 +3168,8 @@ class ChatBody(BaseModel):
 async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
     from ..services.chat import build_pi_command
-    from ..services.container import image_name, dev_volume_args, ensure_image
+    from ..services.container import image_name, dev_volume_args, ensure_image, _home_volume_args
+    from ..db.database import get_runner_database_url
 
     session_id = body.session_id or uuid.uuid4().hex[:10]
     session_dir = CHAT_SESSIONS_DIR / session_id
@@ -3232,11 +3233,11 @@ async def chat(body: ChatBody):
         "--entrypoint", "",
         "-w", "/workspace",
         "-v", f"{workspace_path}:/workspace",
-        "-v", f"{host_home}:/root/.llmflows",
+        *_home_volume_args(host_home),
         *dev_volume_args(),
         "--network", network_name,
     ]
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = get_runner_database_url() or os.environ.get("DATABASE_URL")
     if db_url:
         docker_cmd.extend(["-e", f"DATABASE_URL={db_url}"])
     for k, v in env.items():
