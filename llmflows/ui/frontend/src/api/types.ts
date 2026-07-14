@@ -117,9 +117,18 @@ export interface Gate {
   message: string;
 }
 
+export interface RunnerImageStatus {
+  tag: string;
+  exists: boolean;
+  building: boolean;
+  error: string | null;
+  docker_available: boolean;
+}
+
 export interface DaemonStatus {
   running: boolean;
   pid: number | null;
+  runner: RunnerImageStatus;
 }
 
 export interface DaemonConfig {

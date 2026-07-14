@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
@@ -27,6 +28,35 @@ logger = logging.getLogger("llmflows.container")
 
 _GITHUB_REPO = "lpakula/llm-flows"
 _BUILD_CACHE_DIR = SYSTEM_DIR / "docker-build"
+
+_build_lock = threading.Lock()
+_build_state: dict[str, object] = {
+    "building": False,
+    "error": None,
+    "log_lines": [],
+    "cancel_requested": False,
+    "proc": None,
+}
+_MAX_BUILD_LOG_LINES = 2000
+
+
+def _append_build_log(line: str) -> None:
+    with _build_lock:
+        lines = _build_state.setdefault("log_lines", [])
+        if not isinstance(lines, list):
+            lines = []
+            _build_state["log_lines"] = lines
+        lines.append(line)
+        if len(lines) > _MAX_BUILD_LOG_LINES:
+            del lines[: len(lines) - _MAX_BUILD_LOG_LINES]
+
+
+def get_runner_build_logs(lines: int = 300) -> list[str]:
+    with _build_lock:
+        log = _build_state.get("log_lines")
+        if not isinstance(log, list):
+            return []
+        return log[-lines:] if len(log) > lines else list(log)
 
 
 def image_name() -> str:
@@ -213,16 +243,20 @@ def build_image(
     tag: str | None = None,
     *,
     no_cache: bool = False,
+    on_line: Optional[Callable[[str], None]] = None,
+    managed: bool = False,
 ) -> bool:
     """Build the llmflows Docker image. Returns True on success."""
     tag = tag or image_name()
     root = resolve_build_context()
     if not root:
-        logger.error(
-            "No Docker build context for %s — clone %s or set LLMFLOWS_SOURCE",
-            tag,
-            f"https://github.com/{_GITHUB_REPO}",
+        msg = (
+            f"No Docker build context for {tag} — clone "
+            f"https://github.com/{_GITHUB_REPO} or set LLMFLOWS_SOURCE"
         )
+        logger.error(msg)
+        if on_line:
+            on_line(msg)
         return False
 
     cmd = [
@@ -238,29 +272,78 @@ def build_image(
         cmd.insert(2, "--no-cache")
 
     logger.info("Building Docker image %s from %s", tag, root)
+    if on_line:
+        on_line(f"Building Docker image {tag} from {root}")
+
+    proc: subprocess.Popen[str] | None = None
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(root),
-            timeout=1800,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
-        if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "").strip().splitlines()[-20:]
-            for line in tail:
-                logger.error("%s", line)
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        if managed:
+            with _build_lock:
+                _build_state["proc"] = proc
+                _build_state["cancel_requested"] = False
+
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            with _build_lock:
+                if managed and _build_state.get("cancel_requested"):
+                    break
+            line = line.rstrip("\n")
+            if on_line:
+                on_line(line)
+
+        with _build_lock:
+            cancelled = managed and bool(_build_state.get("cancel_requested"))
+
+        if cancelled:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            if on_line:
+                on_line("Build cancelled by user")
+            return False
+
+        rc = proc.wait(timeout=1800)
+        if rc != 0 and on_line:
+            on_line(f"docker build exited with code {rc}")
+        return rc == 0
+    except subprocess.TimeoutExpired:
+        if on_line:
+            on_line("docker build timed out after 30 minutes")
+        if proc is not None and proc.poll() is None:
+            proc.kill()
         return False
+    except FileNotFoundError:
+        if on_line:
+            on_line("docker build failed — Docker CLI not found")
+        return False
+    finally:
+        if managed:
+            with _build_lock:
+                _build_state["proc"] = None
 
 
 def ensure_image(
     *,
+    build: bool = True,
     on_status: Optional[Callable[[str], None]] = None,
     quiet: bool = False,
 ) -> bool:
-    """Ensure the runner Docker image exists, building it when missing.
+    """Return True when the runner Docker image exists.
+
+  When *build* is False, only checks presence (fast path for chat/UI).
+  When *build* is True and the image is missing, builds it.
 
     Skipped inside runner containers (``LLMFLOWS_RUNNER=1``).
     When ``quiet`` is True, only errors are reported via ``on_status``.
@@ -271,6 +354,9 @@ def ensure_image(
     tag = image_name()
     if image_exists(tag):
         return True
+
+    if not build:
+        return False
 
     if not shutil.which("docker"):
         err = "Docker CLI not found — install Docker or build the image manually"
@@ -300,6 +386,99 @@ def ensure_image(
     else:
         logger.error(err)
     return False
+
+
+def runner_image_status() -> dict:
+    """Runner image presence and background-build state for the UI."""
+    tag = image_name()
+    with _build_lock:
+        building = bool(_build_state["building"])
+        error = _build_state.get("error")
+    return {
+        "tag": tag,
+        "exists": image_exists(tag),
+        "building": building,
+        "error": str(error) if error else None,
+        "docker_available": bool(shutil.which("docker")),
+    }
+
+
+def _background_build_worker() -> None:
+    try:
+        ok = build_image(on_line=_append_build_log, managed=True)
+        with _build_lock:
+            cancelled = bool(_build_state.get("cancel_requested"))
+        if cancelled:
+            with _build_lock:
+                _build_state["error"] = "Build cancelled"
+        elif ok:
+            with _build_lock:
+                _build_state["error"] = None
+            _append_build_log(f"Runner image {image_name()} ready")
+        else:
+            err = f"failed to build {image_name()}"
+            with _build_lock:
+                _build_state["error"] = err
+            _append_build_log(err)
+    except Exception as exc:
+        logger.exception("Background runner image build failed")
+        with _build_lock:
+            _build_state["error"] = str(exc)
+        _append_build_log(str(exc))
+    finally:
+        with _build_lock:
+            _build_state["building"] = False
+            _build_state["cancel_requested"] = False
+            _build_state["proc"] = None
+
+
+def cancel_runner_image_build() -> tuple[bool, str]:
+    """Cancel an in-progress background runner image build."""
+    with _build_lock:
+        if not _build_state["building"]:
+            return False, "No build in progress"
+        _build_state["cancel_requested"] = True
+        proc = _build_state.get("proc")
+
+    _append_build_log("Cancelling build…")
+
+    if proc is not None and hasattr(proc, "poll") and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    with _build_lock:
+        _build_state["error"] = "Build cancelled"
+
+    return True, "Build cancelled"
+
+
+def start_runner_image_build() -> tuple[bool, str]:
+    """Start a background Docker image build. Returns ``(started, message)``."""
+    status = runner_image_status()
+    if status["exists"]:
+        return False, "Runner image already exists"
+    if status["building"]:
+        return False, "Build already in progress"
+    if not status["docker_available"]:
+        return False, "Docker is not available"
+
+    with _build_lock:
+        if _build_state["building"]:
+            return False, "Build already in progress"
+        _build_state["building"] = True
+        _build_state["error"] = None
+        _build_state["log_lines"] = []
+        _build_state["cancel_requested"] = False
+        _build_state["proc"] = None
+
+    _append_build_log(f"Starting build for {image_name()}…")
+
+    threading.Thread(target=_background_build_worker, daemon=True).start()
+    return True, "Build started"
 
 
 def per_flow_image_tag(flow_id: str, flow_version: int, llmflows_version: str | None = None) -> str:
@@ -332,8 +511,11 @@ def resolve_run_image(
     Uses the flow-version snapshot when present; otherwise the base llmflows
     runner image. Builds the base image on demand when it is missing.
     """
-    if not ensure_image():
-        return None, f"Docker image {image_name()} is not available — run: llmflows runner build"
+    if not ensure_image(build=False):
+        return None, (
+            f"Docker image {image_name()} is not available — "
+            "build it from the UI status panel or run: llmflows runner build"
+        )
 
     if flow_id:
         tag = per_flow_image_name(flow_id, flow_version)

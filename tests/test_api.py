@@ -249,6 +249,50 @@ class TestFlowVersioningAPI:
 
 
 class TestDaemonConfigAPI:
+    def test_daemon_status_includes_runner(self, client, api_db):
+        runner = {
+            "tag": "llmflows:1.0.0",
+            "exists": True,
+            "building": False,
+            "error": None,
+            "docker_available": True,
+        }
+        with patch("llmflows.services.daemon.read_pid_file", return_value=123), \
+             patch("llmflows.services.container.runner_image_status", return_value=runner):
+            response = client.get("/api/daemon/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["running"] is True
+        assert data["pid"] == 123
+        assert data["runner"] == runner
+
+    def test_runner_build_starts_background_build(self, client, api_db):
+        with patch(
+            "llmflows.services.container.start_runner_image_build",
+            return_value=(True, "Build started"),
+        ):
+            response = client.post("/api/runner/build")
+        assert response.status_code == 200
+        assert response.json()["building"] is True
+
+    def test_runner_build_logs(self, client, api_db):
+        with patch(
+            "llmflows.services.container.get_runner_build_logs",
+            return_value=["line 1", "Step 2/10"],
+        ):
+            response = client.get("/api/runner/logs?lines=100")
+        assert response.status_code == 200
+        assert response.json()["lines"] == ["line 1", "Step 2/10"]
+
+    def test_runner_build_cancel(self, client, api_db):
+        with patch(
+            "llmflows.services.container.cancel_runner_image_build",
+            return_value=(True, "Build cancelled"),
+        ):
+            response = client.post("/api/runner/build/cancel")
+        assert response.status_code == 200
+        assert response.json()["message"] == "Build cancelled"
+
     def test_get_daemon_config(self, client, api_db):
         config = {"daemon": {"poll_interval_seconds": 10, "keep_awake": False}}
         with patch("llmflows.ui.server.load_system_config", return_value=config):

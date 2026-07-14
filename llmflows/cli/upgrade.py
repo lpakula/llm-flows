@@ -11,6 +11,7 @@ def upgrade():
         kill_ui_processes,
         restart_daemon_via_cli,
         start_ui_background,
+        build_runner_image_if_missing,
     )
 
     click.echo("Upgrading llmflows…")
@@ -23,6 +24,15 @@ def upgrade():
         click.echo(f"Already at latest version ({old_ver})")
     else:
         click.echo(f"Upgraded: {old_ver} → {new_ver}")
+
+    click.echo("Runner image…")
+    if build_runner_image_if_missing(on_status=lambda m: click.echo(f"  {m}")):
+        click.echo("  Runner image ready")
+    else:
+        click.echo(
+            "  Runner image build failed — build from the UI or run: llmflows runner build",
+            err=True,
+        )
 
     ui_killed = kill_ui_processes()
     if ui_killed:

@@ -19,7 +19,7 @@ def build(tag, no_cache):
 
     image_tag = tag or image_name()
     click.echo(f"Building image {image_tag}…")
-    ok = build_image(image_tag, no_cache=no_cache)
+    ok = build_image(image_tag, no_cache=no_cache, on_line=lambda line: click.echo(line) if line else None)
     sys.exit(0 if ok else 1)
 
 

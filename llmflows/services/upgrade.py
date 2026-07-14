@@ -186,3 +186,67 @@ def restart_daemon_via_cli(
 def trigger_daemon_reexec() -> None:
     """Send SIGUSR2 to the current process to trigger daemon re-exec."""
     os.kill(os.getpid(), signal.SIGUSR2)
+
+
+def image_exists_for_installed_version() -> bool:
+    """Check whether the runner image for the currently installed package exists."""
+    from ..services.container import image_exists
+
+    tag = f"llmflows:{_get_installed_version('unknown')}"
+    if tag == "llmflows:unknown":
+        from ..services.container import image_name
+        tag = image_name()
+    return image_exists(tag)
+
+
+def build_runner_image_via_cli(
+    on_status: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Build the runner image in a fresh ``llmflows`` subprocess.
+
+    Uses a subprocess so the correct package version is picked up after
+    ``pip upgrade`` (the running interpreter may still import the old version).
+    """
+    if not shutil.which("docker"):
+        if on_status:
+            on_status("Docker not found — skipping runner image build")
+        return False
+
+    llmflows = _llmflows_bin()
+    if on_status:
+        on_status(f"Building runner image ({llmflows} runner build)…")
+
+    try:
+        proc = subprocess.Popen(
+            [llmflows, "runner", "build"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line and on_status:
+                on_status(line)
+        return proc.wait() == 0
+    except Exception as exc:
+        if on_status:
+            on_status(str(exc))
+        logger.exception("Runner image build failed")
+        return False
+
+
+def build_runner_image_if_missing(
+    on_status: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Build the runner image when missing. Returns True if image exists or build succeeded."""
+    if image_exists_for_installed_version():
+        if on_status:
+            from importlib.metadata import version
+            try:
+                ver = version("llmflows")
+            except Exception:
+                ver = "unknown"
+            on_status(f"Runner image llmflows:{ver} already present")
+        return True
+    return build_runner_image_via_cli(on_status=on_status)

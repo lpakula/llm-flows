@@ -880,7 +880,24 @@ main() {
         log_warning "Skipping browser tools — Node.js not available"
     fi
 
-    # Stage 7: Verify
+    # Stage 7: Docker runner image (chat + flow execution)
+    log_stage "Building runner image"
+    if command -v docker &>/dev/null; then
+        refresh_shell_command_cache
+        if command -v llmflows &>/dev/null; then
+            if llmflows runner build; then
+                log_success "Runner image ready"
+            else
+                log_warning "Runner image build failed — build later from the UI or: llmflows runner build"
+            fi
+        else
+            log_warning "llmflows not on PATH yet — skip runner image build"
+        fi
+    else
+        log_warning "Docker not found — skip runner image (required for chat and flow runs)"
+    fi
+
+    # Stage 8: Verify
     log_stage "Verifying"
     verify_installation
 

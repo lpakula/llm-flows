@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from llmflows.services import container as container_mod
 
@@ -362,3 +362,80 @@ def test_ensure_image_builds_when_missing():
                             assert container_mod.ensure_image(on_status=on_status) is True
                             build.assert_called_once_with("llmflows:9.9.9")
     assert "building llmflows:9.9.9" in messages[0]
+
+
+def test_ensure_image_skips_build_when_disabled():
+    with patch.dict("os.environ", {}, clear=True):
+        with patch.object(container_mod, "image_name", return_value="llmflows:9.9.9"):
+            with patch.object(container_mod, "image_exists", return_value=False):
+                with patch.object(container_mod, "build_image") as build:
+                    assert container_mod.ensure_image(build=False) is False
+                    build.assert_not_called()
+
+
+def test_runner_image_status_reports_build_state():
+    with patch.object(container_mod, "image_name", return_value="llmflows:1.0.0"), \
+         patch.object(container_mod, "image_exists", return_value=False), \
+         patch.object(container_mod.shutil, "which", return_value="/usr/bin/docker"):
+        container_mod._build_state["building"] = True
+        container_mod._build_state["error"] = "boom"
+        try:
+            status = container_mod.runner_image_status()
+            assert status["tag"] == "llmflows:1.0.0"
+            assert status["exists"] is False
+            assert status["building"] is True
+            assert status["error"] == "boom"
+            assert status["docker_available"] is True
+        finally:
+            container_mod._build_state["building"] = False
+            container_mod._build_state["error"] = None
+
+
+def test_get_runner_build_logs():
+    container_mod._build_state["log_lines"] = ["a", "b", "c"]
+    try:
+        assert container_mod.get_runner_build_logs(2) == ["b", "c"]
+    finally:
+        container_mod._build_state["log_lines"] = []
+
+
+def test_start_runner_image_build_rejects_when_exists():
+    with patch.object(container_mod, "runner_image_status", return_value={
+        "tag": "llmflows:1.0.0",
+        "exists": True,
+        "building": False,
+        "error": None,
+        "docker_available": True,
+    }):
+        started, msg = container_mod.start_runner_image_build()
+        assert started is False
+        assert "already exists" in msg
+
+
+def test_cancel_runner_image_build_when_idle():
+    container_mod._build_state["building"] = False
+    cancelled, msg = container_mod.cancel_runner_image_build()
+    assert cancelled is False
+    assert "No build in progress" in msg
+
+
+def test_cancel_runner_image_build_terminates_proc():
+    proc = MagicMock()
+    proc.poll.return_value = None
+    proc.wait.return_value = -15
+
+    container_mod._build_state["building"] = True
+    container_mod._build_state["proc"] = proc
+    container_mod._build_state["cancel_requested"] = False
+    try:
+        cancelled, msg = container_mod.cancel_runner_image_build()
+        assert cancelled is True
+        assert msg == "Build cancelled"
+        proc.terminate.assert_called_once()
+        assert container_mod._build_state["error"] == "Build cancelled"
+    finally:
+        container_mod._build_state["building"] = False
+        container_mod._build_state["proc"] = None
+        container_mod._build_state["cancel_requested"] = False
+        container_mod._build_state["error"] = None
+        container_mod._build_state["log_lines"] = []

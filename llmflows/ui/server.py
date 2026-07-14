@@ -182,8 +182,41 @@ async def index():
 @app.get("/api/daemon/status")
 async def daemon_status():
     from ..services.daemon import read_pid_file
+    from ..services.container import runner_image_status
+
     pid = read_pid_file()
-    return {"running": pid is not None, "pid": pid}
+    return {
+        "running": pid is not None,
+        "pid": pid,
+        "runner": runner_image_status(),
+    }
+
+
+@app.post("/api/runner/build")
+async def runner_build():
+    from ..services.container import start_runner_image_build
+
+    started, message = start_runner_image_build()
+    if not started:
+        raise HTTPException(status_code=409, detail=message)
+    return {"ok": True, "building": True, "message": message}
+
+
+@app.get("/api/runner/logs")
+async def runner_build_logs(lines: int = 300):
+    from ..services.container import get_runner_build_logs
+
+    return {"lines": get_runner_build_logs(lines)}
+
+
+@app.post("/api/runner/build/cancel")
+async def runner_build_cancel():
+    from ..services.container import cancel_runner_image_build
+
+    cancelled, message = cancel_runner_image_build()
+    if not cancelled:
+        raise HTTPException(status_code=409, detail=message)
+    return {"ok": True, "message": message}
 
 
 @app.get("/api/daemon/logs")
@@ -3242,8 +3275,11 @@ async def chat(body: ChatBody):
         docker_cmd.extend(["-e", f"DATABASE_URL={db_url}"])
     for k, v in env.items():
         docker_cmd.extend(["-e", f"{k}={v}"])
-    if not ensure_image():
-        raise HTTPException(status_code=503, detail=f"Docker image {image_name()} is not available")
+    if not ensure_image(build=False):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Docker image {image_name()} is not available — build it from the status panel or run: llmflows runner build",
+        )
 
     docker_cmd.append(image_name())
     docker_cmd.extend(pi_cmd)
