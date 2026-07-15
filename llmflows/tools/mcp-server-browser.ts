@@ -24,7 +24,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from "playwright";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 import { spawn } from "child_process";
 
@@ -37,7 +37,26 @@ const baseArtifactsDir = process.env.BROWSER_ARTIFACTS_DIR || "/tmp/browser-arti
 const runnerContainer = process.env.LLMFLOWS_RUNNER === "1";
 
 const CDP_PORT = 9222;
-const CDP_HOST = browserMode === "host" ? "host.docker.internal" : "localhost";
+
+/** Chrome CDP rejects Host headers that are not localhost or an IP address. */
+function resolveCdpHost(): string {
+  if (browserMode !== "host") return "localhost";
+  if (process.env.BROWSER_CDP_HOST) return process.env.BROWSER_CDP_HOST;
+  try {
+    const hosts = readFileSync("/etc/hosts", "utf8");
+    for (const line of hosts.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const parts = trimmed.split(/\s+/);
+      if (parts.length >= 2 && parts.slice(1).includes("host.docker.internal")) {
+        return parts[0];
+      }
+    }
+  } catch { /* ignore */ }
+  return "host.docker.internal";
+}
+
+const CDP_HOST = resolveCdpHost();
 const CDP_URL = `http://${CDP_HOST}:${CDP_PORT}`;
 
 const CHROME_PATHS = [
@@ -79,6 +98,7 @@ function launchChromeDetached(): void {
   const execPath = resolveChromePath();
   const args = [
     `--remote-debugging-port=${CDP_PORT}`,
+    "--remote-debugging-address=0.0.0.0",
     ...LAUNCH_ARGS,
     ...(headless ? ["--headless=new"] : []),
   ];
@@ -101,10 +121,14 @@ async function ensureBrowser(): Promise<Browser> {
   }
 
   // Host mode: connect to Chrome via CDP on the orchestrator host
-  try {
-    browser = await connectCDP();
-    return browser;
-  } catch { /* not running */ }
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      browser = await connectCDP();
+      return browser;
+    } catch {
+      if (attempt < 5) await new Promise((r) => setTimeout(r, 500));
+    }
+  }
 
   if (runnerContainer) {
     throw new Error(

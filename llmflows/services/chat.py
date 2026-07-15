@@ -62,7 +62,15 @@ Keep it concise — short bullets, not paragraphs.
 - Review and improve existing flows when asked
 - Inspect run logs and diagnose failures
 - Help users create skills for their projects
+- Help users configure connectors (OAuth, API keys) — see connector setup below
 - Follow best practices from your loaded skills when creating flows
+
+## Connector setup
+
+Configuring connectors (Notion, GitHub, Google, etc.) does **not** require a registered space. \
+When browser or other connector tools are enabled for this chat session, use them immediately — \
+follow the llmflows-connectors skill. Do **not** tell the user to select a space, start the daemon, \
+or register a project before opening a browser or walking through an external setup portal.
 
 ## Building flows
 
@@ -164,7 +172,7 @@ CONNECTOR_TOOL_HINTS: dict[str, str] = {
     ),
     "google_workspace": "**Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts.",
     "youtube": "**YouTube** — search videos, list playlists, get transcripts, and access private data.",
-    "notion": "**Notion** — search, read, and update Notion pages and databases.",
+    "notion": "**Notion** — search, read, and update Notion pages and databases. Use a personal access token (PAT), not an internal connection.",
     "github": "**GitHub** — manage repositories, issues, pull requests, and more.",
     "slack_mcp": "**Slack** — read and send messages in Slack channels.",
     "linear": "**Linear** — manage issues and projects in Linear.",
@@ -210,6 +218,11 @@ def build_tools_section(connector_ids: list[str]) -> str:
         "manually when you have the tools to do it. Do NOT use shell commands like `open` "
         "to open URLs — use browser tools instead if available."
     )
+    if "browser" in connector_ids or "browser-host" in connector_ids:
+        lines.append(
+            "Browser tools work without a registered space — use them for connector setup, "
+            "OAuth portals, and external websites even when no space is selected."
+        )
     return "\n".join(lines)
 
 
@@ -428,7 +441,13 @@ def build_space_context(space_id: str | None, session_factory=None) -> tuple[Any
     from .space import SpaceService
 
     space = None
-    space_context = "\nNo space is currently selected. You can answer questions but cannot create flows — ask the user to select a space first.\n"
+    space_context = (
+        "\n## Current space\n\n"
+        "No space is selected. You can still answer questions, use browser/web search tools, "
+        "and help configure connectors — a space is **not** required for those tasks.\n\n"
+        "A space is only required to create or import flows. If the user wants to build a flow, "
+        "ask them to select or register a space first.\n"
+    )
 
     if space_id:
         if session_factory:
@@ -456,6 +475,34 @@ def build_space_context(space_id: str | None, session_factory=None) -> tuple[Any
     return space, space_context
 
 
+def build_pi_mcp_env(
+    connector_ids: list[str] | None = None,
+    *,
+    runner: bool = False,
+    artifacts_dir: Path | str | None = None,
+) -> dict[str, str]:
+    """Return MCP env vars for Pi when connectors are selected.
+
+    connector_ids: if provided, only include those connectors (must also be
+    enabled in DB).  None means include all enabled connectors.
+
+    runner: set True when Pi runs inside a Docker runner/chat container so
+    headed browser config uses host Chrome via CDP.
+
+    artifacts_dir: directory for browser screenshots (optional).
+    """
+    from .mcp import get_mcp_servers
+
+    servers = get_mcp_servers(connector_ids, runner=runner)
+    if not servers:
+        return {}
+    env: dict[str, str] = {"MCP_SERVERS": json.dumps(servers)}
+    ids = connector_ids or []
+    if artifacts_dir and ("browser" in ids or "browser-host" in ids):
+        env["BROWSER_ARTIFACTS_DIR"] = str(artifacts_dir)
+    return env
+
+
 def build_pi_command(
     message: str,
     session_file: Path,
@@ -469,6 +516,9 @@ def build_pi_command(
 
     connector_ids: if provided, only include these connectors (must also be
     enabled in DB).  None means include all enabled connectors.
+
+    Callers must merge ``build_pi_mcp_env(connector_ids)`` into the process
+    environment — chat runs Pi inside Docker and does not inherit host env.
     """
     cmd = [
         "pi", "-p", message,
@@ -481,14 +531,10 @@ def build_pi_command(
     for sp in (skill_paths or []):
         cmd.extend(["--skill", str(sp)])
 
-    from .executors.pi import MCP_BRIDGE_TOOL
-    from .mcp import get_mcp_servers
+    mcp_env = build_pi_mcp_env(connector_ids)
+    if mcp_env:
+        from .executors.pi import MCP_BRIDGE_TOOL
 
-    servers = get_mcp_servers(connector_ids)
-    if servers:
-        import json as _json
-        import os
-        os.environ["MCP_SERVERS"] = _json.dumps(servers)
         ext_path = str(MCP_BRIDGE_TOOL)
         from ..utils.paths import CONTAINER_HOME, host_path_to_container_path
         if str(session_file).startswith(CONTAINER_HOME):
@@ -598,6 +644,7 @@ class ChatService:
         model = resolve_chat_model(tier)
         skill_paths = get_skill_paths()
 
+        connector_ids = get_enabled_connector_ids()
         cmd = build_pi_command(
             message=message,
             session_file=session_file,
@@ -605,9 +652,11 @@ class ChatService:
             model=model,
             skill_paths=skill_paths,
             mode="json",
+            connector_ids=connector_ids,
         )
 
         env = build_pi_env()
+        env.update(build_pi_mcp_env(connector_ids))
         cwd = space.path if space else str(Path.home())
 
         try:

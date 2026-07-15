@@ -29,7 +29,7 @@ llmflows connectors catalog
 |----|------|----------|-------------|
 | `google_workspace` | Google Workspace | Google Workspace | Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts. |
 | `youtube` | YouTube | Google Workspace | Search videos, list playlists, get transcripts, and access private YouTube data. |
-| `notion` | Notion | Productivity | Search, read, and update Notion pages and databases. |
+| `notion` | Notion | Productivity | Search, read, and update Notion pages and databases. Create a [personal access token](https://www.notion.so/profile/integrations) (recommended). |
 | `github` | GitHub | Developer | Manage repositories, issues, pull requests, and more. |
 | `slack_mcp` | Slack | Productivity | Read and send messages in Slack channels. |
 | `linear` | Linear | Developer | Manage issues and projects in Linear. |
@@ -52,7 +52,7 @@ For connectors that require more complex setup (like Google Workspace), the moda
 llmflows connectors add notion
 
 # Set required credentials
-llmflows connectors config notion NOTION_API_KEY ntn_xxx
+llmflows connectors config notion NOTION_TOKEN ntn_xxx
 
 # Enable it
 llmflows connectors enable notion
@@ -72,6 +72,7 @@ For example:
 
 ```bash
 llmflows connectors config github GITHUB_TOKEN ghp_xxx
+llmflows connectors config notion NOTION_TOKEN ntn_xxx
 llmflows connectors config postgres DATABASE_URL postgresql://user:pass@host:5432/db
 llmflows connectors config slack_mcp SLACK_BOT_TOKEN xoxb-xxx
 ```

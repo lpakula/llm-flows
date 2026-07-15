@@ -227,7 +227,7 @@ def connectors_config(server_id, key, value):
     """Set a config or credential value for a connector.
 
     \b
-    Example: llmflows connectors config notion NOTION_API_KEY ntn_xxx
+    Example: llmflows connectors config notion NOTION_TOKEN ntn_xxx
     """
     session = get_session()
     try:

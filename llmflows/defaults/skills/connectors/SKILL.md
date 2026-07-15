@@ -9,11 +9,13 @@ How to obtain API keys and tokens for each connector in llm-flows.
 
 ## Agent behavior
 
+0. **No space required.** Connector setup works from Chat without a registered space or running daemon. Start using browser tools immediately when available.
 1. **Prefer `gcloud` CLI for Google connectors.** Use shell commands (`gcloud projects list`, `gcloud services enable`, etc.) whenever possible. Fall back to browser automation only for steps that `gcloud` cannot handle (OAuth consent screen, credential creation).
 2. **For non-Google connectors, use browser automation.** Navigate directly to the **external service portal** — NOT the llm-flows UI. Follow the steps from the guide below, clicking through the portal pages for the user. When you hit a login/auth screen, tell the user: "Please log in in the browser window, then tell me when you're done." Wait for their reply before continuing.
-3. **Do NOT offer manual steps** unless the user explicitly asks for them.
-4. **NEVER fabricate or invent credential values.** Only use values you actually read from the browser page or received from a CLI/API response.
-5. When you have the keys/tokens, **print them for the user to copy-paste** into the connector config in the llm-flows UI.
+3. **For Notion, always create a personal access token (PAT).** Do **not** create an internal connection unless the user explicitly asks for a team-owned bot with limited page access. PATs use the user's existing page permissions — no per-page sharing step.
+4. **Do NOT offer manual steps** unless the user explicitly asks for them.
+5. **NEVER fabricate or invent credential values.** Only use values you actually read from the browser page or received from a CLI/API response.
+6. When you have the keys/tokens, **print them for the user to copy-paste** into the connector config in the llm-flows UI.
 
 Do NOT run `llmflows connectors config` commands automatically. Let the user paste the values themselves.
 
@@ -120,12 +122,29 @@ If Google Workspace was NOT set up, follow Steps 1-4 from the Google Workspace s
 
 ## Notion
 
-1. Go to `https://www.notion.so/my-integrations`.
-2. Click **New integration**.
-3. Name it (e.g. "llm-flows"), select the workspace, and click **Submit**.
-4. Copy the **Internal Integration Secret** (starts with `ntn_`).
-5. In Notion, open the pages/databases you want the integration to access → click **⋯** → **Connect to** → select your integration.
-6. Print the API key for the user to paste into the Notion connector config in the llm-flows UI.
+The Notion connector uses `@notionhq/notion-mcp-server` with a static access token (`NOTION_TOKEN`).
+
+**Default: create a personal access token (PAT).** Only use an internal connection if the user explicitly wants a team-owned bot with pages shared individually.
+
+### Personal access token (default)
+
+1. Go to [Notion Developer portal → Personal access tokens](https://www.notion.so/profile/integrations).
+2. Open the **Personal access tokens** tab (not Connections).
+3. Click **New token**, name it (e.g. "llm-flows"), and select capabilities:
+   - **Read content** — required for agents to read pages and databases
+   - **Update content** / **Insert content** — add if the agent should edit Notion
+4. Click **Create token** and copy the value immediately (starts with `ntn_`).
+5. Print the token for the user to paste into the Notion connector config in the llm-flows UI.
+
+No page-sharing step is needed — the PAT uses the creator's existing Notion permissions.
+
+### Internal connection (only if user explicitly requests a team bot)
+
+1. Go to [Notion Developer portal → Connections](https://www.notion.so/profile/integrations).
+2. Create a new **internal connection** (e.g. "llm-flows") for the workspace.
+3. Open the connection → **Configuration** tab → copy the **installation access token** (starts with `ntn_`).
+4. Share pages/databases with the connection: open each page → **⋯** → **Add connections** → select your connection.
+5. Print the token for the user to paste into the Notion connector config in the llm-flows UI.
 
 ---
 

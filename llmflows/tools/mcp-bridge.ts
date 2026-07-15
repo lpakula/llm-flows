@@ -78,6 +78,9 @@ export default async function activate(api: any) {
           HOME: process.env.HOME || "",
           NODE_PATH: process.env.NODE_PATH || "",
           TMPDIR: process.env.TMPDIR || "/tmp",
+          ...(process.env.LLMFLOWS_RUNNER
+            ? { LLMFLOWS_RUNNER: process.env.LLMFLOWS_RUNNER }
+            : {}),
           ...server.env,
         },
       });

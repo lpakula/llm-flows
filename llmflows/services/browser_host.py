@@ -68,6 +68,38 @@ def browser_connector_uses_host(session) -> bool:
     return env.get("BROWSER_HEADLESS", "true").lower() != "true"
 
 
+def connectors_need_host_browser(connector_ids: list[str], session) -> bool:
+    """Return True when a connector list needs headed Chrome on the host."""
+    if not connector_ids:
+        return False
+    if "browser-host" in connector_ids:
+        return True
+    if "browser" in connector_ids and browser_connector_uses_host(session):
+        return True
+    return False
+
+
+def _browser_profile_dir(session) -> Path:
+    profile_dir = default_profile_dir()
+    from ..db.models import McpConnector
+
+    connector = session.query(McpConnector).filter_by(server_id="browser").first()
+    if connector:
+        raw = connector.get_env().get("BROWSER_USER_DATA_DIR", "")
+        if raw:
+            profile_dir = Path(expand_env_path(str(raw)))
+    return profile_dir
+
+
+def prepare_host_browser_for_connectors(connector_ids: list[str], session) -> bool:
+    """Ensure host Chrome is running when chat or a run needs headed browser access."""
+    if not connectors_need_host_browser(connector_ids, session):
+        return False
+
+    ensure_host_chrome(_browser_profile_dir(session), headless=False, force_restart=True)
+    return True
+
+
 def flow_needs_host_browser(flow_snapshot: Optional[str], session) -> bool:
     """Check whether a flow run needs host Chrome (headed browser in Docker)."""
     if not flow_snapshot:
@@ -95,14 +127,39 @@ def is_cdp_available() -> bool:
         return False
 
 
+def _llmflows_chrome_is_running() -> bool:
+    """Return True when the Chrome process llmflows spawned is still alive."""
+    if not CHROME_PID_FILE.is_file():
+        return False
+    try:
+        pid = int(CHROME_PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return False
+    import os
+    import signal as _signal
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
 def ensure_host_chrome(
     profile_dir: Optional[Path] = None,
     *,
     headless: bool = False,
+    force_restart: bool = False,
 ) -> None:
     """Start Google Chrome on the host with remote debugging if not already running."""
-    if is_cdp_available():
+    if (
+        not force_restart
+        and is_cdp_available()
+        and _llmflows_chrome_is_running()
+    ):
         return
+
+    # Restart so Chrome binds CDP on 0.0.0.0 (required for Docker runner access).
+    stop_host_chrome()
 
     chrome = resolve_chrome_path()
     if not chrome:
@@ -117,6 +174,7 @@ def ensure_host_chrome(
     args = [
         chrome,
         f"--remote-debugging-port={CDP_PORT}",
+        "--remote-debugging-address=0.0.0.0",
         "--no-first-run",
         "--disable-infobars",
         f"--user-data-dir={profile}",
@@ -177,14 +235,5 @@ def prepare_host_browser_for_run(flow_snapshot: Optional[str], session) -> bool:
     if not flow_needs_host_browser(flow_snapshot, session):
         return False
 
-    profile_dir = default_profile_dir()
-    from ..db.models import McpConnector
-
-    connector = session.query(McpConnector).filter_by(server_id="browser").first()
-    if connector:
-        raw = connector.get_env().get("BROWSER_USER_DATA_DIR", "")
-        if raw:
-            profile_dir = Path(expand_env_path(str(raw)))
-
-    ensure_host_chrome(profile_dir, headless=False)
+    ensure_host_chrome(_browser_profile_dir(session), headless=False, force_restart=True)
     return True

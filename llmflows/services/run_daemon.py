@@ -778,7 +778,7 @@ class RunDaemon:
         _ss = snap_step or {}
         needed_connectors = _ss.get("connectors", _ss.get("mcp", _ss.get("tools", [])))
         if needed_connectors:
-            servers = get_mcp_servers(needed_connectors)
+            servers = get_mcp_servers(needed_connectors, runner=True)
             if servers:
                 extra_env["MCP_SERVERS"] = json.dumps(servers)
                 extra_env["BROWSER_ARTIFACTS_DIR"] = str(step_artifact_dir)

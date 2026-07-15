@@ -22,6 +22,37 @@ logger = logging.getLogger("llmflows.mcp")
 
 _LLMFLOWS_DIR = SYSTEM_DIR
 _TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
+_CONTAINER_NODE_MODULES = Path("/opt/llmflows/tools/node_modules")
+_CONTAINER_MCP_TOOLS = Path("/opt/llmflows/llmflows/tools")
+
+_cached_docker_gateway: str | None = None
+
+
+def docker_host_gateway_ip() -> str | None:
+    """Return host gateway IP as seen from a runner container (/etc/hosts)."""
+    global _cached_docker_gateway
+    if _cached_docker_gateway:
+        return _cached_docker_gateway
+    try:
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--add-host", "host.docker.internal:host-gateway",
+                "busybox", "sh", "-c",
+                "grep host.docker.internal /etc/hosts | awk '{print $1}'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            ip = result.stdout.strip().split()[0] if result.stdout.strip() else ""
+            if ip and ip[0].isdigit():
+                _cached_docker_gateway = ip
+                return ip
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        pass
+    return None
 
 BUILTIN_COMMANDS: dict[str, str] = {
     "web_search": "mcp-server-web-search.ts",
@@ -29,11 +60,14 @@ BUILTIN_COMMANDS: dict[str, str] = {
 }
 
 
-def get_mcp_servers(connector_ids: list[str] | None = None) -> list[dict]:
+def get_mcp_servers(connector_ids: list[str] | None = None, *, runner: bool = False) -> list[dict]:
     """Build MCP_SERVERS entries for enabled connectors.
 
     If connector_ids is provided, only include those connectors (must also be
     enabled in DB).  None means include all enabled connectors.
+
+    ``runner``: when True, browser connector env is configured for in-container
+    MCP talking to host Chrome (``BROWSER_MODE=host``) when headed mode is set.
 
     ``browser-host`` is an alias for the browser connector in host mode.
 
@@ -62,7 +96,7 @@ def get_mcp_servers(connector_ids: list[str] | None = None) -> list[dict]:
 
         result = []
         for c in connectors:
-            entry = _build_entry(c, force_host_browser=force_host_browser)
+            entry = _build_entry(c, force_host_browser=force_host_browser, runner=runner)
             if entry:
                 result.append(entry)
         return result
@@ -70,17 +104,28 @@ def get_mcp_servers(connector_ids: list[str] | None = None) -> list[dict]:
         session.close()
 
 
-def _build_entry(connector, *, force_host_browser: bool = False) -> dict | None:
-    """Build a single MCP_SERVERS entry from a connector record."""
-    server_id = connector.server_id
-
+def _connector_env(connector) -> dict[str, str]:
+    """Build subprocess env from connector config and credentials."""
     env_vars: dict[str, str] = {}
     for k, v in connector.get_env().items():
         env_vars[k] = expand_env_path(str(v))
     for k, v in connector.get_credentials().items():
         env_vars[k] = str(v)
+    if connector.server_id == "notion":
+        # Legacy credential key from the old @modelcontextprotocol/server-notion catalog.
+        if not env_vars.get("NOTION_TOKEN") and env_vars.get("NOTION_API_KEY"):
+            env_vars["NOTION_TOKEN"] = env_vars["NOTION_API_KEY"]
+        env_vars.pop("NOTION_API_KEY", None)
+    return env_vars
 
-    node_modules = resolve_node_modules()
+
+def _build_entry(connector, *, force_host_browser: bool = False, runner: bool = False) -> dict | None:
+    """Build a single MCP_SERVERS entry from a connector record."""
+    server_id = connector.server_id
+
+    env_vars = _connector_env(connector)
+
+    node_modules = resolve_node_modules() if not runner else _CONTAINER_NODE_MODULES
     env_vars["NODE_PATH"] = str(node_modules)
 
     if server_id == "browser":
@@ -89,11 +134,15 @@ def _build_entry(connector, *, force_host_browser: bool = False) -> dict | None:
         # (explicit BROWSER_HEADLESS=false / BROWSER_MODE=host, or the
         # dedicated browser-host connector).
         headless = env_vars.setdefault("BROWSER_HEADLESS", "true").lower() == "true"
-        if force_host_browser or (os.environ.get("LLMFLOWS_RUNNER") and not headless):
+        if force_host_browser or (runner and not headless):
             env_vars["BROWSER_MODE"] = "host"
             env_vars["BROWSER_HEADLESS"] = "false"
+            gateway = docker_host_gateway_ip()
+            if gateway:
+                env_vars["BROWSER_CDP_HOST"] = gateway
 
-    if os.environ.get("LLMFLOWS_RUNNER"):
+    if runner or os.environ.get("LLMFLOWS_RUNNER"):
+        env_vars["LLMFLOWS_RUNNER"] = "1"
         if server_id == "google_workspace":
             # Browser OAuth cannot open from inside the container; device flow works.
             env_vars.setdefault("GOOGLE_WORKSPACE_MCP_AUTH_FLOW", "device")
@@ -101,8 +150,13 @@ def _build_entry(connector, *, force_host_browser: bool = False) -> dict | None:
             env_vars.setdefault("HOME", "/root")
 
     if server_id in BUILTIN_COMMANDS:
-        script = _TOOLS_DIR / BUILTIN_COMMANDS[server_id]
-        tsx_bin = node_modules / ".bin" / "tsx"
+        script_name = BUILTIN_COMMANDS[server_id]
+        if runner:
+            tsx_bin = _CONTAINER_NODE_MODULES / ".bin" / "tsx"
+            script = _CONTAINER_MCP_TOOLS / script_name
+        else:
+            script = _TOOLS_DIR / script_name
+            tsx_bin = node_modules / ".bin" / "tsx"
         return {
             "server_id": server_id,
             "command": str(tsx_bin),
@@ -212,13 +266,8 @@ def _mcp_handshake(binary_path: str, args: list[str], connector) -> dict:
     extra = os.pathsep.join(str(p) for p in _EXTRA_BIN_PATHS if p.is_dir())
     if extra:
         env["PATH"] = extra + os.pathsep + env.get("PATH", "")
-    for k, v in connector.get_env().items():
-        val = str(v)
-        if val.startswith("~"):
-            val = os.path.expanduser(val)
-        env[k] = val
-    for k, v in connector.get_credentials().items():
-        env[k] = str(v)
+    for k, v in _connector_env(connector).items():
+        env[k] = v
 
     init_request = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",

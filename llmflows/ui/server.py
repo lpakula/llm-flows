@@ -410,15 +410,15 @@ MCP_CATALOG: list[dict] = [
     {
         "server_id": "notion",
         "name": "Notion",
-        "command": "npx @modelcontextprotocol/server-notion",
+        "command": "npx @notionhq/notion-mcp-server",
         "category": "Productivity",
-        "description": "Search, read, and update Notion pages and databases.",
-        "required_credentials": ["NOTION_API_KEY"],
+        "description": "Search, read, and update Notion pages and databases. Use a personal access token (recommended).",
+        "required_credentials": ["NOTION_TOKEN"],
         "config_fields": [
-            {"key": "NOTION_API_KEY", "label": "Notion API Key", "type": "secret", "target": "credentials",
-             "placeholder": "ntn_..."},
+            {"key": "NOTION_TOKEN", "label": "Notion Personal Access Token", "type": "secret", "target": "credentials",
+             "placeholder": "ntn_... (PAT from Developer portal → Personal access tokens)"},
         ],
-        "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/notion",
+        "docs_url": "https://github.com/makenotion/notion-mcp-server",
     },
     {
         "server_id": "github",
@@ -3200,9 +3200,10 @@ class ChatBody(BaseModel):
 @app.post("/api/chat")
 async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
-    from ..services.chat import build_pi_command
+    from ..services.chat import build_pi_command, build_pi_mcp_env
+    from ..services.browser_host import prepare_host_browser_for_connectors
     from ..services.container import image_name, dev_volume_args, ensure_image, _home_volume_args
-    from ..db.database import get_runner_database_url
+    from ..db.database import get_runner_database_url, get_session
 
     session_id = body.session_id or uuid.uuid4().hex[:10]
     session_dir = CHAT_SESSIONS_DIR / session_id
@@ -3219,12 +3220,26 @@ async def chat(body: ChatBody):
 
     skill_paths = _get_skill_paths()
     selected = body.connectors or []
+
+    needs_browser_host = False
+    db = get_session()
+    try:
+        needs_browser_host = prepare_host_browser_for_connectors(selected, db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    finally:
+        db.close()
+
     system_prompt = _build_system_prompt(connector_ids=selected)
     system_file.write_text(system_prompt + space_context + flow_context)
 
     chat_model = _resolve_chat_model(body.tier or "max")
 
-    workspace_path = space.path if space else "/workspace"
+    if space:
+        workspace_path = space.path
+    else:
+        workspace_path = str(CHAT_SESSIONS_DIR.parent / "chat-workspace")
+        Path(workspace_path).mkdir(parents=True, exist_ok=True)
     host_home = os.environ.get("LLMFLOWS_HOST_HOME", str(SYSTEM_DIR))
 
     from ..utils.paths import host_path_to_container_path
@@ -3245,13 +3260,20 @@ async def chat(body: ChatBody):
         connector_ids=selected,
     )
 
-    env = _build_chat_container_env(space.path if space else None)
+    artifacts_dir = session_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    container_artifacts = host_path_to_container_path(str(artifacts_dir), host_home=host_home)
 
-    from ..services.network import ensure_network
+    env = _build_chat_container_env(space.path if space else None)
+    env.update(build_pi_mcp_env(
+        selected, runner=True, artifacts_dir=container_artifacts,
+    ))
+
+    from ..services.network import get_network_args
     try:
-        network_name = ensure_network()
+        network_args = get_network_args(needs_browser_host=needs_browser_host)
     except Exception:
-        network_name = "bridge"
+        network_args = ["--network", "bridge"]
 
     container_name = f"llmflows-chat-{session_id[:8]}"
     subprocess.run(
@@ -3268,7 +3290,7 @@ async def chat(body: ChatBody):
         "-v", f"{workspace_path}:/workspace",
         *_home_volume_args(host_home),
         *dev_volume_args(),
-        "--network", network_name,
+        *network_args,
     ]
     db_url = get_runner_database_url() or os.environ.get("DATABASE_URL")
     if db_url:

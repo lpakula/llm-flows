@@ -3,9 +3,24 @@
 import json
 from unittest.mock import patch
 
-from llmflows.services.chat import build_flow_context
+from llmflows.services.chat import (
+    build_flow_context,
+    build_space_context,
+    build_tools_section,
+)
 from llmflows.services.flow import FlowService
 from llmflows.services.run import RunService
+
+
+class TestChatSpaceContext:
+    def test_no_space_allows_connector_setup(self):
+        _, ctx = build_space_context(None)
+        assert "configure connectors" in ctx.lower()
+        assert "only required" in ctx.lower() or "only required to create" in ctx.lower()
+
+    def test_tools_section_browser_works_without_space(self):
+        section = build_tools_section(["browser"])
+        assert "without a registered space" in section
 
 
 def _flow_context(test_db, flow_name: str, space_id: str) -> str:

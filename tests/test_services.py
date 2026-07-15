@@ -1790,3 +1790,151 @@ class TestChatContainerEnv:
 
         env = build_chat_container_env()
         assert "LLMFLOWS_SPACE_HOST_PATH" not in env
+
+    def test_build_pi_mcp_env_includes_selected_connectors(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.chat import build_pi_mcp_env
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            env = build_pi_mcp_env(["browser"])
+
+        assert "MCP_SERVERS" in env
+        servers = json.loads(env["MCP_SERVERS"])
+        assert len(servers) == 1
+        assert servers[0]["server_id"] == "browser"
+
+    def test_build_pi_mcp_env_empty_when_no_connectors_selected(self):
+        from llmflows.services.chat import build_pi_mcp_env
+
+        assert build_pi_mcp_env([]) == {}
+
+    def test_build_pi_mcp_env_runner_sets_host_browser_mode(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.chat import build_pi_mcp_env
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+            env='{"BROWSER_HEADLESS": "false"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            env = build_pi_mcp_env(["browser"], runner=True)
+
+        servers = json.loads(env["MCP_SERVERS"])
+        assert servers[0]["env"]["BROWSER_MODE"] == "host"
+        assert servers[0]["env"]["BROWSER_HEADLESS"] == "false"
+
+    def test_get_mcp_servers_runner_uses_container_paths(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+            env='{"BROWSER_HEADLESS": "false"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db), \
+             patch("llmflows.services.mcp.docker_host_gateway_ip", return_value="192.168.5.2"):
+            servers = get_mcp_servers(["browser"], runner=True)
+
+        entry = servers[0]
+        assert entry["command"] == "/opt/llmflows/tools/node_modules/.bin/tsx"
+        assert entry["args"] == ["/opt/llmflows/llmflows/tools/mcp-server-browser.ts"]
+        assert entry["env"]["NODE_PATH"] == "/opt/llmflows/tools/node_modules"
+        assert entry["env"]["LLMFLOWS_RUNNER"] == "1"
+        assert entry["env"]["BROWSER_CDP_HOST"] == "192.168.5.2"
+
+    def test_notion_connector_maps_legacy_api_key_to_token(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="notion",
+            name="Notion",
+            command="npx @notionhq/notion-mcp-server",
+            enabled=True,
+            credentials='{"NOTION_API_KEY": "ntn_legacy"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["notion"])
+
+        assert servers[0]["env"]["NOTION_TOKEN"] == "ntn_legacy"
+        assert "NOTION_API_KEY" not in servers[0]["env"]
+
+    def test_build_pi_mcp_env_runner_keeps_headless_when_configured(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.chat import build_pi_mcp_env
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+            env='{"BROWSER_HEADLESS": "true"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            env = build_pi_mcp_env(["browser"], runner=True)
+
+        servers = json.loads(env["MCP_SERVERS"])
+        assert "BROWSER_MODE" not in servers[0]["env"]
+        assert servers[0]["env"]["BROWSER_HEADLESS"] == "true"
+
+
+class TestBrowserHostConnectors:
+    def test_connectors_need_host_browser_with_headed_config(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.browser_host import connectors_need_host_browser
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+            env='{"BROWSER_HEADLESS": "false"}',
+        ))
+        test_db.commit()
+
+        assert connectors_need_host_browser(["browser"], test_db) is True
+        assert connectors_need_host_browser(["web_search"], test_db) is False
+        assert connectors_need_host_browser(["browser-host"], test_db) is True
+
+    def test_connectors_need_host_browser_respects_headless_config(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.browser_host import connectors_need_host_browser
+
+        test_db.add(McpConnector(
+            server_id="browser",
+            name="Browser",
+            command="tsx mcp-server-browser.ts",
+            enabled=True,
+            builtin=True,
+            env='{"BROWSER_HEADLESS": "true"}',
+        ))
+        test_db.commit()
+
+        assert connectors_need_host_browser(["browser"], test_db) is False

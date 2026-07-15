@@ -8,6 +8,21 @@ const BUILTIN_IDS = new Set(["browser", "web_search"]);
 
 function sid(c: ConnectorConfig) { return c.server_id || c.id; }
 
+const GOOGLE_CONNECTOR_IDS = new Set(["google_workspace", "youtube"]);
+
+function connectorSetupPrompt(name: string, connectorId: string): string {
+  if (GOOGLE_CONNECTOR_IDS.has(connectorId)) {
+    return `Help me configure the ${name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`;
+  }
+  if (connectorId === "maestro") {
+    return 'Install the Maestro CLI for mobile testing. Run: curl -Ls "https://get.maestro.mobile.dev" | bash. Then verify it works with: maestro --version. Once installed, enable the connector with: llmflows connectors enable maestro.';
+  }
+  if (connectorId === "notion") {
+    return "Help me configure the Notion connector. Use your llmflows-connectors skill. Create a personal access token (PAT) — do not create an internal connection. Use browser_navigate to open the Notion Developer portal Personal access tokens page, walk me through creating a token with read content capability (and update/insert if I want the agent to edit), and I'll handle login when needed.";
+  }
+  return `Help me configure the ${name} connector. Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`;
+}
+
 type InfoEntry = { text: string; status: "ok" | "error" };
 
 type UnifiedItem = {
@@ -78,9 +93,8 @@ function ConfigModal({
   const [showErrors, setShowErrors] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const googleIds = new Set(["google_workspace", "youtube"]);
+  const googleIds = GOOGLE_CONNECTOR_IDS;
   const isGoogle = googleIds.has(sid(connector));
-  const isMaestro = sid(connector) === "maestro";
 
   const connectorId = sid(connector);
   useEffect(() => {
@@ -191,13 +205,7 @@ function ConfigModal({
                 type="button"
                 onClick={() => {
                   onClose();
-                  if (isGoogle) {
-                    onAskChat(`Help me configure the ${connector.name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`);
-                  } else if (isMaestro) {
-                    onAskChat(`Install the Maestro CLI for mobile testing. Run: curl -Ls "https://get.maestro.mobile.dev" | bash. Then verify it works with: maestro --version. Once installed, enable the connector with: llmflows connectors enable maestro.`);
-                  } else {
-                    onAskChat(`Help me configure the ${connector.name} connector. Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`);
-                  }
+                  onAskChat(connectorSetupPrompt(connector.name, sid(connector)));
                 }}
                 className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition"
               >
@@ -494,7 +502,7 @@ export function ToolsView() {
       )}
 
       {freshModalItem && !freshModalItem.connector && freshModalItem.catalogEntry && (() => {
-        const catIsGoogle = new Set(["google_workspace", "youtube"]).has(freshModalItem.id);
+        const catIsGoogle = GOOGLE_CONNECTOR_IDS.has(freshModalItem.id);
         return (
           <Modal open={!!modalItem} onClose={() => setModalItem(null)}>
             <div className="p-6 space-y-5">
@@ -519,11 +527,7 @@ export function ToolsView() {
                     type="button"
                     onClick={() => {
                       setModalItem(null);
-                      if (catIsGoogle) {
-                        navigate(`/chat?prompt=${encodeURIComponent(`Help me configure the ${freshModalItem.name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`)}&tools=browser`);
-                      } else {
-                        navigate(`/chat?prompt=${encodeURIComponent(`Help me configure the ${freshModalItem.name} connector. Use your llmflows-connectors skill. Use browser_navigate to open the setup portal and walk me through it — click through the pages for me, I'll handle login when needed.`)}&tools=browser`);
-                      }
+                      navigate(`/chat?prompt=${encodeURIComponent(connectorSetupPrompt(freshModalItem.name, freshModalItem.id))}&tools=browser`);
                     }}
                     className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition"
                   >

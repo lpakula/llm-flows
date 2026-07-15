@@ -214,7 +214,7 @@ llmflows connectors enable web_search
 llmflows connectors disable browser
 
 # Set a credential or config value
-llmflows connectors config notion NOTION_API_KEY ntn_xxx
+llmflows connectors config notion NOTION_TOKEN ntn_xxx
 
 # Test a connector (requires the daemon to be running)
 llmflows connectors test notion
@@ -329,7 +329,7 @@ llmflows flow var set my-flow TARGET_REPO myorg/myrepo
 | Browse catalog | `llmflows connectors catalog` |
 | Add connector | `llmflows connectors add notion` |
 | Enable connector | `llmflows connectors enable web_search` |
-| Configure connector | `llmflows connectors config notion NOTION_API_KEY ntn_xxx` |
+| Configure connector | `llmflows connectors config notion NOTION_TOKEN ntn_xxx` |
 | Schedule run | `llmflows run schedule --flow <flow-id>` |
 | List runs | `llmflows run list` |
 | Show run | `llmflows run show <run-id>` |
