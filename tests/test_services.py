@@ -1776,3 +1776,17 @@ class TestDaemonContainerCommit:
         test_db.refresh(run2)
         assert run1.container_id is None
         assert run2.container_id is None
+
+
+class TestChatContainerEnv:
+    def test_build_chat_container_env_includes_space_host_path(self):
+        from llmflows.services.chat import build_chat_container_env
+
+        env = build_chat_container_env("/Users/me/personal")
+        assert env["LLMFLOWS_SPACE_HOST_PATH"] == str(Path("/Users/me/personal").resolve())
+
+    def test_build_chat_container_env_omits_space_host_path_without_space(self):
+        from llmflows.services.chat import build_chat_container_env
+
+        env = build_chat_container_env()
+        assert "LLMFLOWS_SPACE_HOST_PATH" not in env

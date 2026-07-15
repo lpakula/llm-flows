@@ -1004,6 +1004,8 @@ def launch_chat_container(
         *_home_volume_args(str(SYSTEM_DIR)),
         *network_args,
     ]
+    env_vars = dict(env_vars)
+    env_vars["LLMFLOWS_SPACE_HOST_PATH"] = space_path
     for k, v in env_vars.items():
         cmd.extend(["-e", f"{k}={v}"])
 

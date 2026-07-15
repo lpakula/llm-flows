@@ -3245,7 +3245,7 @@ async def chat(body: ChatBody):
         connector_ids=selected,
     )
 
-    env = _build_chat_container_env()
+    env = _build_chat_container_env(space.path if space else None)
 
     from ..services.network import ensure_network
     try:

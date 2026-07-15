@@ -104,6 +104,10 @@ Never hardcode host paths. Relative paths like `test -f package.json` only work 
 3. Show the user what you plan to change and ask for confirmation before writing or importing
 4. When the user confirms, run: `llmflows flow import flows/<flow-name>.json`
 
+When running inside the Docker chat container, your cwd is `/workspace` (the space root). \
+Write files to `flows/` relative to cwd and import with the same relative path. \
+The space is already registered — do **not** run `llmflows register` on `/workspace`.
+
 To iterate on a flow, edit the JSON file in `flows/` and re-import. \
 The import command upserts by name — it will update an existing flow if one with the same name exists.
 
@@ -438,8 +442,16 @@ def build_space_context(space_id: str | None, session_factory=None) -> tuple[Any
             session.close()
 
     if space:
-        flows_dir = Path(space.path) / "flows"
-        space_context = f"\n## Current space\n- Name: {space.name}\n- Path: {space.path}\n- Flows directory: {flows_dir}\n\nWrite flow JSON files to the flows/ directory and import them with `llmflows flow import`.\n"
+        space_context = (
+            f"\n## Current space\n"
+            f"- Name: {space.name}\n"
+            f"- Path: {space.path}\n"
+            f"- Working directory (Docker chat): `/workspace` (same root as the path above)\n"
+            f"- Flows directory: `flows/` (relative to cwd)\n\n"
+            "Write flow JSON to `flows/<name>.json` and import with "
+            "`llmflows flow import flows/<name>.json`. "
+            "Do not run `llmflows register` — this space is already registered.\n"
+        )
 
     return space, space_context
 
@@ -501,11 +513,15 @@ def build_pi_env() -> dict[str, str]:
     return env
 
 
-def build_chat_container_env() -> dict[str, str]:
+def build_chat_container_env(space_path: str | None = None) -> dict[str, str]:
     """Environment variables to pass into the chat Docker container.
 
     Only forwards API keys and llmflows settings — not the full host
     ``os.environ`` (which can include IDE paths that confuse Pi in Docker).
+
+    ``space_path``: host path of the selected space. When set, runner-style
+    ``LLMFLOWS_SPACE_HOST_PATH`` is included so CLI commands like
+    ``llmflows flow import`` resolve the space from cwd ``/workspace``.
     """
     from ..db.database import get_session
     from ..db.models import AgentConfig
@@ -515,6 +531,8 @@ def build_chat_container_env() -> dict[str, str]:
         "LLMFLOWS_HOME": "/root/.llmflows",
         "NODE_PATH": "/opt/llmflows/tools/node_modules",
     }
+    if space_path:
+        env["LLMFLOWS_SPACE_HOST_PATH"] = str(Path(space_path).expanduser().resolve())
     for key in ("LLMFLOWS_DEV_HOME", "OLLAMA_HOST"):
         val = os.environ.get(key)
         if val:
