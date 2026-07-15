@@ -1791,6 +1791,14 @@ class TestChatContainerEnv:
         env = build_chat_container_env()
         assert "LLMFLOWS_SPACE_HOST_PATH" not in env
 
+    def test_build_chat_container_env_sets_pythonpath_in_dev(self, monkeypatch):
+        from llmflows.services.chat import build_chat_container_env
+        from llmflows.services.container import DEV_CONTAINER_PYTHONPATH
+
+        monkeypatch.setenv("LLMFLOWS_DEV_HOME", "/tmp/.llmflows")
+        env = build_chat_container_env()
+        assert env["PYTHONPATH"] == DEV_CONTAINER_PYTHONPATH
+
     def test_build_pi_mcp_env_includes_selected_connectors(self, test_db):
         from llmflows.db.models import McpConnector
         from llmflows.services.chat import build_pi_mcp_env

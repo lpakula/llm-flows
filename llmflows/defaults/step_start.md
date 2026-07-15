@@ -80,6 +80,14 @@ Read each skill file and follow its instructions before starting the step.
 
 **Do not** introduce patterns that would trigger security audit failures: destructive commands without safeguards, credential exfiltration, obfuscated code, or unauthorized network access.
 {%- endif %}
+{%- if connectors_section %}
+
+---
+
+## Connectors
+
+{{ connectors_section }}
+{%- endif %}
 
 ---
 

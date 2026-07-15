@@ -684,6 +684,16 @@ def cleanup_runner_artifacts(skip: Optional[set[str]] = None) -> dict[str, int]:
     return {"containers": containers, "images": images}
 
 
+DEV_CONTAINER_PYTHONPATH = "/opt/llmflows"
+
+
+def dev_container_env_vars() -> dict[str, str]:
+    """Env vars so mounted source in dev mode overrides the pip-installed package."""
+    if os.environ.get("LLMFLOWS_DEV_HOME"):
+        return {"PYTHONPATH": DEV_CONTAINER_PYTHONPATH}
+    return {}
+
+
 def dev_volume_args() -> list[str]:
     """Bind-mount project source in dev mode so containers pick up code changes."""
     dev_home = os.environ.get("LLMFLOWS_DEV_HOME")
@@ -1129,6 +1139,8 @@ def _build_env_args(flow_snapshot: Optional[str] = None) -> list[str]:
     dev_home = os.environ.get("LLMFLOWS_DEV_HOME")
     if dev_home:
         args.extend(["-e", f"LLMFLOWS_DEV_HOME={dev_home}"])
+    for key, value in dev_container_env_vars().items():
+        args.extend(["-e", f"{key}={value}"])
     session = get_session()
     try:
         providers = _flow_providers(flow_snapshot, session)

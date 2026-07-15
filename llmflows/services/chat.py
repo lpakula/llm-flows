@@ -46,7 +46,7 @@ If they say yes, explain concisely: \
 - **Flows & steps** — a flow is a sequence of steps; each step has a markdown prompt that tells the AI agent what to do. \
 - **Gates** — quality checks after a step; if the output isn't good enough, the step retries. \
 - **IFs** — conditional branches that skip or include steps based on conditions. \
-- **Tools** — agents can use web_search and browser; enable per-flow in flow settings. \
+- **Connectors** — external services (Gmail, Notion, browser, etc.) are declared per step via `connectors`; see Building flows below. \
 - **Skills** — reusable prompt snippets that give agents domain knowledge; attach them to steps. \
 Keep it concise — short bullets, not paragraphs.
 
@@ -84,9 +84,32 @@ whether it should pause for human review, how often it will run, etc.
 Keep questions short and conversational. Ask one or two at a time, not a big list.
 
 When you have enough context, present the planned flow to the user before creating it:
-1. Show a short summary of each step — name, what it does, and why
+1. Show a short summary of each step — name, what it does, which **connectors** it needs, and why
 2. Ask the user to confirm or adjust ("Does this look good? Want to change anything?")
 3. Only after the user confirms, write the flow and import it
+
+### Step connectors (mandatory)
+
+Every step that uses an external service **must** declare the connector in its `connectors` array. \
+Connectors are **per step** — enabling a connector in Settings does **not** attach it to a run. \
+Without the right `connectors` on a step, the run agent only gets bash/read/write and cannot call Gmail, Notion, etc.
+
+Before writing flow JSON, map each step to connectors:
+- Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts → `google_workspace`
+- YouTube (search, playlists, transcripts, private data) → `youtube`
+- Notion pages/databases → `notion`
+- GitHub repos, issues, PRs → `github`
+- Slack messages → `slack_mcp`
+- Linear issues → `linear`
+- PostgreSQL queries → `postgres`
+- Web search / fetch pages → `web_search`
+- Browser automation → `browser`
+
+Steps that only read/write local files or use prior step artifacts need no connectors. \
+`hitl` steps usually need no connectors unless they must keep a browser session alive.
+
+After writing the JSON, **verify** every step whose content uses a service has the matching connector declared — \
+this is a common mistake that makes flows fail silently (the agent improvises with shell instead of MCP tools).
 
 **IMPORTANT: ALWAYS wait for explicit user confirmation before writing files or running import commands.** \
 This applies to new flows AND changes to existing flows. Never implement changes without the user saying \
@@ -158,26 +181,7 @@ Use these CLI commands to investigate:
 
 """
 
-CONNECTOR_TOOL_HINTS: dict[str, str] = {
-    "browser": (
-        "**Browser** — `browser_navigate`, `browser_snapshot`, `browser_click`, "
-        "`browser_fill`, `browser_screenshot`. Open web pages, read page content, "
-        "click buttons/links, fill forms, and take screenshots. "
-        "When asked to open a page, call `browser_navigate` immediately — do NOT "
-        "ask for URLs, do NOT say you can't, do NOT use shell `open` commands."
-    ),
-    "web_search": (
-        "**Web Search** — `web_search`, `web_fetch`. Search the web for information "
-        "and fetch/read web page content as text."
-    ),
-    "google_workspace": "**Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts.",
-    "youtube": "**YouTube** — search videos, list playlists, get transcripts, and access private data.",
-    "notion": "**Notion** — search, read, and update Notion pages and databases. Use a personal access token (PAT), not an internal connection.",
-    "github": "**GitHub** — manage repositories, issues, pull requests, and more.",
-    "slack_mcp": "**Slack** — read and send messages in Slack channels.",
-    "linear": "**Linear** — manage issues and projects in Linear.",
-    "postgres": "**PostgreSQL** — query and explore PostgreSQL databases.",
-}
+from .connector_hints import build_tools_section as _build_connector_tools_section
 
 _NO_TOOLS_SECTION = """\
 You have your built-in tools available: bash, read, write, edit. \
@@ -204,26 +208,7 @@ def build_tools_section(connector_ids: list[str]) -> str:
     """Build the tools section of the system prompt for the given connectors."""
     if not connector_ids:
         return _NO_TOOLS_SECTION
-
-    lines = ["You have the following tools available for this session:\n"]
-    for cid in connector_ids:
-        hint = CONNECTOR_TOOL_HINTS.get(cid)
-        if hint:
-            lines.append(f"- {hint}")
-        else:
-            lines.append(f"- **{cid}** — third-party connector (tools registered dynamically).")
-    lines.append("")
-    lines.append(
-        "Use these tools directly when the user asks. Do NOT tell the user to do things "
-        "manually when you have the tools to do it. Do NOT use shell commands like `open` "
-        "to open URLs — use browser tools instead if available."
-    )
-    if "browser" in connector_ids or "browser-host" in connector_ids:
-        lines.append(
-            "Browser tools work without a registered space — use them for connector setup, "
-            "OAuth portals, and external websites even when no space is selected."
-        )
-    return "\n".join(lines)
+    return _build_connector_tools_section(connector_ids, for_flow_step=False)
 
 
 def build_system_prompt(connector_ids: list[str] | None = None) -> str:
@@ -583,6 +568,9 @@ def build_chat_container_env(space_path: str | None = None) -> dict[str, str]:
         val = os.environ.get(key)
         if val:
             env[key] = val
+
+    from .container import dev_container_env_vars
+    env.update(dev_container_env_vars())
 
     session = get_session()
     try:

@@ -439,3 +439,25 @@ def test_cancel_runner_image_build_terminates_proc():
         container_mod._build_state["cancel_requested"] = False
         container_mod._build_state["error"] = None
         container_mod._build_state["log_lines"] = []
+
+
+def test_dev_container_env_vars_sets_pythonpath_in_dev(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_DEV_HOME", "/tmp/.llmflows")
+    assert container_mod.dev_container_env_vars() == {
+        "PYTHONPATH": container_mod.DEV_CONTAINER_PYTHONPATH,
+    }
+
+
+def test_dev_container_env_vars_empty_outside_dev(monkeypatch):
+    monkeypatch.delenv("LLMFLOWS_DEV_HOME", raising=False)
+    assert container_mod.dev_container_env_vars() == {}
+
+
+def test_build_env_args_includes_dev_pythonpath(monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_DEV_HOME", "/tmp/.llmflows")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    session = MagicMock()
+    session.query.return_value.all.return_value = []
+    with patch.object(container_mod, "get_session", return_value=session):
+        args = container_mod._build_env_args(None)
+    assert f"PYTHONPATH={container_mod.DEV_CONTAINER_PYTHONPATH}" in args

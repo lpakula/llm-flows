@@ -798,7 +798,7 @@ class RunDaemon:
             gate_failures=gate_failures, resume_prompt=resume_prompt, attempt=attempt,
             user_responses=user_responses,
             space_variables=self._env_variables_from_snapshot(self._get_snapshot(run)),
-            skills=skill_refs, extra_env=extra_env,
+            skills=skill_refs, extra_env=extra_env, connectors=needed_connectors or None,
         )
         result = executor.launch(ctx)
 

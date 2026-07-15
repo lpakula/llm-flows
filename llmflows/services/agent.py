@@ -57,6 +57,7 @@ class AgentService:
         step_type: str = "agent",
         space_variables: Optional[dict] = None,
         skills: Optional[list[dict]] = None,
+        connectors: Optional[list[str]] = None,
         extensions: Optional[list[str]] = None,
         extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[bool, str, str]:
@@ -94,6 +95,12 @@ class AgentService:
         from .audit import FlowAuditService
         audit = FlowAuditService.get_audit(str(space_root), flow_name) if flow_name else None
 
+        from .connector_hints import build_tools_section as build_connector_tools_section
+
+        connectors_section = ""
+        if connectors:
+            connectors_section = build_connector_tools_section(connectors, for_flow_step=True)
+
         prompt_vars = {
             "run_id": run_id,
             "run": {"id": run_id, "dir": str(artifacts_dir)},
@@ -115,6 +122,7 @@ class AgentService:
             "audit_status": audit.status if audit else None,
             "audit_summary": audit.summary if audit else None,
             "audit_findings": audit.findings if audit else None,
+            "connectors_section": connectors_section,
         }
         prompt_content = context_svc.render_step_instructions(prompt_vars)
         prompt_content = self._rewrite_attachment_urls(prompt_content)

@@ -54,6 +54,7 @@ class PiExecutor(StepExecutor):
             step_type=ctx.step_type,
             space_variables=ctx.space_variables,
             skills=ctx.skills,
+            connectors=ctx.connectors,
             extensions=extensions,
             extra_env=extra_env,
         )

@@ -78,6 +78,29 @@ class TestContextService:
         assert "Tests must pass" in result
         assert "FAILED test_foo.py" in result
 
+    def test_render_step_instructions_with_connectors(self, temp_dir):
+        svc = self._setup_dirs(temp_dir)
+        result = svc.render_step_instructions({
+            "run_id": "abc123",
+            "run": {"id": "abc123", "dir": "/tmp/artifacts"},
+            "step_name": "fetch",
+            "step": {"dir": "/tmp/artifacts/00-fetch"},
+            "step_content": "# Fetch commits",
+            "flow_name": "default",
+            "flow": {"name": "default", "dir": ""},
+            "artifacts": [],
+            "attachment": {"dir": "/tmp/attachments"},
+            "gate_failures": None,
+            "connectors_section": (
+                "You have the following MCP tools available for this session:\n\n"
+                "- **GitHub** — MCP tools include `list_commits`.\n\n"
+                "Do **not** substitute bash."
+            ),
+        })
+        assert "## Connectors" in result
+        assert "list_commits" in result
+        assert "Do **not** substitute bash" in result
+
     def test_collect_artifacts(self, temp_dir):
         artifacts_dir = temp_dir / "artifacts"
         step_dir = artifacts_dir / "00-research"

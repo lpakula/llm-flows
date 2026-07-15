@@ -6,10 +6,19 @@ from unittest.mock import patch
 from llmflows.services.chat import (
     build_flow_context,
     build_space_context,
+    build_system_prompt,
     build_tools_section,
 )
 from llmflows.services.flow import FlowService
 from llmflows.services.run import RunService
+
+
+class TestBuildSystemPrompt:
+    def test_requires_step_connectors_when_building_flows(self):
+        prompt = build_system_prompt()
+        assert "Step connectors (mandatory)" in prompt
+        assert "google_workspace" in prompt
+        assert "per step" in prompt.lower()
 
 
 class TestChatSpaceContext:
