@@ -26,7 +26,7 @@ Coverage is reported automatically (`--cov=llmflows --cov-report=term-missing`).
 
 ### Test database
 
-Tests use an **in-memory SQLite DB** via the `test_db` fixture in `conftest.py` — no setup needed. Never use the real `~/.llmflows/llmflows.db` in tests.
+Tests use an **in-memory SQLite DB** via the `test_db` fixture in `conftest.py` — no setup needed. Production uses PostgreSQL (bundled Docker or `DATABASE_URL`); never point tests at the live app database.
 
 ### Writing new tests
 

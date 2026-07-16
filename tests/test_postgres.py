@@ -47,3 +47,11 @@ def test_build_env_args_uses_runner_database_url(monkeypatch):
         args = container_mod._build_env_args(None)
     joined = " ".join(args)
     assert f"DATABASE_URL=postgresql://llmflows:llmflows@{PG_CONTAINER}:5432/llmflows" in joined
+
+
+def test_get_database_url_rejects_sqlite(monkeypatch):
+    from llmflows.db.database import _get_database_url
+
+    monkeypatch.setenv("DATABASE_URL", "sqlite:////tmp/llmflows.db")
+    with pytest.raises(RuntimeError, match="SQLite is no longer supported"):
+        _get_database_url()

@@ -14,9 +14,6 @@ function connectorSetupPrompt(name: string, connectorId: string): string {
   if (GOOGLE_CONNECTOR_IDS.has(connectorId)) {
     return `Help me configure the ${name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`;
   }
-  if (connectorId === "maestro") {
-    return 'Install the Maestro CLI for mobile testing. Run: curl -Ls "https://get.maestro.mobile.dev" | bash. Then verify it works with: maestro --version. Once installed, enable the connector with: llmflows connectors enable maestro.';
-  }
   if (connectorId === "notion") {
     return "Help me configure the Notion connector. Use your llmflows-connectors skill. Create a personal access token (PAT) — do not create an internal connection. Use browser_navigate to open the Notion Developer portal Personal access tokens page, walk me through creating a token with read content capability (and update/insert if I want the agent to edit), and I'll handle login when needed.";
   }

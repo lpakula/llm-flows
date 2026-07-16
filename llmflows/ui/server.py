@@ -426,10 +426,10 @@ MCP_CATALOG: list[dict] = [
         "command": "npx @modelcontextprotocol/server-github",
         "category": "Developer",
         "description": "Manage repositories, issues, pull requests, and more.",
-        "required_credentials": ["GITHUB_TOKEN"],
+        "required_credentials": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
         "config_fields": [
-            {"key": "GITHUB_TOKEN", "label": "GitHub Personal Access Token", "type": "secret",
-             "target": "credentials", "placeholder": "ghp_..."},
+            {"key": "GITHUB_PERSONAL_ACCESS_TOKEN", "label": "GitHub Personal Access Token",
+             "type": "secret", "target": "credentials", "placeholder": "ghp_... or gho_..."},
         ],
         "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
     },
@@ -470,19 +470,6 @@ MCP_CATALOG: list[dict] = [
              "placeholder": "postgresql://user:pass@host:5432/db"},
         ],
         "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
-    },
-    {
-        "server_id": "maestro",
-        "name": "Maestro",
-        "command": "maestro mcp",
-        "category": "Testing",
-        "description": "Drive Android emulators and iOS simulators for mobile E2E testing via Maestro CLI.",
-        "required_credentials": [],
-        "config_fields": [
-            {"key": "MAESTRO_CLOUD_API_KEY", "label": "Maestro Cloud API Key (optional)", "type": "secret",
-             "target": "credentials", "placeholder": "For cloud device runs only"},
-        ],
-        "docs_url": "https://docs.maestro.dev/get-started/maestro-mcp",
     },
 ]
 

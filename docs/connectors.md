@@ -71,7 +71,7 @@ llmflows connectors config <server_id> <KEY> <value>
 For example:
 
 ```bash
-llmflows connectors config github GITHUB_TOKEN ghp_xxx
+llmflows connectors config github GITHUB_PERSONAL_ACCESS_TOKEN ghp_xxx
 llmflows connectors config notion NOTION_TOKEN ntn_xxx
 llmflows connectors config postgres DATABASE_URL postgresql://user:pass@host:5432/db
 llmflows connectors config slack_mcp SLACK_BOT_TOKEN xoxb-xxx

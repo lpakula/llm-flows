@@ -6,7 +6,7 @@
 - A CLI (`llmflows`) built with Click
 - A daemon that polls and executes flow runs
 - A FastAPI backend + React/Vite frontend
-- A central SQLite DB at `~/.llmflows/llmflows.db`
+- A central PostgreSQL database (bundled Docker container, or `DATABASE_URL`)
 - Per-space run artifacts under `.llmflows/<flow-name>/runs/` inside each registered project directory
 
 ## Key directories
@@ -14,7 +14,7 @@
 ```
 llmflows/
   cli/          Click command groups (daemon, flow, run, agent, space, ui, connectors)
-  db/           SQLAlchemy models, Alembic migrations (SQLite, batch_alter_table pattern)
+  db/           SQLAlchemy models, Alembic migrations (PostgreSQL)
   services/     Core logic — daemon.py, flow.py, run.py, agent.py, context.py, gate.py
     executors/  PiExecutor (agent/hitl steps)
   ui/
@@ -98,10 +98,9 @@ The production static build is committed so users installing via pip don't need 
 
 ## Database migrations
 
-Alembic under `llmflows/db/migrations/versions/`. Always use `batch_alter_table` for column changes (SQLite compatibility):
+Alembic under `llmflows/db/migrations/versions/`. Use standard Alembic operations for PostgreSQL:
 ```python
-with op.batch_alter_table("table_name") as batch_op:
-    batch_op.add_column(sa.Column(...))
+op.add_column("table_name", sa.Column(...))
 ```
 
 ## Dependencies

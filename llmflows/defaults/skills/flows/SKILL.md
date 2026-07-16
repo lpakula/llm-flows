@@ -20,7 +20,7 @@ A flow is an ordered list of steps that `llm-flows` executes sequentially. Each 
 5. If all gates pass, the daemon advances to the next step
 6. If a gate fails, the agent is relaunched with failure context to fix the problem
 7. After the last step, the run completes
-8. After every run (success or failure), a `__post_run__` step analyses the run, writes a summary to `inbox.md`, and optionally proposes flow improvements via `improvement.md` + `flow.json`
+8. After every run (success or failure), a `__post_run__` step analyses the run, writes a summary to `inbox.md`, and optionally proposes flow improvements via `improvement.md`. Successful-run analysis is **skipped** when an unacknowledged `flow_improvement` inbox item already exists for that flow (so proposals don't stack). Failed runs still get error analysis; the pending proposal is injected so the analyst avoids duplicates.
 9. If any step wrote `inbox.md` in the run artifacts root, a notification is sent via Telegram on completion
 
 ### Artifacts are the backbone

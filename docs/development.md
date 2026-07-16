@@ -79,7 +79,7 @@ Migrations use Alembic and live in `llmflows/db/migrations/versions/`. Each migr
 To add a new migration:
 
 1. Create a new file in `llmflows/db/migrations/versions/` following the naming convention (`0003_description.py`)
-2. Use `op.batch_alter_table` for SQLite compatibility
+2. Use standard Alembic operations (`op.add_column`, `op.alter_column`, etc.) — the app database is PostgreSQL
 3. The migration runs automatically on startup via `init_db()`
 
 Example:
@@ -97,12 +97,10 @@ revision: str = '0003'
 down_revision = '0002'
 
 def upgrade() -> None:
-    with op.batch_alter_table('flows') as batch_op:
-        batch_op.add_column(sa.Column('new_field', sa.String(100), nullable=True))
+    op.add_column('flows', sa.Column('new_field', sa.String(100), nullable=True))
 
 def downgrade() -> None:
-    with op.batch_alter_table('flows') as batch_op:
-        batch_op.drop_column('new_field')
+    op.drop_column('flows', 'new_field')
 ```
 
 ## Contributing

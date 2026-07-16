@@ -18,7 +18,7 @@ llm-flows is a local workflow orchestrator for AI agents — think "CI for codin
 └─────────┘     └────────┘
                      │
                 ┌────┴────┐
-                │   DB    │  (SQLite, ~/.llmflows/)
+                │   DB    │  (PostgreSQL, bundled or DATABASE_URL)
                 └─────────┘
 ```
 
@@ -26,7 +26,7 @@ llm-flows is a local workflow orchestrator for AI agents — think "CI for codin
 - **UI** — web dashboard (FastAPI + React) for the same operations with a visual interface
 - **Daemon** — background engine that polls for queued runs, executes steps, evaluates gates, and advances flows
 - **Executors** — per-step-type backends that launch the right agent or command
-- **DB** — local SQLite database storing spaces, flows, runs, settings, and agent config
+- **DB** — PostgreSQL database storing spaces, flows, runs, settings, and agent config
 
 ---
 

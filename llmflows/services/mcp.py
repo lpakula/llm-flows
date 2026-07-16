@@ -189,7 +189,6 @@ def _build_entry(connector, *, force_host_browser: bool = False, runner: bool = 
 
 
 _EXTRA_BIN_PATHS: list[Path] = [
-    Path.home() / ".maestro" / "bin",
     Path.home() / ".local" / "bin",
     Path("/opt/homebrew/bin"),
     Path("/usr/local/bin"),

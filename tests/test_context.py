@@ -366,6 +366,28 @@ class TestContextService:
         })
         assert "Rejected Proposals" not in result
 
+    def test_post_run_template_includes_pending_improvement(self, temp_dir):
+        """Pending unacked proposals are injected so the analyst avoids duplicates."""
+        from jinja2 import Environment, ChainableUndefined
+        from llmflows.services.context import DEFAULTS_DIR
+        template_file = DEFAULTS_DIR / "step_post_run.md"
+        if not template_file.exists():
+            return
+        env = Environment(autoescape=False, undefined=ChainableUndefined)
+        template = env.from_string(template_file.read_text())
+        result = template.render({
+            "run": {"id": "abc123", "dir": "/tmp/run"},
+            "flow_name": "test-flow",
+            "flow_version": 1,
+            "outcome": "error",
+            "language": "English",
+            "error_details": "Step failed",
+            "failed_step": "build",
+            "pending_improvement": "1. **Add retry**: Retry the fetch step on 429.",
+        })
+        assert "Pending Improvement Proposal" in result
+        assert "Add retry" in result
+
     def test_step_template_does_not_include_memory(self, temp_dir):
         """Step prompts do not inject memory files — steps manage their own."""
         svc = self._setup_dirs(temp_dir)

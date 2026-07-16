@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from alembic import command as _alembic
 from alembic.config import Config as _AlembicConfig
@@ -18,6 +17,12 @@ def _get_database_url() -> str:
     """Resolve the database URL from env or start bundled Postgres."""
     url = os.environ.get("DATABASE_URL")
     if url:
+        if url.startswith("sqlite:"):
+            raise RuntimeError(
+                "SQLite is no longer supported. Set DATABASE_URL to a PostgreSQL "
+                "URL (e.g. postgresql://llmflows:llmflows@localhost:5433/llmflows) "
+                "or unset it to use the bundled Postgres container."
+            )
         return url
     from ..services.postgres import ensure_postgres
 
@@ -42,11 +47,6 @@ def _alembic_cfg(url: str) -> _AlembicConfig:
 
 _engine = None
 _SessionLocal = None
-
-
-def get_db_path() -> Path:
-    """Return the llmflows home directory (legacy name)."""
-    return SYSTEM_DIR
 
 
 def _seed_agent_aliases(session):
@@ -124,7 +124,7 @@ def init_db(*, seed: bool = True) -> Path:
     return SYSTEM_DIR
 
 
-def get_engine(db_path: Optional[Path] = None):
+def get_engine():
     """Get or create the database engine."""
     global _engine
     if _engine is not None:
@@ -134,18 +134,18 @@ def get_engine(db_path: Optional[Path] = None):
     return _engine
 
 
-def get_session(db_path: Optional[Path] = None) -> Session:
+def get_session() -> Session:
     """Get a new database session."""
     global _SessionLocal
-    engine = get_engine(db_path)
+    engine = get_engine()
     if _SessionLocal is None:
         _SessionLocal = sessionmaker(bind=engine)
     return _SessionLocal()
 
 
-def get_db(db_path: Optional[Path] = None):
+def get_db():
     """Context manager for database sessions."""
-    session = get_session(db_path)
+    session = get_session()
     try:
         yield session
         session.commit()

@@ -633,6 +633,33 @@ class TestRunService:
         runs = run_svc.list_by_space(test_space.id)
         assert len(runs) == 2
 
+    def test_get_pending_flow_improvement(self, test_db, test_space):
+        run_svc = RunService(test_db)
+        flow_svc = FlowService(test_db)
+        flow = flow_svc.create("pending-improve-flow", space_id=test_space.id)
+        run = run_svc.enqueue(test_space.id, flow.id)
+
+        assert run_svc.get_pending_flow_improvement(flow_id=flow.id) is None
+
+        item = run_svc.create_inbox_item(
+            type="flow_improvement",
+            reference_id=run.id,
+            space_id=test_space.id,
+            title="Proposal",
+        )
+        found = run_svc.get_pending_flow_improvement(flow_id=flow.id)
+        assert found is not None
+        assert found.id == item.id
+
+        by_name = run_svc.get_pending_flow_improvement(
+            flow_name=flow.name, space_id=test_space.id,
+        )
+        assert by_name is not None
+        assert by_name.id == item.id
+
+        run_svc.archive_inbox_item(item.id)
+        assert run_svc.get_pending_flow_improvement(flow_id=flow.id) is None
+
 
 class TestStepRunService:
     def test_step_run_log_and_prompt(self, test_db, test_space):
@@ -1475,6 +1502,80 @@ class TestDaemonTimeout:
         assert result is False
 
 
+class TestPostRunPendingImprovement:
+    """Skip successful post-run analysis when a flow improvement is still pending."""
+
+    def test_skips_post_run_when_pending_improvement_exists(self, test_db, test_space):
+        from llmflows.services.run_daemon import RunDaemon
+
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("skip-post-run-flow", space_id=test_space.id)
+
+        prior = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.create_inbox_item(
+            type="flow_improvement",
+            reference_id=prior.id,
+            space_id=test_space.id,
+            title="Pending proposal",
+        )
+
+        run = run_svc.enqueue(test_space.id, flow.id)
+
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
+
+        with patch.object(RunDaemon, "_get_space", return_value=test_space), \
+             patch("llmflows.services.agent.AgentService.prepare_and_launch_step") as mock_launch:
+            daemon._launch_post_run_step(
+                run, Path(test_space.path), 1, run_svc, flow_svc,
+            )
+
+        mock_launch.assert_not_called()
+        assert run_svc.get_latest_step_run(run.id, "__post_run__") is None
+
+    def test_still_launches_post_run_on_error_with_pending(self, test_db, test_space):
+        from llmflows.services.run_daemon import RunDaemon
+
+        flow_svc = FlowService(test_db)
+        run_svc = RunService(test_db)
+        flow = flow_svc.create("error-post-run-flow", space_id=test_space.id)
+
+        prior = run_svc.enqueue(test_space.id, flow.id)
+        run_svc.create_inbox_item(
+            type="flow_improvement",
+            reference_id=prior.id,
+            space_id=test_space.id,
+            title="Pending proposal",
+        )
+
+        run = run_svc.enqueue(test_space.id, flow.id)
+        run.outcome = "error"
+        test_db.commit()
+
+        daemon = RunDaemon.__new__(RunDaemon)
+        daemon.run_id = run.id
+        daemon._space_id = test_space.id
+
+        with patch.object(RunDaemon, "_get_space", return_value=test_space), \
+             patch("llmflows.services.run_daemon.resolve_alias", return_value=("pi", "mini-model")), \
+             patch("llmflows.services.run_daemon.load_system_config", return_value={"daemon": {}}), \
+             patch("llmflows.services.agent.AgentService.prepare_and_launch_step",
+                   return_value=(True, "prompt", "/tmp/log")) as mock_launch, \
+             patch("llmflows.services.audit.FlowAuditService.get_audit", return_value=None):
+            daemon._launch_post_run_step(
+                run, Path(test_space.path), 1, run_svc, flow_svc,
+                error_context={
+                    "failed_step": "build",
+                    "error_details": "boom",
+                    "log_tail": "error",
+                },
+            )
+
+        mock_launch.assert_called_once()
+        assert run_svc.get_latest_step_run(run.id, "__post_run__") is not None
+
 
 class TestChannelManagerMute:
     def test_notify_suppressed_when_muted(self):
@@ -1889,6 +1990,44 @@ class TestChatContainerEnv:
 
         assert servers[0]["env"]["NOTION_TOKEN"] == "ntn_legacy"
         assert "NOTION_API_KEY" not in servers[0]["env"]
+
+    def test_github_connector_passes_personal_access_token(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="github",
+            name="GitHub",
+            command="npx @modelcontextprotocol/server-github",
+            enabled=True,
+            credentials='{"GITHUB_PERSONAL_ACCESS_TOKEN": "gho_test"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["github"])
+
+        assert servers[0]["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] == "gho_test"
+        assert "GITHUB_TOKEN" not in servers[0]["env"]
+
+    def test_github_connector_does_not_map_legacy_token_key(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="github",
+            name="GitHub",
+            command="npx @modelcontextprotocol/server-github",
+            enabled=True,
+            credentials='{"GITHUB_TOKEN": "gho_legacy"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["github"])
+
+        assert servers[0]["env"].get("GITHUB_TOKEN") == "gho_legacy"
+        assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in servers[0]["env"]
 
     def test_build_pi_mcp_env_runner_keeps_headless_when_configured(self, test_db):
         from llmflows.db.models import McpConnector

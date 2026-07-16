@@ -450,6 +450,34 @@ class RunService:
         self.session.commit()
         return item
 
+    def get_pending_flow_improvement(
+        self, *, flow_id: str | None = None, flow_name: str | None = None, space_id: str | None = None,
+    ) -> Optional[InboxItem]:
+        """Return an unacknowledged flow_improvement inbox item for a flow, if any.
+
+        Acknowledgement removes the inbox item (approve / reject / discard), so
+        any remaining ``flow_improvement`` row is treated as pending.
+        """
+        from ..db.models import Flow
+
+        query = (
+            self.session.query(InboxItem)
+            .join(FlowRun, FlowRun.id == InboxItem.reference_id)
+            .filter(InboxItem.type == "flow_improvement")
+            .filter(InboxItem.archived_at.is_(None))
+        )
+        if flow_id:
+            query = query.filter(FlowRun.flow_id == flow_id)
+        elif flow_name and space_id:
+            query = (
+                query
+                .join(Flow, Flow.id == FlowRun.flow_id)
+                .filter(FlowRun.space_id == space_id, Flow.name == flow_name)
+            )
+        else:
+            return None
+        return query.order_by(InboxItem.created_at.desc()).first()
+
     def archive_inbox_item(self, item_id: str) -> bool:
         item = self.session.query(InboxItem).filter_by(id=item_id).first()
         if not item:

@@ -866,7 +866,25 @@ class RunDaemon:
             logger.exception("Post-run step failed to launch for run %s", run.id)
 
     def _launch_post_run_step(self, run, working_path, step_position, run_svc, flow_svc, error_context=None) -> None:
-        """Launch the post-run analysis step."""
+        """Launch the post-run analysis step.
+
+        Skips successful-run analysis when an unacknowledged flow improvement
+        proposal is already waiting in the inbox for this flow — avoid stacking
+        redundant reports. Error analysis still runs so failures get an inbox.md.
+        """
+        pending = run_svc.get_pending_flow_improvement(
+            flow_id=run.flow_id,
+            flow_name=run.flow_name,
+            space_id=run.space_id,
+        )
+        if pending and not error_context:
+            logger.info(
+                "Skipping post-run analysis for run %s — unacknowledged "
+                "flow improvement %s already in inbox for flow %s",
+                run.id, pending.id, run.flow_name or run.flow_id,
+            )
+            return
+
         space = self._get_space(run_svc.session)
         space_root = space_execution_root(space.path)
         artifacts_dir = ContextService.get_artifacts_dir(space_root, run.id, run.flow_name or "")
@@ -882,6 +900,15 @@ class RunDaemon:
         flow_dir = ContextService.get_flow_dir(space_root, run.flow_name or "")
         rejected_proposals = ContextService.read_rejected_proposals(flow_dir)
 
+        pending_improvement = ""
+        if pending:
+            pending_run = run_svc.get(pending.reference_id)
+            if pending_run:
+                pending_artifacts = ContextService.get_artifacts_dir(
+                    space_root, pending_run.id, pending_run.flow_name or "",
+                )
+                pending_improvement = ContextService.read_improvement(pending_artifacts) or ""
+
         from .audit import FlowAuditService
         audit = FlowAuditService.get_audit(space.path, run.flow_name or "")
 
@@ -892,6 +919,7 @@ class RunDaemon:
             "outcome": run.outcome or "completed",
             "language": language,
             "rejected_proposals": rejected_proposals,
+            "pending_improvement": pending_improvement,
             "audit_status": audit.status if audit else None,
             "audit_summary": audit.summary if audit else None,
             "audit_findings": audit.findings if audit else None,
