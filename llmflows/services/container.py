@@ -22,7 +22,12 @@ from ..db.database import get_runner_database_url, get_session
 from ..db.models import AgentConfig
 from .network import get_network_args
 from .browser_host import flow_needs_host_browser, prepare_host_browser_for_run
-from .google_host import flow_google_connectors, google_oauth_volume_args, youtube_port_args
+from .google_host import (
+    flow_google_connectors,
+    google_oauth_volume_args,
+    google_tasks_port_args,
+    youtube_port_args,
+)
 
 logger = logging.getLogger("llmflows.container")
 
@@ -880,6 +885,7 @@ def launch_run_container(
         "-w", "/workspace",
         *_build_volume_args(space_path, llmflows_host, google_connectors),
         *youtube_port_args(google_connectors),
+        *google_tasks_port_args(google_connectors),
         *network_args,
         *_hardening_args(),
         *env_args,
@@ -990,6 +996,33 @@ def get_container_logs(container_id: str, tail: int = 100) -> str:
         return ""
 
 
+def _google_connectors_from_mcp_env(env_vars: dict[str, str]) -> set[str]:
+    """Parse Google connector IDs from MCP_SERVERS JSON in chat env.
+
+    Always includes ``google_workspace`` so chat can read *or create*
+    ``~/.google-workspace-mcp/credentials.json`` during connector setup
+    (fresh installs have no credentials yet).
+    """
+    from .google_host import GOOGLE_CONNECTOR_IDS
+
+    raw = env_vars.get("MCP_SERVERS") or "[]"
+    try:
+        servers = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        servers = []
+    needed = {
+        s.get("server_id")
+        for s in servers
+        if isinstance(s, dict) and s.get("server_id") in GOOGLE_CONNECTOR_IDS
+    }
+    # Always mount Workspace + Tasks OAuth dirs for chat so connector-setup
+    # agents can read/write credentials.json and complete Tasks auth
+    # (tokens persist on the host even when those connectors aren't selected).
+    needed.add("google_workspace")
+    needed.add("google_tasks")
+    return needed
+
+
 def launch_chat_container(
     space_path: str,
     pi_command: list[str],
@@ -1003,6 +1036,7 @@ def launch_chat_container(
     """
     network_args = get_network_args(needs_browser_host=False)
     name = f"llmflows-chat-{session_id[:8]}" if session_id else "llmflows-chat"
+    google_connectors = _google_connectors_from_mcp_env(env_vars)
 
     cmd = [
         "docker", "run", "-i", "--rm",
@@ -1012,10 +1046,17 @@ def launch_chat_container(
         "-w", "/workspace",
         "-v", f"{space_path}:/workspace",
         *_home_volume_args(str(SYSTEM_DIR)),
+        *google_oauth_volume_args(google_connectors),
+        *youtube_port_args(google_connectors),
+        *google_tasks_port_args(google_connectors),
         *network_args,
     ]
     env_vars = dict(env_vars)
     env_vars["LLMFLOWS_SPACE_HOST_PATH"] = space_path
+    # Match runner: Google MCP packages resolve tokens under /root/...
+    if google_connectors:
+        env_vars.setdefault("HOME", "/root")
+        env_vars.setdefault("LLMFLOWS_USER_HOME", os.environ.get("LLMFLOWS_USER_HOME", str(Path.home())))
     for k, v in env_vars.items():
         cmd.extend(["-e", f"{k}={v}"])
 

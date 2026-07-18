@@ -14,7 +14,7 @@ Bundled skills live in `llmflows/defaults/skills/`. Before starting an llmflows-
 | **overview** | `llmflows/defaults/skills/overview/SKILL.md` | User asks what llm-flows is, how it works, or needs a platform overview |
 | **flows** | `llmflows/defaults/skills/flows/SKILL.md` | Creating or editing flow definitions, steps, gates, conditions |
 | **cli** | `llmflows/defaults/skills/cli/SKILL.md` | Managing flows, runs, schedules, tools, and variables via CLI |
-| **connectors** | `llmflows/defaults/skills/connectors/SKILL.md` | Setting up Google Workspace, YouTube, Notion, GitHub, Slack, Linear, Postgres connectors |
+| **connectors** | `llmflows/defaults/skills/connectors/SKILL.md` | Setting up Google Workspace, YouTube, Google Tasks, Notion, GitHub, Slack, Linear, Postgres connectors |
 | **skills** | `llmflows/defaults/skills/skills/SKILL.md` | Creating and managing skills for llm-flows spaces |
 
 ## How to use

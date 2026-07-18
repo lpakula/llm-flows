@@ -441,6 +441,20 @@ def test_cancel_runner_image_build_terminates_proc():
         container_mod._build_state["log_lines"] = []
 
 
+def test_google_connectors_from_mcp_env_always_includes_workspace_and_tasks(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLMFLOWS_USER_HOME", str(tmp_path))
+    # Fresh install: still mount Workspace + Tasks OAuth dirs for setup/auth.
+    assert container_mod._google_connectors_from_mcp_env({}) == {
+        "google_workspace", "google_tasks",
+    }
+    assert container_mod._google_connectors_from_mcp_env({
+        "MCP_SERVERS": json.dumps([
+            {"server_id": "youtube"},
+            {"server_id": "notion"},
+        ]),
+    }) == {"youtube", "google_workspace", "google_tasks"}
+
+
 def test_dev_container_env_vars_sets_pythonpath_in_dev(monkeypatch):
     monkeypatch.setenv("LLMFLOWS_DEV_HOME", "/tmp/.llmflows")
     assert container_mod.dev_container_env_vars() == {

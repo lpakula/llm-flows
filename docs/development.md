@@ -64,7 +64,7 @@ llmflows/
 ├── db/               # SQLAlchemy models (McpConnector, etc.) and Alembic migrations
 ├── services/         # Business logic (daemon, runs, flows, agents, gateway)
 │   └── mcp.py        # MCP connector bridge (starts/stops connector servers)
-├── tools/            # Built-in MCP servers (browser, web search) — TypeScript
+├── tools/            # Built-in MCP servers (browser, web search, gmail labels) — TypeScript
 ├── ui/
 │   ├── server.py     # FastAPI backend (includes connector catalog + API)
 │   └── frontend/     # React + Vite frontend

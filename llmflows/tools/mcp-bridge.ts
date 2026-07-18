@@ -5,6 +5,9 @@
  * For each server, spawns a subprocess via stdio transport, discovers tools via
  * listTools(), and registers them as Pi tools.  Tool calls are forwarded to the
  * correct MCP server.  Subprocesses are cleaned up when the bridge exits.
+ *
+ * If an MCP server process dies between tool calls, the bridge reconnects once
+ * and retries the call (common with long-lived npx-backed servers in Docker).
  */
 
 import { Type, type TSchema } from "@sinclair/typebox";
@@ -16,6 +19,12 @@ interface ServerEntry {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+}
+
+interface LiveServer {
+  entry: ServerEntry;
+  client: Client;
+  transport: StdioClientTransport;
 }
 
 const MCP_SERVERS: ServerEntry[] = JSON.parse(process.env.MCP_SERVERS || "[]");
@@ -56,48 +65,109 @@ function jsonSchemaToTypebox(schema: any): TSchema {
   return Type.Any();
 }
 
-const transports: StdioClientTransport[] = [];
+function serverEnv(entry: ServerEntry): Record<string, string> {
+  return {
+    PATH: process.env.PATH || "",
+    HOME: process.env.HOME || "",
+    NODE_PATH: process.env.NODE_PATH || "",
+    TMPDIR: process.env.TMPDIR || "/tmp",
+    ...(process.env.LLMFLOWS_RUNNER
+      ? { LLMFLOWS_RUNNER: process.env.LLMFLOWS_RUNNER }
+      : {}),
+    ...entry.env,
+  };
+}
+
+async function connectServer(entry: ServerEntry): Promise<LiveServer> {
+  const transport = new StdioClientTransport({
+    command: entry.command,
+    args: entry.args || [],
+    env: serverEnv(entry),
+    stderr: "inherit",
+  });
+  transport.onclose = () => {
+    console.error(`[mcp-bridge] Transport closed for ${entry.server_id}`);
+  };
+  transport.onerror = (err) => {
+    console.error(`[mcp-bridge] Transport error for ${entry.server_id}:`, err);
+  };
+
+  const client = new Client(
+    { name: `llmflows-bridge-${entry.server_id}`, version: "1.0.0" },
+    { capabilities: {} },
+  );
+  await client.connect(transport);
+  return { entry, client, transport };
+}
+
+function isDisconnectError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not connected/i.test(msg);
+}
+
+const lives = new Map<string, LiveServer>();
 
 process.on("exit", () => {
-  for (const t of transports) {
-    try { t.close(); } catch { /* ignore */ }
+  for (const live of lives.values()) {
+    try {
+      live.transport.close();
+    } catch {
+      /* ignore */
+    }
   }
 });
+
+async function callWithReconnect(
+  serverId: string,
+  toolName: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  let live = lives.get(serverId);
+  if (!live) {
+    throw new Error(`MCP server '${serverId}' is not connected`);
+  }
+
+  try {
+    return await live.client.callTool({ name: toolName, arguments: params });
+  } catch (err) {
+    if (!isDisconnectError(err)) throw err;
+
+    console.error(
+      `[mcp-bridge] ${serverId} disconnected during ${toolName}; reconnecting…`,
+    );
+    try {
+      await live.transport.close();
+    } catch {
+      /* ignore */
+    }
+
+    live = await connectServer(live.entry);
+    lives.set(serverId, live);
+    // Refresh tool metadata cache on the new client.
+    await live.client.listTools();
+    return await live.client.callTool({ name: toolName, arguments: params });
+  }
+}
 
 export default async function activate(api: any) {
   if (MCP_SERVERS.length === 0) return;
 
   for (const server of MCP_SERVERS) {
-    let client: Client;
+    let live: LiveServer;
     try {
-      const transport = new StdioClientTransport({
-        command: server.command,
-        args: server.args || [],
-        env: {
-          PATH: process.env.PATH || "",
-          HOME: process.env.HOME || "",
-          NODE_PATH: process.env.NODE_PATH || "",
-          TMPDIR: process.env.TMPDIR || "/tmp",
-          ...(process.env.LLMFLOWS_RUNNER
-            ? { LLMFLOWS_RUNNER: process.env.LLMFLOWS_RUNNER }
-            : {}),
-          ...server.env,
-        },
-      });
-      transports.push(transport);
-      client = new Client(
-        { name: `llmflows-bridge-${server.server_id}`, version: "1.0.0" },
-        { capabilities: {} },
-      );
-      await client.connect(transport);
+      live = await connectServer(server);
+      lives.set(server.server_id, live);
     } catch (err) {
-      console.error(`[mcp-bridge] Failed to start ${server.server_id} (${server.command}):`, err);
+      console.error(
+        `[mcp-bridge] Failed to start ${server.server_id} (${server.command}):`,
+        err,
+      );
       continue;
     }
 
     let tools: any[];
     try {
-      const result = await client.listTools();
+      const result = await live.client.listTools();
       tools = result.tools || [];
     } catch (err) {
       console.error(`[mcp-bridge] Failed to list tools from ${server.server_id}:`, err);
@@ -109,19 +179,17 @@ export default async function activate(api: any) {
       const parameters = tool.inputSchema
         ? jsonSchemaToTypebox(tool.inputSchema)
         : Type.Object({});
+      const serverId = server.server_id;
 
       api.registerTool({
         name: toolName,
         label: tool.name,
-        description: tool.description || `Tool from ${server.server_id}`,
+        description: tool.description || `Tool from ${serverId}`,
         promptSnippet: tool.description || "",
         parameters,
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
-            const result = await client.callTool({
-              name: toolName,
-              arguments: params,
-            });
+            const result = await callWithReconnect(serverId, toolName, params);
             const content = (result as any).content;
             if (Array.isArray(content)) return { content };
             if (typeof content === "string") {

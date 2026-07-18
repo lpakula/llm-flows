@@ -90,8 +90,9 @@ Connectors give agents access to external services via [MCP](https://modelcontex
 
 Install more from the **connector catalog** in the UI or CLI — no code required:
 
-- **Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides
+- **Google Workspace** — Gmail (incl. archive), Calendar, Drive, Docs, Sheets, Slides
 - **YouTube** — search videos, list playlists, get transcripts
+- **Google Tasks** — list, create, update, and complete tasks
 - **Notion** — search, read, and update pages and databases
 - **GitHub** — manage repositories, issues, and pull requests
 - **Slack** — read and send messages in channels

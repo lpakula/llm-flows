@@ -27,8 +27,9 @@ llmflows connectors catalog
 
 | ID | Name | Category | Description |
 |----|------|----------|-------------|
-| `google_workspace` | Google Workspace | Google Workspace | Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts. |
+| `google_workspace` | Google Workspace | Google Workspace | Gmail (including archive / remove labels), Calendar, Drive, Docs, Sheets, Slides, and Contacts. |
 | `youtube` | YouTube | Google Workspace | Search videos, list playlists, get transcripts, and access private YouTube data. |
+| `google_tasks` | Google Tasks | Google Workspace | List, create, update, complete, and delete Google Tasks. |
 | `notion` | Notion | Productivity | Search, read, and update Notion pages and databases. Create a [personal access token](https://www.notion.so/profile/integrations) (recommended). |
 | `github` | GitHub | Developer | Manage repositories, issues, pull requests, and more. |
 | `slack_mcp` | Slack | Productivity | Read and send messages in Slack channels. |
@@ -150,8 +151,8 @@ DuckDuckGo is the default and requires no API key.
 
 ## Google Workspace setup
 
-The Google Workspace and YouTube connectors require OAuth credentials from a Google Cloud project. The easiest way to set this up is to ask the **Chat assistant** — it has a built-in skill that walks you through the entire process interactively using `gcloud` CLI and browser automation:
+The Google Workspace, YouTube, and Google Tasks connectors require OAuth credentials from a Google Cloud project. The easiest way to set this up is to ask the **Chat assistant** — it has a built-in skill that walks you through the process in the browser (Cloud Console). It does **not** use `gcloud` (unavailable in the chat container).
 
 > "Help me set up the Google Workspace connector"
 
-The assistant will guide you through creating a Google Cloud project, enabling the required APIs, configuring OAuth consent, and saving credentials.
+If `~/.google-workspace-mcp/credentials.json` already exists, the assistant reads `project_id` from that file instead of asking you for the project name. On a **fresh install**, that file does not exist yet — the assistant creates a Cloud project in the browser, downloads/writes the Desktop OAuth client JSON to the host path `~/.google-workspace-mcp/credentials.json` (bind-mounted into chat/runners), then you enable the connector and complete one OAuth consent.

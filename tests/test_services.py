@@ -2029,6 +2029,96 @@ class TestChatContainerEnv:
         assert servers[0]["env"].get("GITHUB_TOKEN") == "gho_legacy"
         assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in servers[0]["env"]
 
+    def test_google_workspace_auto_includes_gmail_labels(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="google_workspace",
+            name="Google Workspace",
+            command="npx @alanxchen/google-workspace-mcp",
+            enabled=True,
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["google_workspace"])
+
+        ids = [s["server_id"] for s in servers]
+        assert "google_workspace" in ids
+        assert "gmail_labels" in ids
+        companion = next(s for s in servers if s["server_id"] == "gmail_labels")
+        assert companion["args"][0].endswith("mcp-server-gmail-labels.ts")
+
+    def test_google_tasks_defaults_oauth_credentials_path(self, test_db, tmp_path, monkeypatch):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        monkeypatch.setenv("LLMFLOWS_USER_HOME", str(tmp_path))
+        test_db.add(McpConnector(
+            server_id="google_tasks",
+            name="Google Tasks",
+            command="npx @scottie-will/google-tasks-mcp",
+            enabled=True,
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["google_tasks"])
+            runner_servers = get_mcp_servers(["google_tasks"], runner=True)
+
+        assert servers[0]["env"]["GOOGLE_OAUTH_CREDENTIALS"] == str(
+            tmp_path / ".google-workspace-mcp" / "credentials.json"
+        )
+        assert runner_servers[0]["env"]["GOOGLE_OAUTH_CREDENTIALS"] == (
+            "/root/.google-workspace-mcp/credentials.json"
+        )
+        assert runner_servers[0]["env"]["HOME"] == "/root"
+        # Host may resolve npx to an absolute path; runner/chat must not —
+        # host nvm paths are invisible inside the container.
+        assert runner_servers[0]["command"] == "npx"
+        assert runner_servers[0]["args"][:2] == ["-y", "@scottie-will/google-tasks-mcp"]
+
+    def test_gmail_labels_not_included_without_google_workspace(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="notion",
+            name="Notion",
+            command="npx @notionhq/notion-mcp-server",
+            enabled=True,
+            credentials='{"NOTION_TOKEN": "ntn_test"}',
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["notion"])
+
+        assert all(s["server_id"] != "gmail_labels" for s in servers)
+
+    def test_gmail_labels_runner_uses_container_paths(self, test_db):
+        from llmflows.db.models import McpConnector
+        from llmflows.services.mcp import get_mcp_servers
+
+        test_db.add(McpConnector(
+            server_id="google_workspace",
+            name="Google Workspace",
+            command="npx @alanxchen/google-workspace-mcp",
+            enabled=True,
+        ))
+        test_db.commit()
+
+        with patch("llmflows.db.database.get_session", return_value=test_db):
+            servers = get_mcp_servers(["google_workspace"], runner=True)
+
+        companion = next(s for s in servers if s["server_id"] == "gmail_labels")
+        assert companion["command"] == "/opt/llmflows/tools/node_modules/.bin/tsx"
+        assert companion["args"] == ["/opt/llmflows/llmflows/tools/mcp-server-gmail-labels.ts"]
+        assert companion["env"]["NODE_PATH"] == "/opt/llmflows/tools/node_modules"
+        assert companion["env"]["HOME"] == "/root"
+        assert companion["env"]["LLMFLOWS_RUNNER"] == "1"
+
     def test_build_pi_mcp_env_runner_keeps_headless_when_configured(self, test_db):
         from llmflows.db.models import McpConnector
         from llmflows.services.chat import build_pi_mcp_env

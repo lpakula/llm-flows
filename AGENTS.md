@@ -23,7 +23,7 @@ llmflows/
     static/     Production build output (committed, served by FastAPI)
   utils/        git.py (diff helpers, get_worktree_diff), other utilities
   defaults/     Bundled prompt templates and default config
-  tools/        Built-in MCP servers (TypeScript)
+  tools/        Built-in MCP servers (browser, web search, gmail labels) — TypeScript
 tests/          Pytest suite — test_api.py, test_services.py, test_models.py, test_context.py
 scripts/
   test.sh       Preferred test runner (Docker-based)

@@ -8,11 +8,20 @@ const BUILTIN_IDS = new Set(["browser", "web_search"]);
 
 function sid(c: ConnectorConfig) { return c.server_id || c.id; }
 
-const GOOGLE_CONNECTOR_IDS = new Set(["google_workspace", "youtube"]);
+const GOOGLE_CONNECTOR_IDS = new Set(["google_workspace", "youtube", "google_tasks"]);
 
 function connectorSetupPrompt(name: string, connectorId: string): string {
+  if (connectorId === "google_tasks") {
+    return (
+      "Help me configure the Google Tasks connector. Use your llmflows-connectors skill. " +
+      "Do not use gcloud — use browser tools. Enable the Tasks API, then you MUST complete Tasks OAuth " +
+      "(run: GOOGLE_OAUTH_CREDENTIALS=\"$HOME/.google-workspace-mcp/credentials.json\" npx -y @scottie-will/google-tasks-mcp auth " +
+      "or call the authenticate tool) and verify ~/.config/google-tasks-mcp/tokens.json exists before saying you are done. " +
+      "Workspace token.json is not enough."
+    );
+  }
   if (GOOGLE_CONNECTOR_IDS.has(connectorId)) {
-    return `Help me configure the ${name} connector. Use your llmflows-connectors skill. Use gcloud CLI to list my projects, let me pick one, then enable the required APIs and walk me through OAuth setup.`;
+    return `Help me configure the ${name} connector. Use your llmflows-connectors skill. Do not use gcloud — use browser tools on Google Cloud Console. If ~/.google-workspace-mcp/credentials.json exists, read project_id from it; otherwise help me create/select a project, enable the required APIs, and complete OAuth setup.`;
   }
   if (connectorId === "notion") {
     return "Help me configure the Notion connector. Use your llmflows-connectors skill. Create a personal access token (PAT) — do not create an internal connection. Use browser_navigate to open the Notion Developer portal Personal access tokens page, walk me through creating a token with read content capability (and update/insert if I want the agent to edit), and I'll handle login when needed.";
@@ -90,8 +99,6 @@ function ConfigModal({
   const [showErrors, setShowErrors] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const googleIds = GOOGLE_CONNECTOR_IDS;
-  const isGoogle = googleIds.has(sid(connector));
 
   const connectorId = sid(connector);
   useEffect(() => {
@@ -210,14 +217,6 @@ function ConfigModal({
                 Ask the agent to configure
               </button>
             </p>
-            {isGoogle && (
-              <div className="flex items-start gap-2 rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2.5">
-                <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
-                <p className="text-[11px] text-amber-400/80 leading-relaxed">
-                  Agent assistant requires <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noopener noreferrer" className="text-amber-300 hover:text-amber-200 underline">gcloud CLI</a> — install it and run <code className="text-[10px] bg-amber-500/10 px-1.5 py-0.5 rounded text-amber-300">gcloud auth login</code> before starting.
-                </p>
-              </div>
-            )}
           </div>
         )}
 
@@ -498,9 +497,7 @@ export function ToolsView() {
         />
       )}
 
-      {freshModalItem && !freshModalItem.connector && freshModalItem.catalogEntry && (() => {
-        const catIsGoogle = GOOGLE_CONNECTOR_IDS.has(freshModalItem.id);
-        return (
+      {freshModalItem && !freshModalItem.connector && freshModalItem.catalogEntry && (
           <Modal open={!!modalItem} onClose={() => setModalItem(null)}>
             <div className="p-6 space-y-5">
               <div className="flex items-center justify-between">
@@ -532,14 +529,6 @@ export function ToolsView() {
                     Ask the agent to configure
                   </button>
                 </p>
-                {catIsGoogle && (
-                  <div className="flex items-start gap-2 rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2.5">
-                    <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
-                    <p className="text-[11px] text-amber-400/80 leading-relaxed">
-                      Agent assistant requires <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noopener noreferrer" className="text-amber-300 hover:text-amber-200 underline">gcloud CLI</a> — install it and run <code className="text-[10px] bg-amber-500/10 px-1.5 py-0.5 rounded text-amber-300">gcloud auth login</code> before starting.
-                    </p>
-                  </div>
-                )}
               </div>
               <div className="flex justify-end pt-2 border-t border-gray-800">
                 <button onClick={() => setModalItem(null)}
@@ -549,8 +538,7 @@ export function ToolsView() {
               </div>
             </div>
           </Modal>
-        );
-      })()}
+      )}
     </div>
   );
 }

@@ -13,10 +13,16 @@ CONNECTOR_TOOL_HINTS: dict[str, str] = {
         "and fetch/read web page content as text."
     ),
     "google_workspace": (
-        "**Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts."
+        "**Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts. "
+        "Gmail extras (always available with this connector): `archive_email` (remove INBOX), "
+        "`remove_label` (e.g. INBOX, UNREAD, STARRED)."
     ),
     "youtube": (
         "**YouTube** — search videos, list playlists, get transcripts, and access private data."
+    ),
+    "google_tasks": (
+        "**Google Tasks** — `list-task-lists`, `list-tasks`, `create-task`, `update-task`, "
+        "`complete-task`, `delete-task`. Manage Google Tasks lists and items."
     ),
     "notion": (
         "**Notion** — search, read, and update Notion pages and databases. "

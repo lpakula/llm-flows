@@ -95,8 +95,9 @@ Connectors are **per step** — enabling a connector in Settings does **not** at
 Without the right `connectors` on a step, the run agent only gets bash/read/write and cannot call Gmail, Notion, etc.
 
 Before writing flow JSON, map each step to connectors:
-- Gmail, Calendar, Drive, Docs, Sheets, Slides, Contacts → `google_workspace`
+- Gmail (incl. archive/remove labels), Calendar, Drive, Docs, Sheets, Slides, Contacts → `google_workspace`
 - YouTube (search, playlists, transcripts, private data) → `youtube`
+- Google Tasks (create/list/complete tasks) → `google_tasks`
 - Notion pages/databases → `notion`
 - GitHub repos, issues, PRs → `github`
 - Slack messages → `slack_mcp`

@@ -57,7 +57,12 @@ def docker_host_gateway_ip() -> str | None:
 BUILTIN_COMMANDS: dict[str, str] = {
     "web_search": "mcp-server-web-search.ts",
     "browser": "mcp-server-browser.ts",
+    # Companion to google_workspace — not a separate catalog connector.
+    "gmail_labels": "mcp-server-gmail-labels.ts",
 }
+
+# Injected automatically whenever google_workspace is enabled for a run/chat.
+_GOOGLE_WORKSPACE_COMPANIONS = ("gmail_labels",)
 
 
 def get_mcp_servers(connector_ids: list[str] | None = None, *, runner: bool = False) -> list[dict]:
@@ -70,6 +75,9 @@ def get_mcp_servers(connector_ids: list[str] | None = None, *, runner: bool = Fa
     MCP talking to host Chrome (``BROWSER_MODE=host``) when headed mode is set.
 
     ``browser-host`` is an alias for the browser connector in host mode.
+
+    When ``google_workspace`` is included, companion built-ins (Gmail
+    ``remove_label`` / ``archive_email``) are attached automatically.
 
     Returns a list of dicts: [{server_id, command, args, env}, ...]
     """
@@ -99,9 +107,53 @@ def get_mcp_servers(connector_ids: list[str] | None = None, *, runner: bool = Fa
             entry = _build_entry(c, force_host_browser=force_host_browser, runner=runner)
             if entry:
                 result.append(entry)
+
+        _attach_google_workspace_companions(result, runner=runner)
         return result
     finally:
         session.close()
+
+
+def _attach_google_workspace_companions(servers: list[dict], *, runner: bool) -> None:
+    """Append invisible Gmail label helpers when Google Workspace is present."""
+    if not any(s.get("server_id") == "google_workspace" for s in servers):
+        return
+    existing = {s.get("server_id") for s in servers}
+    for companion_id in _GOOGLE_WORKSPACE_COMPANIONS:
+        if companion_id in existing:
+            continue
+        entry = _build_builtin_entry(companion_id, runner=runner)
+        if entry:
+            servers.append(entry)
+
+
+def _build_builtin_entry(server_id: str, *, runner: bool = False) -> dict | None:
+    """Build an MCP_SERVERS entry for a built-in script (no DB connector row)."""
+    script_name = BUILTIN_COMMANDS.get(server_id)
+    if not script_name:
+        return None
+
+    node_modules = resolve_node_modules() if not runner else _CONTAINER_NODE_MODULES
+    env_vars: dict[str, str] = {"NODE_PATH": str(node_modules)}
+    if runner or os.environ.get("LLMFLOWS_RUNNER"):
+        env_vars["LLMFLOWS_RUNNER"] = "1"
+        if server_id == "gmail_labels":
+            # Token dir is mounted at /root/.google-workspace-mcp in runners.
+            env_vars.setdefault("HOME", "/root")
+
+    if runner:
+        tsx_bin = _CONTAINER_NODE_MODULES / ".bin" / "tsx"
+        script = _CONTAINER_MCP_TOOLS / script_name
+    else:
+        script = _TOOLS_DIR / script_name
+        tsx_bin = node_modules / ".bin" / "tsx"
+
+    return {
+        "server_id": server_id,
+        "command": str(tsx_bin),
+        "args": [str(script)],
+        "env": env_vars,
+    }
 
 
 def _connector_env(connector) -> dict[str, str]:
@@ -141,13 +193,26 @@ def _build_entry(connector, *, force_host_browser: bool = False, runner: bool = 
             if gateway:
                 env_vars["BROWSER_CDP_HOST"] = gateway
 
+    if server_id == "google_tasks":
+        from .google_host import default_google_oauth_credentials_path
+        # Reuse the Desktop OAuth client from Google Workspace setup by default.
+        env_vars.setdefault(
+            "GOOGLE_OAUTH_CREDENTIALS",
+            str(default_google_oauth_credentials_path()),
+        )
+
     if runner or os.environ.get("LLMFLOWS_RUNNER"):
         env_vars["LLMFLOWS_RUNNER"] = "1"
         if server_id == "google_workspace":
             # Browser OAuth cannot open from inside the container; device flow works.
             env_vars.setdefault("GOOGLE_WORKSPACE_MCP_AUTH_FLOW", "device")
-        elif server_id == "youtube":
+        elif server_id in ("youtube", "google_tasks"):
             env_vars.setdefault("HOME", "/root")
+        if server_id == "google_tasks":
+            # Credentials / tokens are bind-mounted under /root in the runner.
+            env_vars["GOOGLE_OAUTH_CREDENTIALS"] = (
+                "/root/.google-workspace-mcp/credentials.json"
+            )
 
     if server_id in BUILTIN_COMMANDS:
         script_name = BUILTIN_COMMANDS[server_id]
@@ -176,9 +241,13 @@ def _build_entry(connector, *, force_host_browser: bool = False, runner: bool = 
     if command == "npx" and "-y" not in args:
         args.insert(0, "-y")
 
-    resolved = _find_binary(command)
-    if resolved:
-        command = resolved
+    # When MCP_SERVERS is built on the host for a Docker runner/chat container,
+    # keep bare command names (npx, node, …). Resolving to a host absolute path
+    # (e.g. nvm's npx) makes the bridge fail inside the container.
+    if not runner:
+        resolved = _find_binary(command)
+        if resolved:
+            command = resolved
 
     return {
         "server_id": server_id,

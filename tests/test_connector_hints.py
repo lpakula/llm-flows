@@ -8,3 +8,15 @@ def test_build_tools_section_for_flow_step_forbids_shell_substitution():
     assert "list_commits" in section
     assert "git clone" in section
     assert "Do **not** substitute bash" in section
+
+
+def test_google_workspace_hint_mentions_archive_tools():
+    section = build_tools_section(["google_workspace"], for_flow_step=True)
+    assert "archive_email" in section
+    assert "remove_label" in section
+
+
+def test_google_tasks_hint():
+    section = build_tools_section(["google_tasks"], for_flow_step=True)
+    assert "create-task" in section
+    assert "Google Tasks" in section

@@ -387,7 +387,10 @@ MCP_CATALOG: list[dict] = [
         "name": "Google Workspace",
         "command": "npx @alanxchen/google-workspace-mcp",
         "category": "Google Workspace",
-        "description": "Gmail, Calendar, Drive, Docs, Sheets, Slides, and Contacts.",
+        "description": (
+            "Gmail (including archive / remove labels), Calendar, Drive, Docs, "
+            "Sheets, Slides, and Contacts."
+        ),
         "required_credentials": [],
         "config_fields": [],
         "docs_url": "https://github.com/alanxchen/google-workspace-mcp",
@@ -406,6 +409,24 @@ MCP_CATALOG: list[dict] = [
              "target": "credentials"},
         ],
         "docs_url": "https://github.com/mrsknetwork/ytmcp",
+    },
+    {
+        "server_id": "google_tasks",
+        "name": "Google Tasks",
+        "command": "npx @scottie-will/google-tasks-mcp",
+        "category": "Google Workspace",
+        "description": "List, create, update, complete, and delete Google Tasks.",
+        "required_credentials": [],
+        "config_fields": [
+            {
+                "key": "GOOGLE_OAUTH_CREDENTIALS",
+                "label": "OAuth credentials JSON path",
+                "type": "text",
+                "target": "env",
+                "placeholder": "$HOME/.google-workspace-mcp/credentials.json",
+            },
+        ],
+        "docs_url": "https://github.com/scottie-will/google-tasks-mcp",
     },
     {
         "server_id": "notion",
@@ -476,7 +497,7 @@ MCP_CATALOG: list[dict] = [
 
 from ..services.google_host import google_connector_status
 
-_GOOGLE_CONNECTOR_IDS = {"google_workspace", "youtube"}
+_GOOGLE_CONNECTOR_IDS = {"google_workspace", "youtube", "google_tasks"}
 
 
 def _google_connector_info(server_id: str) -> list[dict]:
@@ -3189,7 +3210,18 @@ async def chat(body: ChatBody):
     """Send a message to the Pi-powered chat assistant. Returns an SSE stream."""
     from ..services.chat import build_pi_command, build_pi_mcp_env
     from ..services.browser_host import prepare_host_browser_for_connectors
-    from ..services.container import image_name, dev_volume_args, ensure_image, _home_volume_args
+    from ..services.container import (
+        image_name,
+        dev_volume_args,
+        ensure_image,
+        _home_volume_args,
+        _google_connectors_from_mcp_env,
+    )
+    from ..services.google_host import (
+        google_oauth_volume_args,
+        google_tasks_port_args,
+        youtube_port_args,
+    )
     from ..db.database import get_runner_database_url, get_session
 
     session_id = body.session_id or uuid.uuid4().hex[:10]
@@ -3255,6 +3287,14 @@ async def chat(body: ChatBody):
     env.update(build_pi_mcp_env(
         selected, runner=True, artifacts_dir=container_artifacts,
     ))
+    google_connectors = _google_connectors_from_mcp_env(env)
+    if google_connectors:
+        # Google MCP packages resolve credentials/tokens under /root/...
+        env.setdefault("HOME", "/root")
+        env.setdefault(
+            "LLMFLOWS_USER_HOME",
+            os.environ.get("LLMFLOWS_USER_HOME", str(Path.home())),
+        )
 
     from ..services.network import get_network_args
     try:
@@ -3277,6 +3317,9 @@ async def chat(body: ChatBody):
         "-v", f"{workspace_path}:/workspace",
         *_home_volume_args(host_home),
         *dev_volume_args(),
+        *google_oauth_volume_args(google_connectors),
+        *youtube_port_args(google_connectors),
+        *google_tasks_port_args(google_connectors),
         *network_args,
     ]
     db_url = get_runner_database_url() or os.environ.get("DATABASE_URL")
