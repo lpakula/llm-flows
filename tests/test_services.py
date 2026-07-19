@@ -1625,6 +1625,23 @@ class TestChannelManagerMute:
 
         ch.send.assert_called_once()
 
+    def test_hitl_notifies_even_when_inbox_muted(self):
+        from llmflows.services.gateway.channel import ChannelManager
+        from unittest.mock import MagicMock
+
+        ch = MagicMock()
+        ch.name = "test"
+        ch.subscribed_events = ["step.awaiting_user", "run.completed"]
+        mgr = ChannelManager()
+        mgr.register(ch)
+
+        muted_config = {"daemon": {"inbox_muted": True}}
+        with patch("llmflows.config.load_system_config", return_value=muted_config):
+            mgr.notify("step.awaiting_user", {"step_name": "ask"})
+            mgr.notify("run.completed", {"flow_name": "test"})
+
+        ch.send.assert_called_once_with("step.awaiting_user", {"step_name": "ask"})
+
 
 class TestKeepAwake:
     """Tests for the keep_awake feature (macOS caffeinate + Linux systemd-inhibit)."""

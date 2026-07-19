@@ -1,6 +1,7 @@
 """Telegram bot for llm-flows — notifications and human-step responses.
 
-Pushes notifications for run completion/error/timeout and awaiting_user steps.
+Pushes HITL messages in full; other inbox events update a single unread-count
+digest message. Flow improvement proposals are inbox-only (no push).
 Allows responding to prompt steps and completing manual steps directly from Telegram.
 """
 
@@ -13,7 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...config import SYSTEM_DIR
 from ...db.models import FlowRun, InboxItem, Space as SpaceModel, StepRun
 from ..context import ContextService
 from ..flow import FlowService
@@ -106,6 +106,13 @@ def _format_elapsed(start, now) -> str:
         return ""
     s = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
     secs = int((now - s).total_seconds())
+    return _format_duration(secs)
+
+
+def _format_duration(secs: float | int | None) -> str:
+    if secs is None:
+        return ""
+    secs = int(secs)
     if secs < 60:
         return f"{secs}s"
     mins = secs // 60
@@ -113,6 +120,17 @@ def _format_elapsed(start, now) -> str:
         return f"{mins}m"
     hours, mins = divmod(mins, 60)
     return f"{hours}h{mins}m"
+
+
+def _esc_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _truncate_preview(text: str, max_len: int = 180) -> str:
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= max_len:
+        return collapsed
+    return collapsed[: max_len - 1].rstrip() + "…"
 
 
 class TelegramBot:
@@ -123,7 +141,6 @@ class TelegramBot:
         "run.completed",
         "run.timeout",
         "step.awaiting_user",
-        "flow.improvement",
     ]
 
     def __init__(self, config: dict[str, Any], session_factory):
@@ -137,6 +154,8 @@ class TelegramBot:
         self._notification_photos: dict[str, list[tuple[int, int]]] = {}
         self._pending_run_vars: dict[int, dict] = {}  # chat_id -> {space_id, flow_id, flow_name, vars: [{key, current}], overrides: {}, pending_idx: int}
         self._muted: bool = False
+        self._digest_msg_id: dict[int, int] = {}  # chat_id -> last unread-digest message_id
+        self._last_was_digest: dict[int, bool] = {}  # chat_id -> previous push was unread digest
         self._app = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -176,18 +195,37 @@ class TelegramBot:
 
     def _load_state(self) -> None:
         self._muted = False
+        self._digest_msg_id = {}
+        self._last_was_digest = {}
         try:
             f = self._state_file()
             if f.exists():
                 data = json.loads(f.read_text())
                 self._muted = bool(data.get("muted", False))
+                digest = data.get("digest") or {}
+                for chat_key, entry in digest.items():
+                    chat_id = int(chat_key)
+                    if isinstance(entry, dict):
+                        msg_id = entry.get("message_id")
+                        if msg_id is not None:
+                            self._digest_msg_id[chat_id] = int(msg_id)
+                        self._last_was_digest[chat_id] = bool(entry.get("last_was_digest", False))
         except (OSError, ValueError, TypeError):
             pass
 
     def _save_state(self) -> None:
         try:
             f = self._state_file()
-            f.write_text(json.dumps({"muted": self._muted}))
+            chat_ids = set(self._digest_msg_id) | set(self._last_was_digest)
+            digest = {
+                str(cid): {
+                    "message_id": self._digest_msg_id[cid],
+                    "last_was_digest": self._last_was_digest.get(cid, False),
+                }
+                for cid in chat_ids
+                if cid in self._digest_msg_id
+            }
+            f.write_text(json.dumps({"muted": self._muted, "digest": digest}))
         except OSError:
             logger.exception("Failed to persist telegram state")
 
@@ -405,13 +443,16 @@ class TelegramBot:
         if not self._is_allowed(chat_id):
             return
         self._active_chats.add(chat_id)
+        await self._send_inbox_list(chat_id, update.message.reply_text)
 
+    async def _send_inbox_list(self, chat_id: int, reply) -> None:
+        """List active inbox items (including silent flow improvements)."""
         session = self.session_factory()
         try:
             run_svc = RunService(session)
             items = run_svc.list_inbox()
             if not items:
-                await update.message.reply_text("Inbox is empty.")
+                await reply("Inbox is empty.")
                 return
 
             now = datetime.now(timezone.utc)
@@ -419,7 +460,6 @@ class TelegramBot:
 
             for item in items:
                 space = session.query(SpaceModel).filter_by(id=item.space_id).first()
-                space_name = space.name if space else "?"
 
                 if item.type == "awaiting_user":
                     sr = session.query(StepRun).filter_by(id=item.reference_id).first()
@@ -429,14 +469,36 @@ class TelegramBot:
                     run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
                     flow_name = (run.flow_name if run else None) or "?"
                     waited = _format_elapsed(sr.awaiting_user_at or item.created_at, now)
-                    text = f"⏳ <b>{flow_name}</b> — {sr.step_name}\n<i>{space_name}</i> · waiting {waited}"
+
+                    user_message = ""
+                    if space and run:
+                        try:
+                            from ..context import HITL_FILE
+                            artifacts_dir = ContextService.get_artifacts_dir(
+                                Path(space.path), run.id, run.flow_name or "",
+                            )
+                            hitl_file = (
+                                artifacts_dir
+                                / ContextService.step_dir_name(sr.step_position, sr.step_name)
+                                / HITL_FILE
+                            )
+                            if hitl_file.exists():
+                                user_message = hitl_file.read_text().strip()
+                        except (PermissionError, OSError):
+                            pass
+                    hitl_title, _ = ContextService.parse_inbox_message(user_message)
+                    headline = hitl_title or sr.step_name.replace("-", " ")
+                    text = (
+                        f"⏳ <b>{_esc_html(headline)}</b>\n"
+                        f"<i>{_esc_html(flow_name)}</i> · waiting {waited}"
+                    )
                     buttons = [
                         [
                             InlineKeyboardButton("Details", callback_data=f"inbox_detail:{item.id}"),
                             InlineKeyboardButton("Respond", callback_data=f"respond:{sr.id}"),
                         ],
                     ]
-                    await update.message.reply_text(
+                    await reply(
                         text, parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(buttons),
                     )
@@ -450,33 +512,79 @@ class TelegramBot:
                     flow_name = run.flow_name or "?"
                     outcome = run.outcome or "completed"
                     emoji = "✅" if outcome == "completed" else "❌"
+
+                    inbox_message = ""
+                    if space:
+                        try:
+                            artifacts_dir = ContextService.get_artifacts_dir(
+                                Path(space.path), run.id, run.flow_name or "",
+                            )
+                            inbox_message = ContextService.read_inbox_message(artifacts_dir)
+                        except (PermissionError, OSError):
+                            pass
+                    inbox_title, inbox_body = ContextService.parse_inbox_message(inbox_message)
+                    if inbox_title:
+                        headline = inbox_title
+                        preview = inbox_body
+                    elif (run.summary or "").strip():
+                        parts = run.summary.strip().split("\n", 1)
+                        headline = parts[0].strip()
+                        preview = parts[1].strip() if len(parts) > 1 else ""
+                    else:
+                        headline = flow_name
+                        preview = ""
+
                     meta: list[str] = []
-                    if run.duration_seconds is not None:
-                        secs = int(run.duration_seconds)
-                        if secs < 60:
-                            meta.append(f"{secs}s")
-                        elif secs < 3600:
-                            meta.append(f"{secs // 60}m")
-                        else:
-                            meta.append(f"{secs // 3600}h{(secs % 3600) // 60}m")
+                    dur = _format_duration(run.duration_seconds)
+                    if dur:
+                        meta.append(dur)
                     if run.cost_usd is not None:
                         meta.append(f"${run.cost_usd:.4f}")
-                    meta_str = f"  ({' · '.join(meta)})" if meta else ""
-                    text = f"{emoji} <b>{flow_name}</b> — {outcome}{meta_str}\n<i>{space_name}</i>"
+                    sub = f"<i>{_esc_html(flow_name)}</i>"
+                    if meta:
+                        sub += f" · {' · '.join(meta)}"
+
+                    lines = [f"{emoji} <b>{_esc_html(headline)}</b>"]
+                    if preview:
+                        lines.append(_esc_html(_truncate_preview(preview)))
+                    lines.append(sub)
+                    text = "\n".join(lines)
                     buttons = [
                         [
                             InlineKeyboardButton("Details", callback_data=f"inbox_detail:{item.id}"),
                             InlineKeyboardButton("Archive", callback_data=f"dismiss:{item.id}"),
                         ],
                     ]
-                    await update.message.reply_text(
+                    await reply(
+                        text, parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(buttons),
+                    )
+                    sent += 1
+
+                elif item.type == "flow_improvement":
+                    run = session.query(FlowRun).filter_by(id=item.reference_id).first()
+                    if not run:
+                        run_svc.archive_inbox_item(item.id)
+                        continue
+                    flow_name = run.flow_name or "?"
+                    text = (
+                        f"💡 <b>Flow improvement proposed</b>\n"
+                        f"<i>{_esc_html(flow_name)}</i>"
+                    )
+                    buttons = [
+                        [
+                            InlineKeyboardButton("Details", callback_data=f"inbox_detail:{item.id}"),
+                            InlineKeyboardButton("Respond", callback_data=f"accept_improvement:{item.id}"),
+                        ],
+                    ]
+                    await reply(
                         text, parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(buttons),
                     )
                     sent += 1
 
             if not sent:
-                await update.message.reply_text("Inbox is empty.")
+                await reply("Inbox is empty.")
         finally:
             session.close()
 
@@ -695,6 +803,10 @@ class TelegramBot:
             await self._cb_inbox_detail(query, data[len("inbox_detail:"):])
             return
 
+        if data == "show_inbox":
+            await self._send_inbox_list(chat_id, query.message.reply_text)
+            return
+
         if data.startswith("cancelrun:"):
             await self._cb_cancel_run(query, data[len("cancelrun:"):])
             return
@@ -736,6 +848,7 @@ class TelegramBot:
                 if sr:
                     run_svc.archive_inbox_by_reference(step_run_id)
                     await query.edit_message_text("Step marked as completed.")
+                    await self._refresh_unread_digest(chat_id)
                 else:
                     await query.edit_message_text("Step not found.")
             finally:
@@ -765,6 +878,7 @@ class TelegramBot:
                     await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
                 except Exception:
                     logger.debug("Failed to delete message %s", message_id)
+            await self._refresh_unread_digest(chat_id)
 
     # ── Cancel run callback ─────────────────────────────────────────────────
 
@@ -990,6 +1104,7 @@ class TelegramBot:
                 f"✅ Applied improvements for <b>{flow_name}</b> (v{flow.version})",
                 parse_mode="HTML",
             )
+            await self._refresh_unread_digest(update.effective_chat.id)
         except ValueError as e:
             await update.message.reply_text(f"Error: {e}")
         finally:
@@ -1036,6 +1151,7 @@ class TelegramBot:
                 await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
             except Exception:
                 logger.debug("Failed to delete message %s", message_id)
+        await self._refresh_unread_digest(chat_id)
 
     async def _cb_discard_improvement(self, query, inbox_id: str) -> None:
         session = self.session_factory()
@@ -1060,6 +1176,7 @@ class TelegramBot:
                 await self._app.bot.delete_message(chat_id=cid, message_id=message_id)
             except Exception:
                 logger.debug("Failed to delete message %s", message_id)
+        await self._refresh_unread_digest(chat_id)
 
     # ── /run callback helpers ────────────────────────────────────────────────
 
@@ -1160,28 +1277,28 @@ class TelegramBot:
                     await query.edit_message_text("This step has already been completed.")
                     return
                 run = session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
-                flow_name = (run.flow_name if run else None) or "?"
 
                 user_message = ""
-                if space:
+                if space and run:
                     try:
+                        from ..context import HITL_FILE
                         artifacts_dir = ContextService.get_artifacts_dir(
                             Path(space.path), run.id, run.flow_name or "",
                         )
-                        result_file = artifacts_dir / ContextService.step_dir_name(
-                            sr.step_position, sr.step_name,
-                        ) / "_result.md"
-                        if result_file.exists():
-                            user_message = result_file.read_text().strip()
+                        hitl_file = (
+                            artifacts_dir
+                            / ContextService.step_dir_name(sr.step_position, sr.step_name)
+                            / HITL_FILE
+                        )
+                        if hitl_file.exists():
+                            user_message = hitl_file.read_text().strip()
                     except (PermissionError, OSError):
                         pass
 
-                text = f"<b>{flow_name}</b> — {sr.step_name}\n"
                 if user_message:
-                    detail_html = _to_telegram_html(user_message)
-                    text += f"\n{detail_html}"
+                    text = _to_telegram_html(user_message)
                 else:
-                    text += "\n<i>No message from this step.</i>"
+                    text = "<i>No message from this step.</i>"
 
                 markup = InlineKeyboardMarkup([
                     [
@@ -1191,35 +1308,37 @@ class TelegramBot:
                 ])
                 sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
                 self._notification_photos[inbox_id] = sent_ids
-                try:
-                    await query.edit_message_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
+                await self._delete_inbox_list_message(query)
 
             elif item.type == "completed_run":
                 run = session.query(FlowRun).filter_by(id=item.reference_id).first()
                 if not run:
                     await query.edit_message_text("Run not found.")
                     return
-                flow_name = run.flow_name or "?"
-                outcome = run.outcome or "completed"
 
-                text = f"<b>{flow_name}</b> — {outcome}\n"
-                if run.summary:
-                    summary_html = _to_telegram_html(run.summary)
-                    text += f"\n{summary_html}"
+                detail = ""
+                if space:
+                    try:
+                        artifacts_dir = ContextService.get_artifacts_dir(
+                            Path(space.path), run.id, run.flow_name or "",
+                        )
+                        detail = ContextService.read_inbox_message(artifacts_dir)
+                    except (PermissionError, OSError):
+                        pass
+                if not detail:
+                    detail = (run.summary or "").strip()
+
+                if detail:
+                    text = _to_telegram_html(detail)
                 else:
-                    text += "\n<i>No summary available.</i>"
+                    text = "<i>No summary available.</i>"
 
                 markup = InlineKeyboardMarkup([
                     [InlineKeyboardButton("Archive", callback_data=f"dismiss:{inbox_id}")],
                 ])
                 sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
                 self._notification_photos[inbox_id] = sent_ids
-                try:
-                    await query.edit_message_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
+                await self._delete_inbox_list_message(query)
 
             elif item.type == "flow_improvement":
                 run = session.query(FlowRun).filter_by(id=item.reference_id).first()
@@ -1254,12 +1373,22 @@ class TelegramBot:
                 ])
                 sent_ids = await self._send_detail_chunks(chat_id, text, markup, inbox_id)
                 self._notification_photos[inbox_id] = sent_ids
-                try:
-                    await query.edit_message_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
+                await self._delete_inbox_list_message(query)
         finally:
             session.close()
+
+    async def _delete_inbox_list_message(self, query) -> None:
+        """Remove the /inbox card after Details opens the full message."""
+        try:
+            await self._app.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+            )
+        except Exception:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
     async def _send_detail_chunks(
         self, chat_id: int, text: str, markup, inbox_id: str,
@@ -1280,22 +1409,121 @@ class TelegramBot:
         if not self._app or not self._loop:
             return
 
+        # Flow improvements are inbox-only — surfaced via /inbox.
+        if event == "flow.improvement":
+            return
+
         if self._muted and event != "step.awaiting_user":
             return
 
-        text = self._format_notification(event, payload)
-        if not text:
+        targets = self.allowed_ids or self._active_chats
+        if not targets:
             return
 
-        targets = self.allowed_ids or self._active_chats
+        if event == "step.awaiting_user":
+            for chat_id in targets:
+                self._last_was_digest[chat_id] = False
+                self._save_state()
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self._send_hitl_notification(chat_id, payload),
+                        self._loop,
+                    )
+                except Exception:
+                    logger.warning("Failed to send notification to chat %s", chat_id)
+            return
+
+        # Non-HITL events: bump/edit a single unread-count digest message.
         for chat_id in targets:
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._send_notification(chat_id, text, event, payload),
+                    self._send_or_update_unread_digest(chat_id),
                     self._loop,
                 )
             except Exception:
-                logger.warning("Failed to send notification to chat %s", chat_id)
+                logger.warning("Failed to send unread digest to chat %s", chat_id)
+
+    def _count_unread(self) -> int:
+        session = self.session_factory()
+        try:
+            return RunService(session).count_inbox()
+        finally:
+            session.close()
+
+    @staticmethod
+    def _format_unread_digest(count: int) -> str:
+        noun = "notification" if count == 1 else "notifications"
+        return f"📬 You have <b>{count}</b> unread {noun}."
+
+    def _unread_digest_markup(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("View", callback_data="show_inbox")],
+        ])
+
+    async def _send_or_update_unread_digest(self, chat_id: int) -> None:
+        """Send or edit the unread-count digest for a chat."""
+        count = self._count_unread()
+        if count <= 0:
+            return
+
+        text = self._format_unread_digest(count)
+        markup = self._unread_digest_markup()
+
+        if self._last_was_digest.get(chat_id) and chat_id in self._digest_msg_id:
+            msg_id = self._digest_msg_id[chat_id]
+            try:
+                await self._app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=markup,
+                )
+                return
+            except Exception:
+                logger.debug(
+                    "Failed to edit unread digest for chat %s, sending new",
+                    chat_id, exc_info=True,
+                )
+
+        msg = await self._send_message_safe(chat_id, text, markup)
+        if msg:
+            self._digest_msg_id[chat_id] = msg.message_id
+            self._last_was_digest[chat_id] = True
+            self._save_state()
+
+    async def _refresh_unread_digest(self, chat_id: int) -> None:
+        """Update or clear the digest after inbox items change."""
+        if chat_id not in self._digest_msg_id:
+            return
+        count = self._count_unread()
+        msg_id = self._digest_msg_id[chat_id]
+        if count <= 0:
+            try:
+                await self._app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                try:
+                    await self._app.bot.edit_message_text(
+                        chat_id=chat_id, message_id=msg_id, text="Inbox is empty.",
+                    )
+                except Exception:
+                    pass
+            self._digest_msg_id.pop(chat_id, None)
+            self._last_was_digest[chat_id] = False
+            self._save_state()
+            return
+        if not self._last_was_digest.get(chat_id):
+            return
+        try:
+            await self._app.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text=self._format_unread_digest(count),
+                parse_mode="HTML",
+                reply_markup=self._unread_digest_markup(),
+            )
+        except Exception:
+            logger.debug("Failed to refresh unread digest for chat %s", chat_id, exc_info=True)
 
     async def _send_message_safe(
         self, chat_id: int, text: str, markup=None,
@@ -1320,89 +1548,74 @@ class TelegramBot:
             logger.warning("Failed to send message to chat %s", chat_id, exc_info=True)
             return None
 
+    async def _send_hitl_notification(self, chat_id: int, payload: dict) -> None:
+        """Push a HITL notification matching the UI/inbox content (hitl.md)."""
+        step_run_id = payload.get("step_run_id")
+        user_message = (payload.get("user_message") or "").strip()
+        flow_name = payload.get("flow_name") or "?"
+        title = (
+            payload.get("inbox_title")
+            or (payload.get("step_name") or "HITL").replace("-", " ")
+        )
+
+        if user_message:
+            text = _to_telegram_html(user_message)
+        else:
+            text = (
+                f"⏳ <b>{_esc_html(title)}</b>\n"
+                f"<i>{_esc_html(flow_name)}</i>"
+            )
+
+        markup = None
+        if step_run_id:
+            markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"),
+                InlineKeyboardButton("Complete", callback_data=f"complete:{step_run_id}"),
+            ]])
+
+        chunks = _split_message(text)
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            msg = await self._send_message_safe(chat_id, chunk, markup if is_last else None)
+            if not msg:
+                return
+
     async def _send_notification(self, chat_id: int, text: str, event: str, payload: dict) -> None:
-        inbox_id = payload.get("inbox_id")
+        """Send a full notification. Prefer _send_hitl_notification for HITL."""
         step_run_id = payload.get("step_run_id")
 
         markup = None
-        buttons = []
         if event == "step.awaiting_user" and step_run_id:
-            buttons.append(InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"))
-        if event == "flow.improvement" and inbox_id:
-            buttons.append(InlineKeyboardButton("Respond", callback_data=f"accept_improvement:{inbox_id}"))
-            buttons.append(InlineKeyboardButton("Decline", callback_data=f"decline_improvement:{inbox_id}"))
-            buttons.append(InlineKeyboardButton("Discard", callback_data=f"discard_improvement:{inbox_id}"))
-        elif inbox_id:
-            buttons.append(InlineKeyboardButton("Dismiss", callback_data=f"dismiss:{inbox_id}"))
-        if buttons:
-            markup = InlineKeyboardMarkup([buttons])
-
-        att_files: list[Path] = []
-        if event == "run.completed":
-            run_id = payload.get("run_id")
-            if run_id:
-                att_dir = SYSTEM_DIR / "attachments" / run_id
-                if att_dir.is_dir():
-                    try:
-                        for f in sorted(att_dir.iterdir()):
-                            if f.is_file():
-                                size_mb = f.stat().st_size / (1024 * 1024)
-                                if size_mb <= 10:
-                                    att_files.append(f)
-                    except OSError:
-                        logger.debug("Error reading attachments dir %s", att_dir, exc_info=True)
+            markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Respond", callback_data=f"respond:{step_run_id}"),
+            ]])
 
         html = _to_telegram_html(text)
         chunks = _split_message(html)
 
-        last_text_msg = None
         for i, chunk in enumerate(chunks):
             is_last_chunk = i == len(chunks) - 1
-            chunk_markup = markup if is_last_chunk and not att_files else None
+            chunk_markup = markup if is_last_chunk else None
             msg = await self._send_message_safe(chat_id, chunk, chunk_markup)
-            if msg:
-                last_text_msg = msg
-            else:
+            if not msg:
                 return
-
-        if att_files:
-            photo_msgs: list[tuple[int, int]] = []
-            if last_text_msg:
-                photo_msgs.append((chat_id, last_text_msg.message_id))
-            _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-            _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".wav", ".flac"}
-            for i, f in enumerate(att_files):
-                is_last = i == len(att_files) - 1
-                last_markup = markup if is_last else None
-                try:
-                    ext = f.suffix.lower()
-                    msg = None
-                    if ext in _AUDIO_EXTS:
-                        msg = await self._app.bot.send_audio(
-                            chat_id=chat_id, audio=open(f, "rb"),
-                            caption=f.name, reply_markup=last_markup,
-                        )
-                    elif ext in _IMAGE_EXTS and f.stat().st_size / (1024 * 1024) <= 5:
-                        msg = await self._app.bot.send_photo(
-                            chat_id=chat_id, photo=open(f, "rb"),
-                            caption=f.name, reply_markup=last_markup,
-                        )
-                    else:
-                        msg = await self._app.bot.send_document(
-                            chat_id=chat_id, document=open(f, "rb"),
-                            caption=f.name, reply_markup=last_markup,
-                        )
-                    if msg:
-                        photo_msgs.append((chat_id, msg.message_id))
-                except Exception:
-                    logger.warning("Failed to send attachment %s to chat %s", f, chat_id)
-            if inbox_id:
-                self._notification_photos[inbox_id] = photo_msgs
 
     @staticmethod
     def _format_notification(event: str, payload: dict) -> str | None:
         name = payload.get("flow_name") or "?"
 
+        if event == "step.awaiting_user":
+            # Prefer full hitl.md content (same as UI inbox).
+            user_message = (payload.get("user_message") or "").strip()
+            if user_message:
+                return user_message
+            title = (
+                payload.get("inbox_title")
+                or (payload.get("step_name") or "HITL").replace("-", " ")
+            )
+            return f"**{title}**\n*{name}*"
+
+        # Kept for tests / backwards compatibility; non-HITL uses unread digest.
         if event == "run.completed":
             outcome = payload.get("outcome", "completed")
             inbox_message = payload.get("inbox_message") or payload.get("summary")
@@ -1431,14 +1644,6 @@ class TelegramBot:
         if event == "run.timeout":
             mins = payload.get("timeout_minutes", "?")
             return f"**{name}** timed out after {mins}min."
-
-        if event == "step.awaiting_user":
-            step_name = payload.get("step_name", "?")
-            text = f"**{name}** — step *{step_name}* needs your input."
-            user_message = payload.get("user_message")
-            if user_message:
-                text += f"\n\n{user_message}"
-            return text
 
         if event == "flow.improvement":
             text = f"**{name}** — flow improvement proposed."

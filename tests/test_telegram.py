@@ -40,6 +40,8 @@ def tg_bot(tg_db):
         bot._notification_photos = {}
         bot._pending_run_vars = {}
         bot._muted = False
+        bot._digest_msg_id = {}
+        bot._last_was_digest = {}
         bot._app = MagicMock()
         bot._loop = MagicMock()
     return bot
@@ -92,8 +94,8 @@ class TestFormatNotification:
         assert TelegramBot._format_notification("unknown.event", {}) is None
 
 
-class TestNotificationButtons:
-    """_send_notification attaches the correct buttons per event type."""
+class TestUnreadDigest:
+    """Non-HITL events update an unread-count digest; HITL stays full."""
 
     def _run(self, coro):
         loop = asyncio.new_event_loop()
@@ -102,60 +104,105 @@ class TestNotificationButtons:
         finally:
             loop.close()
 
-    def test_flow_improvement_has_accept_decline(self, tg_bot):
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    def test_format_unread_digest_singular(self):
+        text = TelegramBot._format_unread_digest(1)
+        assert "<b>1</b>" in text
+        assert "notification." in text
+        assert "/inbox" not in text
 
-        sent_markup = {}
+    def test_format_unread_digest_plural(self):
+        text = TelegramBot._format_unread_digest(3)
+        assert "<b>3</b>" in text
+        assert "notifications." in text
 
-        async def fake_send(chat_id, text, parse_mode=None, reply_markup=None, reply_to_message_id=None):
-            sent_markup["markup"] = reply_markup
-            msg = MagicMock()
-            msg.message_id = 1
-            return msg
+    def test_send_skips_flow_improvement(self, tg_bot):
+        tg_bot.allowed_ids = {123}
+        scheduled = []
 
-        tg_bot._app.bot.send_message = fake_send
-        tg_bot._send_message_safe = AsyncMock(side_effect=lambda cid, txt, mk=None, **kw: MagicMock(message_id=1))
+        def mock_run(coro, loop):
+            scheduled.append(True)
+            coro.close()
 
-        self._run(tg_bot._send_notification(
+        with patch(
+            "llmflows.services.gateway.telegram.asyncio.run_coroutine_threadsafe",
+            mock_run,
+        ):
+            tg_bot.send("flow.improvement", {"flow_name": "test", "inbox_id": "x"})
+
+        assert scheduled == []
+
+    def test_run_completed_sends_digest(self, tg_bot, tmp_path):
+        tg_bot._count_unread = MagicMock(return_value=2)
+        tg_bot._send_message_safe = AsyncMock(
+            side_effect=lambda cid, txt, mk=None, **kw: MagicMock(message_id=42),
+        )
+
+        with patch.object(TelegramBot, "_state_file", return_value=tmp_path / "state.json"):
+            self._run(tg_bot._send_or_update_unread_digest(123))
+
+        tg_bot._send_message_safe.assert_called_once()
+        text = tg_bot._send_message_safe.call_args[0][1]
+        assert "<b>2</b>" in text
+        assert tg_bot._digest_msg_id[123] == 42
+        assert tg_bot._last_was_digest[123] is True
+        markup = tg_bot._send_message_safe.call_args[0][2]
+        assert markup.inline_keyboard[0][0].callback_data == "show_inbox"
+
+    def test_digest_edits_existing_when_previous_was_digest(self, tg_bot):
+        tg_bot._count_unread = MagicMock(return_value=3)
+        tg_bot._digest_msg_id[123] = 42
+        tg_bot._last_was_digest[123] = True
+        tg_bot._app.bot.edit_message_text = AsyncMock()
+        tg_bot._send_message_safe = AsyncMock()
+
+        self._run(tg_bot._send_or_update_unread_digest(123))
+
+        tg_bot._app.bot.edit_message_text.assert_called_once()
+        kwargs = tg_bot._app.bot.edit_message_text.call_args.kwargs
+        assert kwargs["message_id"] == 42
+        assert "<b>3</b>" in kwargs["text"]
+        tg_bot._send_message_safe.assert_not_called()
+
+    def test_digest_sends_new_after_hitl(self, tg_bot, tmp_path):
+        tg_bot._count_unread = MagicMock(return_value=1)
+        tg_bot._digest_msg_id[123] = 42
+        tg_bot._last_was_digest[123] = False
+        tg_bot._app.bot.edit_message_text = AsyncMock()
+        tg_bot._send_message_safe = AsyncMock(
+            side_effect=lambda cid, txt, mk=None, **kw: MagicMock(message_id=99),
+        )
+
+        with patch.object(TelegramBot, "_state_file", return_value=tmp_path / "state.json"):
+            self._run(tg_bot._send_or_update_unread_digest(123))
+
+        tg_bot._app.bot.edit_message_text.assert_not_called()
+        tg_bot._send_message_safe.assert_called_once()
+        assert tg_bot._digest_msg_id[123] == 99
+
+    def test_hitl_push_sends_hitl_md_content(self, tg_bot):
+        tg_bot._send_message_safe = AsyncMock(
+            side_effect=lambda cid, txt, mk=None, **kw: MagicMock(message_id=1),
+        )
+
+        self._run(tg_bot._send_hitl_notification(
             chat_id=123,
-            text="test",
-            event="flow.improvement",
-            payload={"inbox_id": "inbox-1"},
+            payload={
+                "step_run_id": "sr-1",
+                "flow_name": "my-flow",
+                "step_name": "review-plan",
+                "inbox_title": "Approve the plan?",
+                "user_message": "# Approve the plan?\n\nPlease confirm next steps.",
+            },
         ))
 
-        mk = tg_bot._send_message_safe.call_args
-        assert mk is not None
-        markup = mk[0][2] if len(mk[0]) > 2 else mk[1].get("markup")
-        if markup is None and len(mk[0]) > 2:
-            markup = mk[0][2]
-
-        assert markup is not None
-        buttons = markup.inline_keyboard[0]
-        texts = [b.text for b in buttons]
+        text = tg_bot._send_message_safe.call_args[0][1]
+        assert "Approve the plan?" in text
+        assert "Please confirm next steps." in text
+        assert "needs your input" not in text
+        markup = tg_bot._send_message_safe.call_args[0][2]
+        texts = [b.text for b in markup.inline_keyboard[0]]
         assert "Respond" in texts
-        assert "Decline" in texts
-        assert "Discard" in texts
-        assert "Dismiss" not in texts
-
-    def test_run_completed_has_dismiss(self, tg_bot):
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-        tg_bot._send_message_safe = AsyncMock(side_effect=lambda cid, txt, mk=None, **kw: MagicMock(message_id=1))
-
-        self._run(tg_bot._send_notification(
-            chat_id=123,
-            text="test",
-            event="run.completed",
-            payload={"inbox_id": "inbox-2"},
-        ))
-
-        mk = tg_bot._send_message_safe.call_args
-        markup = mk[0][2] if len(mk[0]) > 2 else None
-        assert markup is not None
-        buttons = markup.inline_keyboard[0]
-        texts = [b.text for b in buttons]
-        assert "Dismiss" in texts
-        assert "Accept" not in texts
+        assert "Complete" in texts
 
 
 class TestAcceptImprovement:
@@ -302,6 +349,81 @@ class TestHelpVersion:
         assert " v" in call_text
 
 
+class TestInboxListsFlowImprovement:
+    """/inbox lists flow improvement proposals."""
+
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_inbox_lists_flow_improvement(self, tg_bot, tg_db, space_and_flow):
+        space, flow, run = space_and_flow
+        inbox = InboxItem(
+            type="flow_improvement", reference_id=run.id,
+            space_id=space.id, title="proposal",
+        )
+        tg_db.add(inbox)
+        tg_db.flush()
+
+        replies = []
+
+        async def fake_reply(text, parse_mode=None, reply_markup=None):
+            replies.append((text, reply_markup))
+
+        self._run(tg_bot._send_inbox_list(123, fake_reply))
+
+        assert len(replies) == 1
+        text, markup = replies[0]
+        assert text == "💡 <b>Flow improvement proposed</b>\n<i>my-flow</i>"
+        button_texts = [b.text for row in markup.inline_keyboard for b in row]
+        assert "Details" in button_texts
+        assert "Respond" in button_texts
+
+    def test_inbox_lists_completed_run_with_summary(self, tg_bot, tg_db, space_and_flow, tmp_path):
+        from datetime import datetime, timezone
+        from llmflows.db.models import StepRun
+
+        space, flow, run = space_and_flow
+        run.summary = "Scheduled 3 videos\nExtra detail"
+        run.completed_at = datetime.now(timezone.utc)
+        run.started_at = run.completed_at
+        sr = StepRun(
+            flow_run_id=run.id, step_name="schedule", step_position=0,
+            flow_name=flow.name, agent="pi", cost_usd=0.0123,
+            started_at=run.completed_at, completed_at=run.completed_at,
+        )
+        tg_db.add(sr)
+        inbox = InboxItem(
+            type="completed_run", reference_id=run.id,
+            space_id=space.id, title=flow.name,
+        )
+        tg_db.add(inbox)
+        tg_db.flush()
+
+        artifacts = tmp_path / ".llmflows" / "my-flow" / "runs" / run.id / "artifacts"
+        artifacts.mkdir(parents=True)
+        (artifacts / "inbox.md").write_text(
+            "# Added 3 videos to playlist\n\nMorning batch completed successfully.\n"
+        )
+
+        replies = []
+
+        async def fake_reply(text, parse_mode=None, reply_markup=None):
+            replies.append(text)
+
+        self._run(tg_bot._send_inbox_list(123, fake_reply))
+
+        assert len(replies) == 1
+        text = replies[0]
+        assert "Added 3 videos to playlist" in text
+        assert "Morning batch completed successfully." in text
+        assert "<i>my-flow</i>" in text
+        assert "$0.0123" in text
+
+
 class TestInboxDetailFlowImprovement:
     """_cb_inbox_detail handles flow_improvement items with accept/decline buttons."""
 
@@ -325,7 +447,9 @@ class TestInboxDetailFlowImprovement:
 
         query = MagicMock()
         query.message.chat_id = 123
+        query.message.message_id = 55
         query.edit_message_reply_markup = AsyncMock()
+        tg_bot._app.bot.delete_message = AsyncMock()
 
         sent_markups = []
 
@@ -346,6 +470,7 @@ class TestInboxDetailFlowImprovement:
         assert "Respond" in texts
         assert "Decline" in texts
         assert "Discard" in texts
+        tg_bot._app.bot.delete_message.assert_called_once_with(chat_id=123, message_id=55)
 
 
 class TestFormatRunCard:
@@ -565,20 +690,40 @@ class TestMuteCommand:
 
         assert len(scheduled) > 0
 
+    def test_send_hitl_clears_digest_flag(self, tg_bot, tmp_path):
+        tg_bot._muted = False
+        tg_bot.allowed_ids = {123}
+        tg_bot._last_was_digest[123] = True
+
+        def mock_run(coro, loop):
+            coro.close()
+
+        with patch.object(TelegramBot, "_state_file", return_value=tmp_path / "state.json"), \
+             patch("llmflows.services.gateway.telegram.asyncio.run_coroutine_threadsafe", mock_run):
+            tg_bot.send("step.awaiting_user", {"flow_name": "test", "step_name": "Review"})
+
+        assert tg_bot._last_was_digest[123] is False
+
 
 class TestMuteStatePersistence:
-    """Mute state is persisted to and loaded from disk."""
+    """Mute and digest state are persisted to and loaded from disk."""
 
     def test_state_roundtrip(self, tg_bot, tmp_path):
         state_file = tmp_path / "state.json"
         with patch.object(TelegramBot, "_state_file", return_value=state_file):
             tg_bot._muted = True
+            tg_bot._digest_msg_id[123] = 42
+            tg_bot._last_was_digest[123] = True
             tg_bot._save_state()
             assert state_file.exists()
 
             tg_bot._muted = False
+            tg_bot._digest_msg_id = {}
+            tg_bot._last_was_digest = {}
             tg_bot._load_state()
             assert tg_bot._muted is True
+            assert tg_bot._digest_msg_id[123] == 42
+            assert tg_bot._last_was_digest[123] is True
 
     def test_load_state_defaults_when_missing(self, tg_bot, tmp_path):
         state_file = tmp_path / "nonexistent" / "state.json"
@@ -681,4 +826,5 @@ class TestHelpIncludesMuteAndAudit:
         call_text = update.message.reply_text.call_args[0][0]
         assert "/mute" in call_text
         assert "/audit" in call_text
+        assert "/inbox" in call_text
         assert "Mute:" in call_text

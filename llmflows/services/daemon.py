@@ -44,6 +44,7 @@ class Daemon:
         self._launch_failures: dict[str, int] = {}
         self._last_container_cleanup: float = 0.0
         self._browser_active_runs: set[str] = set()
+        self._notified_hitl: set[str] = set()  # inbox item ids already pushed
         self._keep_awake_proc: Optional[subprocess.Popen] = None
         from .gateway.channel import ChannelManager
         self.notifications = ChannelManager()
@@ -333,6 +334,10 @@ class Daemon:
             flow_version_from_snapshot,
         )
 
+        # HITL inbox items are created inside the runner container; push from
+        # the host where gateway channels live (same pattern as completed runs).
+        self._notify_pending_hitl(space, run_svc)
+
         for run in run_svc.get_runs_with_container(space.id):
             if is_container_alive(run.container_id):
                 continue
@@ -503,6 +508,59 @@ class Daemon:
             logger.info("Launched runner container %s for run %s", container_id[:12], run.id)
         else:
             self._handle_launch_failure(run, error, run_svc)
+
+    def _notify_pending_hitl(self, space, run_svc: RunService) -> None:
+        """Push Telegram/gateway notifications for new awaiting_user inbox items."""
+        from ..db.models import FlowRun, InboxItem as InboxItemModel, StepRun
+        from .context import HITL_FILE
+
+        items = (
+            run_svc.session.query(InboxItemModel)
+            .filter_by(space_id=space.id, type="awaiting_user")
+            .all()
+        )
+        for item in items:
+            if item.id in self._notified_hitl:
+                continue
+            sr = run_svc.session.query(StepRun).filter_by(id=item.reference_id).first()
+            if not sr or sr.completed_at:
+                self._notified_hitl.discard(item.id)
+                continue
+            run = run_svc.session.query(FlowRun).filter_by(id=sr.flow_run_id).first()
+            if not run:
+                continue
+
+            user_message = ""
+            try:
+                artifacts_dir = ContextService.get_artifacts_dir(
+                    Path(space.path), run.id, run.flow_name or "",
+                )
+                hitl_file = (
+                    artifacts_dir
+                    / ContextService.step_dir_name(sr.step_position, sr.step_name)
+                    / HITL_FILE
+                )
+                if hitl_file.exists():
+                    user_message = hitl_file.read_text().strip()
+            except (PermissionError, OSError):
+                pass
+
+            inbox_title, _ = ContextService.parse_inbox_message(user_message)
+            try:
+                self.notifications.notify("step.awaiting_user", {
+                    "flow_name": run.flow_name or run.id,
+                    "run_id": run.id,
+                    "step_name": sr.step_name,
+                    "step_run_id": sr.id,
+                    "inbox_id": item.id,
+                    "user_message": user_message,
+                    "inbox_title": inbox_title,
+                })
+                self._notified_hitl.add(item.id)
+            except Exception:
+                logger.debug(
+                    "Failed to send HITL notification for step %s", sr.id, exc_info=True,
+                )
 
     def _handle_completed_run_notifications(self, run, space, run_svc: RunService) -> None:
         """Send notifications for a completed run (after container exits).
